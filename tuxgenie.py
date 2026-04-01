@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "3.6.0"
+__version__ = "3.7.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -978,8 +978,24 @@ def fix_engine(backend, system, messages, session_log, max_rounds=6):
 #  SECTION 6 — 20 FEATURES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _lang_note() -> str:
+    """Return a language instruction for the AI if the system is non-English."""
+    lang = (os.environ.get("LANG") or os.environ.get("LANGUAGE") or "en_US").split(".")[0]
+    code = lang.split("_")[0].lower()
+    if code in ("en", "c", "posix", ""):
+        return ""
+    return (f"\n\nLANGUAGE INSTRUCTION: The user's system language is '{lang}'. "
+            "Write ALL analysis, descriptions, explanations, and step descriptions in that language. "
+            "Keep shell commands, package names, and file paths in English only.\n")
+
 def _sys_ctx_block(extra: dict) -> str:
-    return "\n\nSYSTEM CONTEXT:\n" + json.dumps(extra, indent=2)
+    ctx = "\n\nSYSTEM CONTEXT:\n" + json.dumps(extra, indent=2)
+    ctx += _lang_note()
+    # Distro-aware reminder
+    pm = extra.get("pkg_mgr", "")
+    if pm and pm != "apt":
+        ctx += f"\n\nDISTRO NOTE: This system uses '{pm}' as the package manager. Use '{pm}' commands (NOT apt) for all package operations.\n"
+    return ctx
 
 # ── FEATURE 1: Fix Issue (general) ───────────────────────────────────────────
 def feat_fix(backend, bctx, slog):
@@ -1543,6 +1559,169 @@ Additional instructions for GIT HELPER mode:
 """ + _sys_ctx_block(git_ctx)
     fix_engine(backend, sys_p, [{"role": "user", "content": problem}], slog)
 
+# ── FEATURE 24: Bluetooth Fix ────────────────────────────────────────────────
+def feat_bluetooth(backend, bctx, slog):
+    hdr("Bluetooth Fix — Fix pairing & connection problems")
+    with Spinner("Scanning Bluetooth system…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "bt_hardware":   "lspci | grep -i bluetooth 2>/dev/null; lsusb | grep -i bluetooth 2>/dev/null",
+            "bt_service":    "systemctl status bluetooth 2>/dev/null | head -8",
+            "bt_devices":    "bluetoothctl devices 2>/dev/null",
+            "bt_info":       "bluetoothctl show 2>/dev/null | head -15",
+            "rfkill":        "rfkill list 2>/dev/null",
+            "bt_module":     "lsmod | grep -i bluetooth 2>/dev/null",
+            "dmesg_bt":      "dmesg | grep -iE 'bluetooth|hci|btusb' | tail -15 2>/dev/null",
+            "bt_log":        "journalctl -u bluetooth -n 20 --no-pager 2>/dev/null",
+        })}
+    try:
+        problem = input(f"\n{BOLD}What's the Bluetooth problem? (or Enter for general fix):{R}\n"
+                        f"{C('(e.g. headphones wont connect, device not found, keeps disconnecting)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not problem:
+        problem = "Bluetooth is not working. Diagnose and fix the issue."
+    sys_p = BASE_SYS + """
+Additional instructions for BLUETOOTH FIX mode:
+- Most common causes: bluetooth service not running, device blocked by rfkill, wrong pairing state, missing firmware.
+- For 'device not found': check if bluetooth is powered on (bluetoothctl power on), check rfkill.
+- For 'wont pair': try removing the device first (bluetoothctl remove), then re-pair.
+- For 'keeps disconnecting': check power management settings, check firmware updates.
+- For 'no bluetooth at all': check if hardware is rfkill-blocked or driver is missing.
+- Translate terms: 'bluetooth service' = 'the program that manages bluetooth', 'rfkill' = 'a software switch that can turn off bluetooth'.
+- bluetoothctl is safe to use; guide user through the interactive steps clearly.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role": "user", "content": problem}], slog)
+
+# ── FEATURE 25: Printer Setup ─────────────────────────────────────────────────
+def feat_printer(backend, bctx, slog):
+    hdr("Printer Setup — Install and fix printers")
+    with Spinner("Checking print system…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "cups_status":   "systemctl status cups 2>/dev/null | head -8",
+            "printers":      "lpstat -p 2>/dev/null || echo 'no printers configured'",
+            "cups_version":  "cups-config --version 2>/dev/null",
+            "usb_printers":  "lsusb | grep -i print 2>/dev/null",
+            "network_devs":  "avahi-browse -art 2>/dev/null | grep -i print | head -10 2>/dev/null",
+            "printer_pkgs":  "dpkg -l | grep -iE 'cups|hplip|brother|epson|canon|printer' 2>/dev/null | head -15",
+            "cups_log":      "journalctl -u cups -n 20 --no-pager 2>/dev/null",
+            "ppd_files":     "ls /etc/cups/ppd/ 2>/dev/null",
+        })}
+    try:
+        problem = input(f"\n{BOLD}Describe your printer issue (or Enter to set up a new printer):{R}\n"
+                        f"{C('(e.g. printer not detected, prints blank pages, HP printer, network printer)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not problem:
+        problem = "Help me set up my printer on Linux."
+    sys_p = BASE_SYS + """
+Additional instructions for PRINTER SETUP mode:
+- CUPS is the print system on Linux — explain it as 'the program that talks to your printer'.
+- For USB printers: check if detected with lsusb, then install manufacturer driver (hplip for HP, etc.).
+- For network printers: use CUPS web interface (http://localhost:631) or lpstat/lpadmin commands.
+- For HP printers: hplip is the best driver — guide through hp-setup if needed.
+- For Brother/Canon/Epson: often need manufacturer .deb driver from their website.
+- For 'blank pages' or 'wrong output': often a wrong PPD/driver — guide through re-adding with correct driver.
+- Explain CUPS web UI (localhost:631) as 'a website on your own computer for managing printers'.
+- Keep the user confident — printer setup on Linux is famously tricky but we can do it step by step.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role": "user", "content": problem}], slog)
+
+# ── FEATURE 26: Webcam Fix ────────────────────────────────────────────────────
+def feat_webcam(backend, bctx, slog):
+    hdr("Webcam Fix — Fix camera for video calls")
+    with Spinner("Checking camera system…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "video_devices": "ls -la /dev/video* 2>/dev/null",
+            "usb_cameras":   "lsusb | grep -iE 'camera|webcam|video|logitech|microsoft' 2>/dev/null",
+            "v4l_devices":   "v4l2-ctl --list-devices 2>/dev/null",
+            "camera_module": "lsmod | grep -iE 'uvcvideo|camera|v4l' 2>/dev/null",
+            "dmesg_cam":     "dmesg | grep -iE 'camera|webcam|uvc|video' | tail -10 2>/dev/null",
+            "pipewire_cam":  "pw-cli list-objects 2>/dev/null | grep -i camera | head -5 2>/dev/null",
+            "apps_using":    "fuser /dev/video0 2>/dev/null",
+        })}
+    try:
+        problem = input(f"\n{BOLD}What's the webcam problem? (or Enter for general fix):{R}\n"
+                        f"{C('(e.g. camera not detected, black screen in Zoom, wrong camera selected)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not problem:
+        problem = "My webcam is not working. Diagnose and fix the issue."
+    sys_p = BASE_SYS + """
+Additional instructions for WEBCAM FIX mode:
+- Most common causes: wrong /dev/video device, uvcvideo driver missing, another app holding the camera, PipeWire permissions.
+- For 'not detected': check lsusb and /dev/video*, check if uvcvideo module is loaded.
+- For 'black screen in app': check if another app is using the camera (fuser), check PipeWire/permissions.
+- For 'wrong camera': most apps let you select camera in settings — guide through that first before touching drivers.
+- v4l2-ctl can test camera: explain as 'a tool to check if your camera is working at the system level'.
+- Explain /dev/video0 as 'the address Linux gives your camera'.
+- For Zoom/Teams/Meet: often a browser permission issue first — guide through that before system changes.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role": "user", "content": problem}], slog)
+
+# ── FEATURE 27: App Switcher — Linux equivalents ──────────────────────────────
+def feat_appswitch(backend, bctx, slog):
+    hdr("App Finder — Find Linux alternatives to Windows/Mac apps")
+    try:
+        app = input(f"\n{BOLD}What app or software are you looking for?{R}\n"
+                    f"{C('(e.g. Photoshop, Microsoft Word, After Effects, iTunes, Notepad++)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not app:
+        return
+    sys_p = BASE_SYS + """
+Additional instructions for APP FINDER mode:
+- The user is switching from Windows or Mac and needs Linux equivalents.
+- For each recommendation: explain what it is, how similar it is to the original, and how to install it.
+- Recommend FREE and open source options first, then mention any paid options if much better.
+- Be honest about gaps — if Linux doesn't have a perfect equivalent, say so clearly and suggest the best alternative.
+- For creative apps (Photoshop, Premiere, etc.): recommend GIMP, Inkscape, Kdenlive etc. but acknowledge the learning curve honestly.
+- For Office apps: LibreOffice is usually the answer — explain it handles .docx/.xlsx files.
+- For gaming: mention Steam, Proton compatibility, and Lutris where relevant.
+- For proprietary apps with no Linux version: mention browser-based alternatives or running via Wine/Bottles.
+- After recommending, provide the install command for the top recommendation automatically as the first step.
+- Keep a positive, encouraging tone — Linux has great software, just sometimes different names.
+""" + _sys_ctx_block(bctx)
+    fix_engine(backend, sys_p, [{"role": "user", "content":
+        f"I used to use '{app}' on Windows/Mac. What should I use on Linux? "
+        f"Please recommend the best alternatives and help me install the top one."}], slog)
+
+# ── FEATURE 28: Battery & Power Management ────────────────────────────────────
+def feat_battery(backend, bctx, slog):
+    hdr("Battery & Power — Improve battery life & power settings")
+    with Spinner("Reading power info…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "battery":       "upower -i $(upower -e | grep battery) 2>/dev/null",
+            "power_profile": "powerprofilesctl status 2>/dev/null || tlp-stat -s 2>/dev/null | head -10",
+            "tlp":           "systemctl status tlp 2>/dev/null | head -6",
+            "thermald":      "systemctl status thermald 2>/dev/null | head -6",
+            "cpu_governor":  "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null",
+            "cpu_freq":      "cat /proc/cpuinfo | grep 'cpu MHz' | head -4 2>/dev/null",
+            "temps":         "sensors 2>/dev/null | grep -iE 'core|package|temp' | head -8",
+            "power_supply":  "ls /sys/class/power_supply/ 2>/dev/null",
+            "screen_bright": "cat /sys/class/backlight/*/brightness 2>/dev/null | head -3",
+            "wake_locks":    "cat /proc/wakelocks 2>/dev/null | head -10",
+            "suspend_mode":  "cat /sys/power/state 2>/dev/null",
+        })}
+    try:
+        problem = input(f"\n{BOLD}What's the power/battery issue? (or Enter for general optimisation):{R}\n"
+                        f"{C('(e.g. battery drains fast, laptop overheating, wont sleep, screen brightness)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not problem:
+        problem = "Optimise my laptop's battery life and power settings."
+    sys_p = BASE_SYS + """
+Additional instructions for BATTERY & POWER mode:
+- Most impactful fixes: install TLP (background power manager), set CPU governor to powersave, reduce screen brightness.
+- Explain TLP as 'a background program that automatically saves battery — you install it and forget it'.
+- For overheating: thermald and CPU frequency scaling are the main tools.
+- For 'won't sleep': check power settings, logind.conf, and any wake locks.
+- For battery health: explain charge cycles and capacity fade in plain terms.
+- Power profiles daemon (if present) is the modern way — explain 'power saver', 'balanced', 'performance' modes.
+- Explain CPU governor simply: 'performance = full speed always, powersave = slows down when idle to save battery'.
+- Always install TLP if not present on laptops — it's one of the best Linux battery improvements.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role": "user", "content": problem}], slog)
+
 # ── FEATURE 22: Sound Fix ────────────────────────────────────────────────────
 def feat_sound(backend, bctx, slog):
     hdr("Sound Fix — Fix audio problems")
@@ -1779,6 +1958,11 @@ MENU_ITEMS = [
     ("21", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits", feat_git),
     ("22", "sound",     "Sound Fix",          "No audio, mic not working, HDMI sound",   feat_sound),
     ("23", "display",   "Display Fix",        "Wrong resolution, monitor not detected",  feat_display),
+    ("24", "bluetooth", "Bluetooth Fix",      "Pairing fails, device not found",         feat_bluetooth),
+    ("25", "printer",   "Printer Setup",      "Install printer, fix printing problems",  feat_printer),
+    ("26", "webcam",    "Webcam Fix",         "Camera not detected, black screen",       feat_webcam),
+    ("27", "appswitch", "App Finder",         "Find Linux equivalents of Windows apps",  feat_appswitch),
+    ("28", "battery",   "Battery & Power",    "Improve battery life, fix overheating",   feat_battery),
     ("s",  "settings",  "Settings",           "Configure API key and model",             feat_settings),
 ]
 
@@ -1796,6 +1980,12 @@ def show_menu():
     print(f"    {C('[13]',CYAN,BOLD)} Fix Permissions       {DIM}'Permission denied' errors{R}")
     print(f"    {C('[22]',CYAN,BOLD)} Fix Sound/Audio       {DIM}No sound, mic not working, HDMI audio?{R}")
     print(f"    {C('[23]',CYAN,BOLD)} Fix Display/Screen    {DIM}Wrong resolution, monitor not detected?{R}")
+    print(f"    {C('[24]',CYAN,BOLD)} Fix Bluetooth         {DIM}Device won't pair, keeps disconnecting?{R}")
+    print(f"    {C('[25]',CYAN,BOLD)} Set Up Printer        {DIM}Install printer or fix printing problems{R}")
+    print(f"    {C('[26]',CYAN,BOLD)} Fix Webcam            {DIM}Camera not working in Zoom/Teams/Meet?{R}")
+
+    print(f"\n  {GREEN}{BOLD}🌍 SWITCHING TO LINUX?{R}  {DIM}— Coming from Windows or Mac?{R}")
+    print(f"    {C('[27]',CYAN,BOLD)} Find Linux App        {DIM}\"What replaces Photoshop/Word/iTunes?\" {R}")
 
     print(f"\n  {CYAN}{BOLD}📊 CHECK & MONITOR{R}  {DIM}— See how your computer is doing{R}")
     print(f"    {C('[2]',CYAN,BOLD)}  System Health Check   {DIM}Is everything running OK?{R}")
@@ -1821,6 +2011,7 @@ def show_menu():
     print(f"    {C('[15]',CYAN,BOLD)} Docker Help            {DIM}Container troubleshooting{R}")
     print(f"    {C('[18]',CYAN,BOLD)} SSH Setup              {DIM}Remote access to another computer{R}")
     print(f"    {C('[21]',CYAN,BOLD)} Git Helper             {DIM}Fix conflicts, undo commits, explain diffs{R}")
+    print(f"    {C('[28]',CYAN,BOLD)} Battery & Power        {DIM}Battery draining fast? Laptop overheating?{R}")
 
     print(f"\n  {C('[s]',DIM,BOLD)} Settings    {C('[u]',CYAN,BOLD)} Update TuxGenie    {C('[q]',RED,BOLD)} Quit")
     print(f"{BLUE}{BOLD}{'━'*W}{R}")
@@ -1866,10 +2057,11 @@ def show_help():
 """)
 
 def first_run_check():
-    """Show one-time welcome for brand new users."""
+    """Show one-time welcome + optional setup wizard for brand new users."""
     flag = os.path.join(CFG_DIR, ".welcomed")
     if os.path.exists(flag):
         return
+
     print(f"""
 {GREEN}{BOLD}{'━'*60}{R}
 {GREEN}{BOLD}  🎉  First time? Welcome to TuxGenie!{R}
@@ -1889,6 +2081,52 @@ def first_run_check():
 
   {DIM}Type {BOLD}help{R}{DIM} anytime to see tips.{R}
 """)
+
+    # Offer first-time setup wizard
+    try:
+        ans = input(f"  {GREEN}{BOLD}Would you like a quick setup to get your Linux ready?{R} [{C('y',GREEN,BOLD)}/{C('n',DIM)}]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        ans = "n"
+
+    if ans in ("y", "yes"):
+        print(f"\n  {CYAN}{BOLD}Running First-Time Setup…{R}")
+        print(f"  {DIM}This will update your system, install essentials, and set up basic security.{R}\n")
+
+        setup_steps = [
+            ("Update package list",        "sudo apt-get update -q",                              "safe"),
+            ("Install system updates",     "sudo apt-get upgrade -y",                             "moderate"),
+            ("Install useful tools",       "sudo apt-get install -y curl wget git unzip htop",    "safe"),
+            ("Install media codecs",       "sudo apt-get install -y ubuntu-restricted-extras 2>/dev/null || sudo apt-get install -y mint-meta-codecs 2>/dev/null || true", "safe"),
+            ("Enable firewall",            "sudo ufw enable && sudo ufw status",                  "moderate"),
+            ("Sync system clock",          "sudo timedatectl set-ntp true",                       "safe"),
+        ]
+
+        for desc, cmd, risk in setup_steps:
+            print(f"\n  {DIM}▸ {desc}{R}")
+            try:
+                ch = input(f"    Run this? [{C('y',GREEN,BOLD)}/{C('s',YELLOW,BOLD)}=skip/{C('q',RED,BOLD)}=quit setup]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                break
+            if ch in ("q", "quit"):
+                break
+            if ch in ("s", "skip", "n"):
+                print(C("    ↳ Skipped.", DIM)); continue
+            if ch in ("y", "yes", ""):
+                sudo_pw = None
+                if cmd.strip().startswith("sudo"):
+                    try:
+                        sudo_pw = get_sudo_password()
+                    except KeyboardInterrupt:
+                        break
+                print(f"  {CYAN}▶ Running…{R}")
+                rc, _, _ = run_cmd_live(cmd, sudo_password=sudo_pw)
+                if rc == 0:
+                    ok(desc)
+                else:
+                    warn(f"{desc} — had an issue, continuing anyway.")
+
+        print(f"\n  {GREEN}{BOLD}✓ Setup complete! Your Linux is ready.{R}\n")
+
     try:
         open(flag, "w").write("1")
     except Exception:
