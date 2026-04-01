@@ -8,7 +8,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-TuxGenie v3.5 — Your wish is my command 🐧
+TuxGenie v3.9 — Your wish is my command 🐧
 AI-powered Linux assistant · Powered by Claude · Free forever
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "3.8.0"
+__version__ = "3.9.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -748,6 +748,38 @@ def get_sudo_password():
     print()
     return ''.join(password)
 
+# Session-level sudo password cache — ask once, reuse for all steps
+_SESSION_SUDO_PW = None
+
+def get_or_cache_sudo_password():
+    """Return verified sudo password, prompting only once per session."""
+    global _SESSION_SUDO_PW
+    if _SESSION_SUDO_PW is not None:
+        # Refresh the sudo timestamp silently so it doesn't expire mid-session
+        run_cmd_live("sudo -S -v", sudo_password=_SESSION_SUDO_PW, timeout=10)
+        return _SESSION_SUDO_PW
+    for _attempt in range(3):
+        try:
+            pw = get_sudo_password()
+        except KeyboardInterrupt:
+            raise
+        rc, _, err_txt = run_cmd_live("sudo -S -v", sudo_password=pw, timeout=10)
+        if rc == 0:
+            _SESSION_SUDO_PW = pw
+            return _SESSION_SUDO_PW
+        err_low = err_txt.lower()
+        if "incorrect" in err_low or "sorry" in err_low or rc == 1:
+            if _attempt < 2:
+                print(f"\n  {C('✗ Wrong password — please try again.', RED, BOLD)}")
+            else:
+                warn("Password incorrect 3 times. Cannot proceed with this step.")
+                raise KeyboardInterrupt
+        else:
+            # Some other non-auth error — accept and proceed
+            _SESSION_SUDO_PW = pw
+            return _SESSION_SUDO_PW
+    raise KeyboardInterrupt
+
 def run_cmd_live(cmd, sudo_password=None, timeout=120):
     """Run a command and stream its output line-by-line in real time.
     Returns (returncode, stdout_str, stderr_str)."""
@@ -989,28 +1021,10 @@ def fix_engine(backend, system, messages, session_log, max_rounds=6):
 
             sudo_pw = None
             if cmd.strip().startswith("sudo"):
-                # Retry up to 3 times on wrong password
-                for _attempt in range(3):
-                    try:
-                        sudo_pw = get_sudo_password()
-                    except KeyboardInterrupt:
-                        warn("Stopped. Nothing else will run."); aborted = True; break
-                    # Quick test: verify password before running the real command
-                    _test_rc, _, _test_err = run_cmd_live(
-                        "sudo -S -v", sudo_password=sudo_pw, timeout=10)
-                    if _test_rc == 0:
-                        break
-                    err_low = _test_err.lower()
-                    if "incorrect" in err_low or "sorry" in err_low or _test_rc == 1:
-                        if _attempt < 2:
-                            print(f"\n  {C('✗ Wrong password — please try again.', RED, BOLD)}")
-                        else:
-                            warn("Password incorrect 3 times. Skipping this step.")
-                            sudo_pw = None
-                    else:
-                        break  # some other error, proceed anyway
-                else:
-                    pass
+                try:
+                    sudo_pw = get_or_cache_sudo_password()
+                except KeyboardInterrupt:
+                    warn("Stopped. Nothing else will run."); aborted = True
                 if aborted:
                     break
 
@@ -2220,7 +2234,7 @@ def first_run_check():
                 sudo_pw = None
                 if cmd.strip().startswith("sudo"):
                     try:
-                        sudo_pw = get_sudo_password()
+                        sudo_pw = get_or_cache_sudo_password()
                     except KeyboardInterrupt:
                         break
                 print(f"  {CYAN}▶ Running…{R}")
