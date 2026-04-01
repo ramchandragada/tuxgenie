@@ -1,0 +1,574 @@
+#!/usr/bin/env python3
+"""
+create_deb.py — Builds tuxgenie_3.0.0_all.deb without dpkg-deb.
+
+A .deb file is an ar archive containing:
+  debian-binary   — version string "2.0"
+  control.tar.gz  — DEBIAN/ metadata (control, postinst, prerm, postrm, md5sums)
+  data.tar.gz     — the actual installed files (/usr/bin/tuxgenie, /usr/lib/..., etc.)
+
+Run: python3 create_deb.py
+"""
+
+import io
+import os
+import sys
+import gzip
+import tarfile
+import hashlib
+import time
+import zlib
+import struct
+import math
+
+# ── Icon generator (pure stdlib — no Pillow needed) ──────────────────────────
+
+def _generate_tuxgenie_icon(size):
+    """
+    Draw the TuxGenie icon at any size using only Python stdlib.
+
+    Design (scales with 'size', master grid is 64x64):
+      - Dark navy circle background
+      - Terminal window with title bar + traffic-light dots (red/yellow/green)
+      - Bright-green '>' prompt + cursor block
+      - Tux penguin (black head, white belly, orange beak) in bottom-right
+      - 8-pointed gold star sparkle in top-right  (omitted at < 48px)
+    """
+    img = [[[0, 0, 0, 0] for _ in range(size)] for _ in range(size)]
+    S = size / 64.0
+
+    def p(x, y, r, g, b, a=255):
+        ix, iy = int(x), int(y)
+        if 0 <= ix < size and 0 <= iy < size:
+            img[iy][ix] = [r, g, b, a]
+
+    def disk(cx, cy, rad, r, g, b, a=255):
+        ri = int(rad) + 2
+        r2_out = (rad + 0.5) ** 2
+        r2_in  = max(0.0, rad - 0.5) ** 2
+        for dy in range(-ri, ri + 1):
+            for dx in range(-ri, ri + 1):
+                d2 = dx * dx + dy * dy
+                if d2 > r2_out:
+                    continue
+                if d2 <= r2_in:
+                    p(int(cx) + dx, int(cy) + dy, r, g, b, a)
+                else:
+                    alpha = max(0.0, min(1.0, rad - math.sqrt(d2) + 0.5))
+                    if alpha > 0:
+                        p(int(cx) + dx, int(cy) + dy, r, g, b, int(a * alpha))
+
+    def box(x1, y1, x2, y2, r, g, b, a=255):
+        for y in range(max(0, int(y1)), min(size, int(y2) + 1)):
+            for x in range(max(0, int(x1)), min(size, int(x2) + 1)):
+                p(x, y, r, g, b, a)
+
+    # 1. Dark navy background circle
+    disk(size / 2, size / 2, size / 2 - 0.5, 13, 17, 23)
+
+    # 2. Terminal window body + border
+    tx1, ty1 = int(7 * S), int(9 * S)
+    tx2, ty2 = int(57 * S), int(55 * S)
+    box(tx1, ty1, tx2, ty2, 22, 27, 34)
+    for x in range(tx1, tx2 + 1):
+        p(x, ty1, 48, 54, 61); p(x, ty2, 48, 54, 61)
+    for y in range(ty1, ty2 + 1):
+        p(tx1, y, 48, 54, 61); p(tx2, y, 48, 54, 61)
+
+    # 3. Title bar
+    tbh = max(1, int(11 * S))
+    box(tx1 + 1, ty1 + 1, tx2 - 1, ty1 + tbh, 33, 38, 47)
+
+    # 4. Traffic-light dots (macOS style)
+    dot_y = ty1 + tbh // 2 + 1
+    dot_r = max(1.0, 2.0 * S)
+    disk(tx1 + 6  * S, dot_y, dot_r, 255, 95,  87)   # red
+    disk(tx1 + 12 * S, dot_y, dot_r, 254, 188, 46)   # yellow
+    disk(tx1 + 18 * S, dot_y, dot_r, 40,  200, 64)   # green
+
+    # 5. Bright-green '>' prompt
+    py0 = ty1 + tbh + max(1, int(5 * S))
+    px0 = tx1 + max(1, int(3 * S))
+    arm = max(2, int(5 * S))
+    for i in range(arm + 1):
+        p(px0 + i, py0 + i,           0, 255, 65)
+        p(px0 + i, py0 + 2 * arm - i, 0, 255, 65)
+
+    # 6. Cursor block (semi-transparent green)
+    cx0 = px0 + arm + max(1, int(2 * S))
+    box(cx0, py0, cx0 + max(2, int(4 * S)), py0 + max(2, int(arm * 1.8)), 0, 200, 50, 180)
+
+    # 7. Tux penguin in bottom-right of terminal (32px and above)
+    if size >= 32:
+        pc_x = int(44 * S)
+        pc_y = int(42 * S)
+        pr   = max(4, int(7 * S))
+        eo   = max(1, int(2.5 * S))   # eye horizontal offset
+        er   = max(1, int(1.5 * S))   # eye white radius
+        ep   = max(1, int(0.7 * S))   # pupil radius
+        bw   = max(1, int(1.5 * S))   # beak half-width
+        disk(pc_x, pc_y,              pr,        35,  35,  35)   # black head
+        disk(pc_x, pc_y + int(S),     pr * 0.52, 220, 220, 220)  # white belly
+        disk(pc_x - eo, pc_y - eo,    er,        255, 255, 255)   # left eye white
+        disk(pc_x + eo, pc_y - eo,    er,        255, 255, 255)   # right eye white
+        disk(pc_x - eo, pc_y - eo,    ep,        0,   0,   0)     # left pupil
+        disk(pc_x + eo, pc_y - eo,    ep,        0,   0,   0)     # right pupil
+        box(pc_x - bw, pc_y + int(0.5 * S), pc_x + bw, pc_y + int(2.5 * S), 255, 165, 0)  # orange beak
+
+    # 8. Gold 8-point star sparkle in top-right (48px and above)
+    if size >= 48:
+        scx = int(50 * S)
+        scy = int(15 * S)
+        sr  = max(3, int(5 * S))
+        for ai in range(8):
+            angle  = math.radians(ai * 45)
+            length = sr if ai % 2 == 0 else max(1, sr // 2)
+            for ri in range(1, length + 1):
+                p(int(scx + ri * math.cos(angle)), int(scy + ri * math.sin(angle)), 255, 215, 0)
+        disk(scx, scy, max(1.5, 1.5 * S), 255, 240, 100)
+
+    # 9. Clip everything outside the background circle to transparent
+    r2 = (size / 2) ** 2
+    for y in range(size):
+        for x in range(size):
+            if (x - size / 2) ** 2 + (y - size / 2) ** 2 > r2:
+                img[y][x] = [0, 0, 0, 0]
+
+    # 10. Encode as PNG (RGBA, 8-bit, no interlace)
+    def png_chunk(name, data):
+        body = name + data
+        return (struct.pack('>I', len(data)) + body +
+                struct.pack('>I', zlib.crc32(body) & 0xffffffff))
+
+    raw = b''.join(
+        b'\x00' + bytes(c for pixel in row for c in pixel)
+        for row in img
+    )
+    return (b'\x89PNG\r\n\x1a\n'
+            + png_chunk(b'IHDR', struct.pack('>IIBBBBB', size, size, 8, 6, 0, 0, 0))
+            + png_chunk(b'IDAT', zlib.compress(raw, 9))
+            + png_chunk(b'IEND', b''))
+
+
+# ── Package metadata ──────────────────────────────────────────────────────────
+PACKAGE = "tuxgenie"
+VERSION = "3.6.0"
+ARCH    = "all"
+DEB_OUT = f"{PACKAGE}_{VERSION}_{ARCH}.deb"
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# ── Read the main Python script ───────────────────────────────────────────────
+src = os.path.join(SCRIPT_DIR, "tuxgenie.py")
+if not os.path.exists(src):
+    sys.exit(f"ERROR: {src} not found — run from the ai-terminal directory.")
+
+with open(src, "rb") as fh:
+    TUXGENIE_PY = fh.read()
+
+# ── Generate icons at standard hicolor sizes ─────────────────────────────────
+print("  Generating icons ", end="", flush=True)
+ICONS = {}
+for _sz in (16, 32, 48, 64, 128, 256):
+    ICONS[_sz] = _generate_tuxgenie_icon(_sz)
+    print(".", end="", flush=True)
+print(f" done ({sum(len(v) for v in ICONS.values())//1024} KB total)")
+
+INSTALLED_KB = max(1, (len(TUXGENIE_PY) + sum(len(v) for v in ICONS.values()) + 1023) // 1024 + 8)
+
+# ── File contents (all in-memory) ─────────────────────────────────────────────
+
+LAUNCHER = b"""\
+#!/bin/bash
+exec python3 /usr/lib/tuxgenie/tuxgenie.py "$@"
+"""
+
+CONTROL = f"""\
+Package: {PACKAGE}
+Version: {VERSION}
+Section: utils
+Priority: optional
+Architecture: {ARCH}
+Installed-Size: {INSTALLED_KB}
+Depends: python3 (>= 3.8)
+Recommends: python3-pip
+Conflicts: ai-terminal, tuxgenie (<< {VERSION})
+Replaces: ai-terminal, tuxgenie (<< {VERSION})
+Provides: ai-terminal
+Maintainer: TuxGenie Project <noreply@example.com>
+Homepage: https://github.com/ramchandragada/tuxgenie
+Description: AI-powered Linux assistant using Claude
+ TuxGenie is the ultimate Linux power tool. Describe any problem in plain
+ English and TuxGenie fixes it using Claude AI. Features include: system
+ health dashboard, network diagnostics, security audit, disk management,
+ service control, log analysis, update management, script generation, cron
+ scheduling, permission fixer, boot repair, Docker management, config backup,
+ hardware info, SSH diagnostics, process manager, and session rollback.
+ .
+ Usage: tuxgenie
+ .
+ Requires an Anthropic API key: https://console.anthropic.com
+""".encode()
+
+POSTINST = b"""\
+#!/bin/bash
+set -e
+case "$1" in
+  configure)
+    # Remove old ai-terminal package leftovers
+    rm -f  /usr/bin/aifix 2>/dev/null || true
+    rm -rf /usr/lib/ai-terminal 2>/dev/null || true
+    rm -f  /usr/share/applications/ai-terminal.desktop 2>/dev/null || true
+
+    # Ensure pip is available, then install anthropic SDK
+    if ! python3 -m pip --version >/dev/null 2>&1; then
+        apt-get install -y python3-pip >/dev/null 2>&1 || true
+    fi
+    if python3 -m pip install anthropic --quiet --upgrade 2>/dev/null; then
+        :
+    elif python3 -m pip install anthropic --quiet --upgrade --break-system-packages 2>/dev/null; then
+        :
+    else
+        pip3 install anthropic --quiet --upgrade --break-system-packages 2>/dev/null || true
+    fi
+
+    # Register icons with the desktop environment
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+    fi
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database /usr/share/applications 2>/dev/null || true
+    fi
+
+    echo ""
+    printf "  \\033[32m\\033[1m\\xf0\\x9f\\xa7\\x9e TuxGenie v3.6.0 installed!\\033[0m  Run: tuxgenie\\n"
+    echo ""
+    echo "  You need an Anthropic API key to use this tool."
+    echo "  Get your key at: https://console.anthropic.com"
+    echo ""
+    ;;
+esac
+exit 0
+"""
+
+PRERM = b"""\
+#!/bin/bash
+set -e
+exit 0
+"""
+
+POSTRM = b"""\
+#!/bin/bash
+set -e
+case "$1" in
+  remove|purge)
+    rm -rf /usr/lib/tuxgenie/__pycache__ 2>/dev/null || true
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+        gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
+    fi
+    ;;
+esac
+exit 0
+"""
+
+DESKTOP_ENTRY = b"""\
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TuxGenie
+GenericName=AI Linux Assistant
+Comment=AI-powered Linux assistant using Claude - fix any Linux problem in plain English
+Icon=tuxgenie
+Exec=bash -c "tuxgenie; read -p 'Press Enter to close...'"
+Terminal=true
+Categories=System;TerminalEmulator;Utility;
+Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
+StartupNotify=false
+"""
+
+COPYRIGHT = b"""\
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: tuxgenie
+
+Files: *
+Copyright: 2025 TuxGenie Project
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining
+ a copy of this software and associated documentation files (the
+ "Software"), to deal in the Software without restriction, including
+ without limitation the rights to use, copy, modify, merge, publish,
+ distribute, sublicense, and/or sell copies of the Software, and to
+ permit persons to whom the Software is furnished to do so, subject to
+ the following conditions:
+ .
+ The above copyright notice and this permission notice shall be
+ included in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+"""
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def make_tar_gz(entries):
+    """
+    Build an in-memory .tar.gz.
+
+    entries: list of dicts
+      type='dir'  -> directory entry (data=None)
+      type='file' -> regular file   (data=bytes)
+      keys: path, type, mode (octal int), data
+    All entries stamped uid=0 gid=0 root:root mtime=0.
+    """
+    raw_tar = io.BytesIO()
+    with tarfile.open(fileobj=raw_tar, mode="w") as tar:
+        for e in entries:
+            info          = tarfile.TarInfo(name=e["path"])
+            info.uid      = 0
+            info.gid      = 0
+            info.uname    = "root"
+            info.gname    = "root"
+            info.mtime    = 0
+            info.mode     = e["mode"]
+            if e["type"] == "dir":
+                info.type = tarfile.DIRTYPE
+                info.size = 0
+                tar.addfile(info)
+            else:
+                info.size = len(e["data"])
+                tar.addfile(info, io.BytesIO(e["data"]))
+    raw_tar.seek(0)
+
+    # Gzip with mtime=0 for reproducibility
+    gz_buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=gz_buf, mode="wb", mtime=0) as gz:
+        gz.write(raw_tar.read())
+    return gz_buf.getvalue()
+
+
+def ar_member(name: str, data: bytes) -> bytes:
+    """
+    Format one member of an ar archive.
+    ar header layout (each field is ASCII, space-padded):
+      name   16 bytes
+      mtime  12 bytes  (decimal seconds)
+      uid     6 bytes  (decimal)
+      gid     6 bytes  (decimal)
+      mode    8 bytes  (octal)
+      size   10 bytes  (decimal)
+      magic   2 bytes  0x60 0x0A
+    Data follows, padded to even length with 0x0A.
+    """
+    hdr = (
+        name.encode().ljust(16)[:16]        # identifier
+        + b"0           "[:12]             # mtime = 0
+        + b"0     "                        # uid   = 0
+        + b"0     "                        # gid   = 0
+        + b"100644  "                      # mode  = 100644 octal
+        + str(len(data)).encode().ljust(10)[:10]  # size
+        + b"\x60\x0a"                      # magic
+    )
+    body = data + (b"\n" if len(data) % 2 else b"")
+    return hdr + body
+
+
+def build_deb(control_tgz: bytes, data_tgz: bytes) -> bytes:
+    """Assemble the three ar members into a .deb file."""
+    out = io.BytesIO()
+    out.write(b"!<arch>\n")                            # ar global header
+    out.write(ar_member("debian-binary", b"2.0\n"))
+    out.write(ar_member("control.tar.gz", control_tgz))
+    out.write(ar_member("data.tar.gz",    data_tgz))
+    return out.getvalue()
+
+
+def md5sums_content(file_entries) -> bytes:
+    """Generate the DEBIAN/md5sums file from data_entries."""
+    lines = []
+    for e in file_entries:
+        if e["type"] == "file":
+            path   = e["path"].lstrip("./")
+            digest = hashlib.md5(e["data"]).hexdigest()
+            lines.append(f"{digest}  {path}")
+    lines.sort()
+    return ("\n".join(lines) + "\n").encode()
+
+
+# ── Define the installed files (data.tar.gz contents) ────────────────────────
+
+data_entries = [
+    # directories first
+    {"path": "./",                                       "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/",                                   "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/bin/",                               "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/lib/",                               "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/lib/tuxgenie/",                      "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/",                             "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/doc/",                         "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": f"./usr/share/doc/{PACKAGE}/",              "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/applications/",                "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/",                       "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/",               "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/16x16/",         "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/16x16/apps/",    "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/32x32/",         "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/32x32/apps/",    "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/48x48/",         "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/48x48/apps/",    "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/64x64/",         "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/64x64/apps/",    "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/128x128/",       "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/128x128/apps/",  "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/256x256/",       "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/icons/hicolor/256x256/apps/",  "type": "dir",  "data": None,          "mode": 0o755},
+    # files
+    {"path": "./usr/bin/tuxgenie",
+     "type": "file", "data": LAUNCHER,                                   "mode": 0o755},
+    {"path": "./usr/lib/tuxgenie/tuxgenie.py",
+     "type": "file", "data": TUXGENIE_PY,                                "mode": 0o644},
+    {"path": f"./usr/share/doc/{PACKAGE}/copyright",
+     "type": "file", "data": COPYRIGHT,                                  "mode": 0o644},
+    {"path": "./usr/share/applications/tuxgenie.desktop",
+     "type": "file", "data": DESKTOP_ENTRY,                              "mode": 0o644},
+    # Icons — hicolor theme, 6 sizes
+    {"path": "./usr/share/icons/hicolor/16x16/apps/tuxgenie.png",
+     "type": "file", "data": ICONS[16],                                  "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/32x32/apps/tuxgenie.png",
+     "type": "file", "data": ICONS[32],                                  "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/48x48/apps/tuxgenie.png",
+     "type": "file", "data": ICONS[48],                                  "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/64x64/apps/tuxgenie.png",
+     "type": "file", "data": ICONS[64],                                  "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/128x128/apps/tuxgenie.png",
+     "type": "file", "data": ICONS[128],                                 "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/256x256/apps/tuxgenie.png",
+     "type": "file", "data": ICONS[256],                                 "mode": 0o644},
+]
+
+# ── Define DEBIAN/ control files ──────────────────────────────────────────────
+
+sums = md5sums_content(data_entries)
+
+control_entries = [
+    {"path": "./",           "type": "dir",  "data": None,     "mode": 0o755},
+    {"path": "./control",    "type": "file", "data": CONTROL,  "mode": 0o644},
+    {"path": "./postinst",   "type": "file", "data": POSTINST, "mode": 0o755},
+    {"path": "./prerm",      "type": "file", "data": PRERM,    "mode": 0o755},
+    {"path": "./postrm",     "type": "file", "data": POSTRM,   "mode": 0o755},
+    {"path": "./md5sums",    "type": "file", "data": sums,     "mode": 0o644},
+]
+
+# ── Build ─────────────────────────────────────────────────────────────────────
+
+print(f"  Building {DEB_OUT} ...")
+
+control_tgz = make_tar_gz(control_entries)
+data_tgz    = make_tar_gz(data_entries)
+deb_bytes   = build_deb(control_tgz, data_tgz)
+
+out_path = os.path.join(SCRIPT_DIR, DEB_OUT)
+with open(out_path, "wb") as fh:
+    fh.write(deb_bytes)
+
+size_kb = len(deb_bytes) / 1024
+print(f"  Done!  {out_path}  ({size_kb:.1f} KB)")
+
+# ── Generate install.sh next to the .deb ──────────────────────────────────────
+install_sh_path = os.path.join(SCRIPT_DIR, "install.sh")
+install_sh = f"""\
+#!/bin/bash
+# TuxGenie Installer — double-click this file in your file manager to install.
+# Works on Ubuntu, Debian, Linux Mint, and all Debian-based systems.
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DEB="$SCRIPT_DIR/{DEB_OUT}"
+
+install_tuxgenie() {{
+    echo ""
+    echo "  🧞 TuxGenie Installer"
+    echo "  ─────────────────────────────────────────────"
+
+    if [ ! -f "$DEB" ]; then
+        echo "  ✗ ERROR: Cannot find $DEB"
+        echo "  Make sure install.sh is in the same folder as the .deb file."
+        echo ""
+        read -p "  Press Enter to close..."
+        exit 1
+    fi
+
+    # Check if already installed — show upgrade vs fresh install message
+    OLD_VER=$(dpkg -l tuxgenie 2>/dev/null | awk '/^ii/ {{print $3}}')
+    if [ -n "$OLD_VER" ]; then
+        echo "  Found existing version: $OLD_VER"
+        echo "  Upgrading to v{VERSION} — your API key and settings will be kept."
+    else
+        echo "  Fresh install — installing TuxGenie v{VERSION}."
+    fi
+    echo ""
+    echo "  You may be asked for your password (this is normal for installing software)."
+    echo ""
+
+    if sudo dpkg -i "$DEB"; then
+        echo ""
+        if [ -n "$OLD_VER" ]; then
+            echo "  ✓ Upgraded from v$OLD_VER  →  v{VERSION} successfully!"
+        else
+            echo "  ✓ TuxGenie v{VERSION} installed successfully!"
+        fi
+        echo ""
+        echo "  How to use:"
+        echo "    • Open a Terminal and type:  tuxgenie"
+        echo "    • Or find TuxGenie in your app menu"
+        echo ""
+    else
+        echo ""
+        echo "  ✗ Installation failed. Trying to fix dependencies..."
+        sudo apt-get install -f -y
+        echo ""
+        read -p "  Press Enter to close..."
+        exit 1
+    fi
+
+    read -p "  Press Enter to close..."
+}}
+
+# Try to open a terminal window for the install — works by double-click
+if [ -t 1 ]; then
+    # Already running in a terminal
+    install_tuxgenie
+else
+    # Launched from file manager — open a terminal window
+    SELF="$(realpath "$0")"
+    for term in gnome-terminal x-terminal-emulator xterm konsole xfce4-terminal mate-terminal lxterminal; do
+        if command -v "$term" &>/dev/null; then
+            case "$term" in
+                gnome-terminal) gnome-terminal -- bash "$SELF" --in-terminal ;;
+                *)              "$term" -e "bash '$SELF' --in-terminal" ;;
+            esac
+            exit 0
+        fi
+    done
+    # Fallback: no terminal found, try running directly with pkexec for GUI password prompt
+    sudo dpkg -i "$DEB" && zenity --info --text="TuxGenie v{VERSION} installed!\\nOpen a terminal and type: tuxgenie" 2>/dev/null
+fi
+"""
+
+with open(install_sh_path, "w") as fh:
+    fh.write(install_sh)
+os.chmod(install_sh_path, 0o755)
+print(f"  Done!  {install_sh_path}")
+print()
+print("  -- Share these two files together --")
+print(f"  {DEB_OUT}")
+print(f"  install.sh")
+print()
+print("  Users can double-click install.sh to install TuxGenie.")
+print()
+print("  -- Or install via terminal --")
+print(f"  sudo dpkg -i {DEB_OUT}")
+print()
+print("  -- Run --")
+print(f"  tuxgenie")
+print()
+print("  -- Remove --")
+print(f"  sudo dpkg -r {PACKAGE}")
+print()
