@@ -8,7 +8,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-TuxGenie v3.9 — Your wish is my command 🐧
+TuxGenie v4.0 — Your wish is my command 🐧
 AI-powered Linux assistant · Powered by Claude · Free forever
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "3.9.0"
+__version__ = "4.0.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -547,12 +547,22 @@ Schema:
       "expected_output": "<optional: what success looks like, in plain words>"
     }
   ],
+  "verify_command": "<A command that PROVES the task is done. Must return exit
+                      code 0 ONLY on real success. Examples:
+                      - Install task: 'dpkg -s brave-browser && which brave-browser'
+                      - Fix WiFi: 'ping -c2 8.8.8.8'
+                      - Start service: 'systemctl is-active --quiet nginx'
+                      - Update task: 'apt list --upgradable 2>/dev/null | grep -c upgradable'
+                      NEVER use '|| echo' or '|| true' — the command MUST fail
+                      if the task is NOT actually done.>",
   "success_check": "<how the user can tell the issue is fixed, in plain words>",
   "resolved": false
 }
 
 Rules:
 - ALWAYS start with safe, read-only checks before making any changes.
+- ALWAYS include a verify_command that PROVES the task succeeded. This will be
+  run automatically — do NOT rely on the user to check.
 - dangerous = rm -rf, dd if=, mkfs, fdisk, wipefs, shred, chmod 777 /
 - requires_root: true for anything needing sudo (explain: "needs admin access").
 - Use the correct package manager for the detected distro.
@@ -560,6 +570,20 @@ Rules:
 - If already resolved, return steps:[] and resolved:true.
 - Keep descriptions SHORT but CLEAR. A beginner should understand every step.
 - When a step needs sudo, add to description: "(needs admin password)"
+
+CRITICAL — Preventing failures:
+- NEVER fabricate or guess download URLs. If you don't know the exact URL,
+  use the system package manager (apt/dnf/pacman) or search for it first:
+  e.g. 'apt-cache search brave' or 'flatpak search brave' BEFORE trying to install.
+- ALWAYS verify a package/app name exists before trying to install it:
+  e.g. 'apt-cache show <pkg>' or 'snap info <pkg>' as a first step.
+- If a previous round FAILED, you MUST try a COMPLETELY DIFFERENT approach.
+  Do NOT repeat the same method with minor tweaks. If apt failed, try snap.
+  If snap failed, try flatpak. If flatpak failed, try downloading from the
+  official website. Exhaust all methods.
+- Each step that depends on a previous step must check that the previous step
+  actually worked. For example, do NOT run 'sudo dpkg -i file.deb' without
+  first checking 'test -s file.deb' (file exists and is not empty).
 - RETURN ONLY VALID JSON.
 """
 
@@ -898,12 +922,16 @@ def step_prompt(cmd, risk, yes_to_all):
             return "skip"
         if ch in ("abort","q","exit","quit","stop"):
             return "abort"
-        print(C("  Just type: y, s, or q", DIM))
+        if len(ch) > 10:
+            warn("It looks like you pasted a command. Please use this prompt to approve/skip steps.")
+            print(C("  If you want to run your own commands, press q to quit this task first.", DIM))
+        else:
+            print(C("  Just type: y, s, or q", DIM))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 5 — CORE FIX ENGINE  (shared by all features)
 # ═══════════════════════════════════════════════════════════════════════════════
-def fix_engine(backend, system, messages, session_log, max_rounds=6):
+def fix_engine(backend, system, messages, session_log, max_rounds=10):
     """
     Runs the AI→display→execute→iterate loop.
     backend: AnthropicBackend instance
@@ -960,11 +988,13 @@ def fix_engine(backend, system, messages, session_log, max_rounds=6):
             warn("No steps returned — issue may already be resolved.")
             return
 
-        step_outputs = []
-        aborted      = False
-        yes_to_all   = False
+        step_outputs    = []
+        aborted         = False
+        yes_to_all      = False
 
         for i, step in enumerate(steps, 1):
+            step_failed     = False
+            output_has_errors = False
             risk    = step.get("risk","safe").lower()
             cmd     = step.get("command","").strip()
             desc    = step.get("description","")
@@ -1042,55 +1072,143 @@ def fix_engine(backend, system, messages, session_log, max_rounds=6):
             else:
                 print(f"\n  {CYAN}▶ Running…{R}")
                 rc, stdout, stderr = run_cmd_live(cmd, sudo_password=sudo_pw)
-                if rc == 0:
+
+                # ── Smart success detection ──
+                # Check output for failure patterns even when rc == 0
+                combined_out = (stdout + "\n" + stderr).lower()
+                _FAIL_PATTERNS = [
+                    "error:", "failed", "not found", "no such file",
+                    "permission denied", "unable to locate",
+                    "could not resolve", "404 not found", "403 forbidden",
+                    "connection refused", "E: ", "dpkg: error",
+                    "is not installed", "no candidates",
+                ]
+                output_has_errors = any(p.lower() in combined_out for p in _FAIL_PATTERNS)
+
+                if rc == 0 and not output_has_errors:
                     ok("This step completed successfully.")
+                elif rc == 0 and output_has_errors:
+                    warn("Command ran but output suggests a problem. The AI will review this.")
+                    step_failed = True
                 elif rc == 127:
                     warn("That program is not installed on this system — the AI will find another way.")
+                    step_failed = True
                 elif rc == -1:
                     warn("Command timed out. The AI will try a different approach.")
+                    step_failed = True
                 else:
                     print(C(f"  ✗ Exit {rc}", RED))
                     warn("This step had an issue. The AI will look at this and try to fix it.")
+                    step_failed = True
+
+                # ── Auto-mode circuit breaker ──
+                # If a step fails, stop auto-running — re-plan is needed
+                if step_failed and yes_to_all:
+                    yes_to_all = False
+                    warn("Auto-mode paused — a step failed. Remaining steps need review.")
 
             entry = {"step":i,"command":cmd,"returncode":rc,
-                     "stdout":stdout[:3000],"stderr":stderr[:1000]}
+                     "stdout":stdout[:3000],"stderr":stderr[:1000],
+                     "success": rc == 0 and not output_has_errors}
             step_outputs.append(entry)
             session_log.append(entry)
 
         if aborted:
             return
 
-        sc = plan.get("success_check","")
-        if sc:
-            print(f"\n  {CYAN}{BOLD}How to check if it worked:{R} {sc}")
+        # ── Auto-verification ──
+        # Run verify_command to PROVE the task is done, don't just ask the user
+        verify_cmd = plan.get("verify_command", "").strip()
+        sc = plan.get("success_check", "")
+        any_step_failed = any(
+            not s.get("success", True) for s in step_outputs if not s.get("skipped")
+        )
+        verified = False
+
+        if verify_cmd:
+            print(f"\n{'─'*60}")
+            print(f"  {CYAN}{BOLD}Verifying task completion…{R}")
+            sudo_pw_v = None
+            if verify_cmd.strip().startswith("sudo"):
+                try:
+                    sudo_pw_v = get_or_cache_sudo_password()
+                except KeyboardInterrupt:
+                    pass
+            v_rc, v_stdout, v_stderr = run_cmd_live(verify_cmd, sudo_password=sudo_pw_v, timeout=30)
+            v_combined = (v_stdout + "\n" + v_stderr).lower()
+            v_has_errors = any(p.lower() in v_combined for p in [
+                "error:", "not found", "not installed", "no such file",
+                "failed", "inactive", "dead",
+            ])
+            if v_rc == 0 and not v_has_errors:
+                verified = True
+                print(f"\n  {GREEN}{BOLD}✓ VERIFIED — Task completed successfully!{R}")
+                if sc:
+                    info(sc)
+                print(f"  {DIM}Long live Linux! 🐧{R}")
+                _ask_rating()
+                return
+            else:
+                warn("Verification failed — task is NOT yet complete.")
+                # Add verification output to step_outputs for the AI
+                step_outputs.append({
+                    "step": "verify", "command": verify_cmd,
+                    "returncode": v_rc,
+                    "stdout": v_stdout[:2000], "stderr": v_stderr[:1000],
+                    "success": False
+                })
+        elif not any_step_failed:
+            # No verify_command but all steps passed — ask user as fallback
+            if sc:
+                print(f"\n  {CYAN}{BOLD}How to check if it worked:{R} {sc}")
+            try:
+                time.sleep(0.3)
+                sys.stdout.flush()
+                print(f"\n{'─'*60}")
+                print(f"\n  {GREEN}{BOLD}Did that fix your problem?{R}")
+                ans = input(f"  Type {C('y',GREEN,BOLD)} for yes, {C('n',YELLOW,BOLD)} to keep trying: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye!"); sys.exit(0)
+            if ans in ("y", "yes"):
+                print(f"\n  {GREEN}{BOLD}🎉 Great! Glad it's working now!{R}")
+                print(f"  {DIM}Long live Linux! 🐧{R}")
+                _ask_rating()
+                return
 
         if rnd >= max_rounds:
             warn(f"We've tried {max_rounds} rounds. If it's still not fixed:")
             info("Try asking on https://askubuntu.com or https://reddit.com/r/linux4noobs")
             return
 
-        try:
-            time.sleep(0.3)        # let any stray background output settle
-            sys.stdout.flush()
-            print(f"\n{'─'*60}")
-            print(f"\n  {GREEN}{BOLD}Did that fix your problem?{R}")
-            ans = input(f"  Type {C('y',GREEN,BOLD)} for yes, {C('n',YELLOW,BOLD)} to keep trying: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye!"); sys.exit(0)
+        # ── Better error feedback to AI ──
+        # Clearly tell the AI what failed, what worked, and what NOT to repeat
+        failed_steps = [s for s in step_outputs if not s.get("success", True) and not s.get("skipped")]
+        passed_steps = [s for s in step_outputs if s.get("success", False)]
+        tried_cmds   = [s.get("command","") for s in step_outputs if not s.get("skipped")]
 
-        if ans in ("y","yes"):
-            print(f"\n  {GREEN}{BOLD}🎉 Great! Glad it's working now!{R}")
-            print(f"  {DIM}Long live Linux! 🐧{R}")
-            _ask_rating()
-            return
+        feedback = "NOT YET RESOLVED.\n\n"
+        if failed_steps:
+            feedback += "FAILED steps (DO NOT repeat these commands or approaches):\n"
+            for s in failed_steps:
+                feedback += f"  - Command: {s.get('command','')}\n"
+                feedback += f"    Exit code: {s.get('returncode','?')}\n"
+                err_out = s.get('stderr','') or s.get('stdout','')
+                if err_out:
+                    feedback += f"    Error: {err_out[:500]}\n"
+        if passed_steps:
+            feedback += "\nSteps that WORKED (do not redo these):\n"
+            for s in passed_steps:
+                feedback += f"  - {s.get('command','')}\n"
+        feedback += (
+            "\nYou MUST try a COMPLETELY DIFFERENT approach or method.\n"
+            "Do NOT repeat any of the above failed commands with minor tweaks.\n"
+            "If the previous approach used apt, try snap or flatpak or downloading "
+            "from the official website. Exhaust all alternatives.\n"
+            "Include a verify_command that PROVES the task is done.\n"
+        )
 
-        # Next round
-        messages.append({"role":"assistant","content":raw})
-        messages.append({"role":"user","content":(
-            "Not yet resolved. Command outputs:\n\n"
-            + json.dumps(step_outputs, indent=2)
-            + "\n\nAnalyse and give the next fix steps."
-        )})
+        messages.append({"role": "assistant", "content": raw})
+        messages.append({"role": "user", "content": feedback})
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 6 — 20 FEATURES
