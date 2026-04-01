@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "3.7.0"
+__version__ = "3.8.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -595,6 +595,109 @@ def run_cmd(cmd, timeout=60):
     except Exception as e:
         return -1, "", str(e)
 
+# ── Community feedback helpers ───────────────────────────────────────────────
+
+_GITHUB_REPO = "ramchandragada/tuxgenie"
+
+def _open_github_issue(title, body, labels="bug"):
+    """Open browser with a pre-filled GitHub issue — no token, no server."""
+    import urllib.parse
+    url = ("https://github.com/" + _GITHUB_REPO + "/issues/new?"
+           + urllib.parse.urlencode({"title": title, "body": body, "labels": labels}))
+    subprocess.Popen(f"xdg-open {shlex.quote(url)} 2>/dev/null",
+                     shell=True, start_new_session=True)
+
+def _sanitize_tb(tb_text):
+    """Strip personal info from a traceback before showing/sending it."""
+    home = os.path.expanduser("~")
+    tb_text = tb_text.replace(home, "~")
+    tb_text = re.sub(r'sk-ant-[A-Za-z0-9_\-]{10,}', '[API_KEY_REDACTED]', tb_text)
+    return tb_text
+
+def _ask_rating():
+    """Ask a quick 1-5 rating after a successful fix; offer to report if low."""
+    print(f"\n  {CYAN}Quick question — how helpful was TuxGenie today?{R}")
+    print(f"  {C('5',YELLOW,BOLD)} = Amazing  {C('3',YELLOW)} = OK  {C('1',DIM)} = Didn't help")
+    try:
+        r = input(f"  Rate 1–5 (or Enter to skip): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not r or r not in ("1","2","3","4","5"):
+        return
+    if r in ("4","5"):
+        print(f"  {GREEN}{BOLD}Thank you! That means a lot. ⭐{R}")
+        print(f"  {DIM}Share TuxGenie → https://github.com/{_GITHUB_REPO}{R}")
+    else:
+        print(f"  {YELLOW}Sorry it wasn't more helpful — let's make it better.{R}")
+        try:
+            fb = input(f"  What went wrong? (optional, Enter to skip):\n  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            fb = ""
+        if fb:
+            try:
+                ans = input(f"  Open GitHub to report this? [{C('y',GREEN,BOLD)}/{C('n',DIM)}]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ans = "n"
+            if ans in ("y","yes"):
+                _open_github_issue(
+                    f"[Feedback] Fix didn't work: {fb[:60]}",
+                    f"## Feedback — Fix Didn't Help\n\n**Rating:** {r}/5\n\n**What went wrong:**\n{fb}\n\n**Version:** {__version__}\n",
+                    labels="feedback"
+                )
+                ok("Opening GitHub — review and click Submit Issue.")
+
+def report_crash(exc_type, exc_val, exc_tb, feature="unknown"):
+    """Offer to report an unexpected crash as a GitHub issue."""
+    import traceback as _tb
+    tb_text = _sanitize_tb("".join(_tb.format_exception(exc_type, exc_val, exc_tb)))
+    err_summary = f"{exc_type.__name__}: {str(exc_val)[:120]}"
+
+    print(f"\n{BG_RED}{BOLD}  ⚠  TuxGenie hit an unexpected error  {R}")
+    print(f"\n  {RED}{err_summary}{R}")
+    print(f"\n  {YELLOW}Report this so we can fix it?{R}")
+    print(f"  {DIM}Only this info will be sent — nothing personal:{R}")
+    print(f"  {DIM}  · Error: {err_summary}{R}")
+    print(f"  {DIM}  · Feature: {feature}{R}")
+    print(f"  {DIM}  · Version: {__version__}{R}")
+    print(f"  {DIM}  · OS: (your distro + kernel, from system info){R}")
+    try:
+        ans = input(f"\n  Open GitHub to report? [{C('y',GREEN,BOLD)} = yes / {C('n',DIM)} = no]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        ans = "n"
+    if ans in ("y","yes"):
+        body = (f"## Bug Report (auto-generated)\n\n"
+                f"**Version:** {__version__}\n**Feature:** {feature}\n\n"
+                f"## Error\n```\n{tb_text[:3000]}\n```\n\n"
+                f"## Steps to reproduce\n(What were you doing when this happened?)\n")
+        _open_github_issue(f"[Bug] {err_summary[:80]}", body, labels="bug")
+        ok("Opening GitHub — review and click Submit Issue. Thank you!")
+    else:
+        info(f"Report manually: https://github.com/{_GITHUB_REPO}/issues")
+
+def feat_feedback():
+    """Let user submit a feature request directly from the app."""
+    hdr("Submit Feature Request — Shape the future of TuxGenie")
+    print(f"\n  {DIM}Your ideas help make TuxGenie better for everyone worldwide.{R}")
+    print(f"  {DIM}This opens GitHub in your browser with your idea pre-filled.{R}")
+    print(f"  {DIM}(You'll need a free GitHub account to submit — it takes 30 seconds){R}\n")
+    try:
+        idea = input(f"  {BOLD}What feature would you like?{R}\n"
+                     f"  {C('(e.g. VPN setup, gaming guide, auto backup)',DIM)}\n  > ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not idea:
+        return
+    try:
+        detail = input(f"\n  {DIM}Any more detail? (optional, Enter to skip):{R}\n  > ").strip()
+    except (EOFError, KeyboardInterrupt):
+        detail = ""
+    body = (f"## Feature Request\n\n**What would you like TuxGenie to do?**\n{idea}\n\n"
+            + (f"**More detail:**\n{detail}\n\n" if detail else "")
+            + f"**TuxGenie Version:** {__version__}\n\n---\n*Submitted from within TuxGenie*\n")
+    print(f"\n  {CYAN}Opening GitHub in your browser…{R}")
+    _open_github_issue(f"[Feature Request] {idea[:70]}", body, labels="enhancement")
+    ok("Review your request and click 'Submit new issue' — thank you! 🐧")
+
 # GUI launcher commands — these open windows and must not flood the terminal
 _GUI_LAUNCHERS = (
     "xdg-open", "gnome-open", "gio open",
@@ -964,6 +1067,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=6):
         if ans in ("y","yes"):
             print(f"\n  {GREEN}{BOLD}🎉 Great! Glad it's working now!{R}")
             print(f"  {DIM}Long live Linux! 🐧{R}")
+            _ask_rating()
             return
 
         # Next round
@@ -1964,6 +2068,7 @@ MENU_ITEMS = [
     ("27", "appswitch", "App Finder",         "Find Linux equivalents of Windows apps",  feat_appswitch),
     ("28", "battery",   "Battery & Power",    "Improve battery life, fix overheating",   feat_battery),
     ("s",  "settings",  "Settings",           "Configure API key and model",             feat_settings),
+    ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                   None),
 ]
 
 def show_menu():
@@ -2013,7 +2118,7 @@ def show_menu():
     print(f"    {C('[21]',CYAN,BOLD)} Git Helper             {DIM}Fix conflicts, undo commits, explain diffs{R}")
     print(f"    {C('[28]',CYAN,BOLD)} Battery & Power        {DIM}Battery draining fast? Laptop overheating?{R}")
 
-    print(f"\n  {C('[s]',DIM,BOLD)} Settings    {C('[u]',CYAN,BOLD)} Update TuxGenie    {C('[q]',RED,BOLD)} Quit")
+    print(f"\n  {C('[s]',DIM,BOLD)} Settings    {C('[u]',CYAN,BOLD)} Update    {C('[f]',MAGENTA,BOLD)} Suggest a Feature    {C('[q]',RED,BOLD)} Quit")
     print(f"{BLUE}{BOLD}{'━'*W}{R}")
     print(f"""
   {GREEN}{BOLD}💡 EASY TIP:{R} You don't need to pick a number!
@@ -2210,9 +2315,14 @@ def main():
             show_menu(); continue
         if choice.lower() in ("u", "update"):
             feat_self_update(); continue
+        if choice.lower() in ("f", "feedback", "feature", "suggest"):
+            feat_feedback(); continue
 
         if choice in feature_map:
             fn = feature_map[choice]
+            if fn is None:
+                continue
+            _active_feature = choice
             fn(backend, bctx, session_log)
             save_session(session_log)
             print(f"\n  {DIM}Type a number, describe a problem, or type {BOLD}menu{R}{DIM} / {BOLD}help{R}{DIM} / {BOLD}q{R}")
@@ -2226,4 +2336,13 @@ def main():
     save_session(session_log)
 
 if __name__ == "__main__":
-    main()
+    _active_feature = "startup"
+    try:
+        main()
+    except SystemExit:
+        pass
+    except KeyboardInterrupt:
+        print(f"\n\n  {YELLOW}{BOLD}Goodbye! Long Live Linux 🐧{R}\n")
+    except Exception:
+        import sys as _sys
+        report_crash(*_sys.exc_info(), feature=_active_feature)
