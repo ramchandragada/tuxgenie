@@ -152,7 +152,7 @@ def _generate_tuxgenie_icon(size):
 
 # ── Package metadata ──────────────────────────────────────────────────────────
 PACKAGE = "tuxgenie"
-VERSION = "3.8.0"
+VERSION = os.environ.get("TUXGENIE_VERSION", "3.9.0")
 ARCH    = "all"
 DEB_OUT = f"{PACKAGE}_{VERSION}_{ARCH}.deb"
 
@@ -241,7 +241,7 @@ case "$1" in
     fi
 
     echo ""
-    printf "  \\033[32m\\033[1m\\xf0\\x9f\\xa7\\x9e TuxGenie v3.8.0 installed!\\033[0m  Run: tuxgenie\\n"
+    printf "  \\033[32m\\033[1m\\xf0\\x9f\\xa7\\x9e TuxGenie v{VERSION} installed!\\033[0m  Run: tuxgenie\\n"
     echo ""
     echo "  You need an Anthropic API key to use this tool."
     echo "  Get your key at: https://console.anthropic.com"

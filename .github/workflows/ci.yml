@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest ruff
+          pip install -r requirements.txt
+
+      - name: Lint with ruff
+        run: ruff check tuxgenie.py --select E,F,W --ignore E501
+
+      - name: Check syntax
+        run: python -c "import ast; ast.parse(open('tuxgenie.py').read()); print('Syntax OK')"
+
+      - name: Run tests
+        run: pytest tests/ -v

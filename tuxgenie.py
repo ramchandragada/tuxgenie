@@ -1986,7 +1986,11 @@ def feat_self_update():
 
         # Install
         print(f"\n  {CYAN}▶ Installing v{latest}…{R}")
-        rc, _, _ = run_cmd_live(f"sudo dpkg -i {shlex.quote(tmp_deb)}")
+        try:
+            inst_pw = get_or_cache_sudo_password()
+        except KeyboardInterrupt:
+            warn("Installation cancelled."); return
+        rc, _, _ = run_cmd_live(f"sudo dpkg -i {shlex.quote(tmp_deb)}", sudo_password=inst_pw)
         if rc == 0:
             print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
             print(f"  {YELLOW}Please restart TuxGenie to use the new version.{R}\n")
