@@ -8,7 +8,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-TuxGenie v4.1 — Your wish is my command 🐧
+TuxGenie v4.2 — Your wish is my command 🐧
 AI-powered Linux assistant · Powered by Claude · Free forever
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.1.0"
+__version__ = "4.2.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2152,10 +2152,6 @@ def feat_self_update():
     print(f"\n  Installed version: {CYAN}{BOLD}v{__version__}{R}")
     print(f"  {DIM}Checking for updates…{R}", flush=True)
 
-    def _ver(v):
-        try:    return tuple(int(x) for x in str(v).strip().split("."))
-        except: return (0,)
-
     try:
         req = urllib.request.Request(
             _UPDATE_URL, headers={"User-Agent": f"TuxGenie/{__version__}"})
@@ -2176,6 +2172,8 @@ def feat_self_update():
 
         if _ver(latest) <= _ver(__version__):
             ok(f"You are already on the latest version (v{__version__}). Nothing to do!")
+            # Clear cache so startup check doesn't nag
+            _save_update_cache({"last_check": time.time(), "latest": latest})
             return
 
         print(f"\n  {GREEN}{BOLD}New version available: v{latest}{R}")
@@ -2194,40 +2192,178 @@ def feat_self_update():
         if ans not in ("y", "yes"):
             info("Update cancelled. Run option [u] anytime to update later."); return
 
-        # Download
-        tmp_deb = os.path.join("/tmp", deb_name)
-        print(f"\n  {CYAN}▶ Downloading v{latest}…{R}", flush=True)
-        try:
-            def _progress(count, block, total):
-                if total > 0:
-                    pct = min(100, int(count * block * 100 / total))
-                    bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
-                    print(f"\r  {CYAN}{bar}{R} {pct}%", end="", flush=True)
-            urllib.request.urlretrieve(deb_url, tmp_deb, _progress)
-            print()
-        except Exception as e:
-            err(f"Download failed: {e}"); return
-        ok(f"Downloaded {deb_name}")
-
-        # Install
-        print(f"\n  {CYAN}▶ Installing v{latest}…{R}")
-        try:
-            inst_pw = get_or_cache_sudo_password()
-        except KeyboardInterrupt:
-            warn("Installation cancelled."); return
-        rc, _, _ = run_cmd_live(f"sudo dpkg -i {shlex.quote(tmp_deb)}", sudo_password=inst_pw)
-        if rc == 0:
-            print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
-            print(f"  {YELLOW}Please restart TuxGenie to use the new version.{R}\n")
-        else:
-            err("Installation failed.")
-            info(f"Try manually:  sudo dpkg -i {tmp_deb}")
+        _do_update_install(deb_url, deb_name, latest)
 
     except urllib.error.URLError:
         warn("Could not reach the update server — check your internet connection.")
         info("Manual download: https://github.com/ramchandragada/tuxgenie/releases/latest")
     except Exception as e:
         warn(f"Update check failed: {e}")
+
+# ── Startup update check ─────────────────────────────────────────────────────
+_UPDATE_CACHE = os.path.join(CFG_DIR, "update_check.json")
+
+def _ver(v):
+    """Parse version string '4.1.0' into tuple (4, 1, 0)."""
+    try:    return tuple(int(x) for x in str(v).strip().split("."))
+    except: return (0,)
+
+def _version_gap(current, latest):
+    """Return how many minor versions behind: 4.0→4.2 = 2, 4.0→5.0 = 10."""
+    c, l = _ver(current), _ver(latest)
+    if l <= c:
+        return 0
+    # Major version diff counts as 10 minors
+    return (l[0] - c[0]) * 10 + (l[1] if len(l) > 1 else 0) - (c[1] if len(c) > 1 else 0)
+
+def _load_update_cache():
+    """Load last update check result from disk."""
+    try:
+        with open(_UPDATE_CACHE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_update_cache(data):
+    """Save update check result to disk."""
+    try:
+        os.makedirs(CFG_DIR, exist_ok=True)
+        with open(_UPDATE_CACHE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+def _do_update_install(deb_url, deb_name, latest):
+    """Download and install a .deb update. Returns True on success."""
+    tmp_deb = os.path.join("/tmp", deb_name)
+    print(f"\n  {CYAN}▶ Downloading v{latest}…{R}", flush=True)
+    try:
+        def _progress(count, block, total):
+            if total > 0:
+                pct = min(100, int(count * block * 100 / total))
+                bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+                print(f"\r  {CYAN}{bar}{R} {pct}%", end="", flush=True)
+        urllib.request.urlretrieve(deb_url, tmp_deb, _progress)
+        print()
+    except Exception as e:
+        err(f"Download failed: {e}"); return False
+    ok(f"Downloaded {deb_name}")
+
+    print(f"\n  {CYAN}▶ Installing v{latest}…{R}")
+    try:
+        inst_pw = get_or_cache_sudo_password()
+    except KeyboardInterrupt:
+        warn("Installation cancelled."); return False
+    rc, _, _ = run_cmd_live(f"sudo dpkg -i {shlex.quote(tmp_deb)}", sudo_password=inst_pw)
+    if rc == 0:
+        print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
+        print(f"  {YELLOW}Restarting TuxGenie…{R}\n")
+        # Re-exec ourselves so the new version takes over
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    else:
+        err("Installation failed.")
+        info(f"Try manually:  sudo dpkg -i {tmp_deb}")
+        return False
+
+def startup_update_check():
+    """Check for updates on startup. Runs at most once per day.
+    - 1 minor version behind → recommend update (yellow banner)
+    - 2+ minor versions behind → force update (red banner, blocks until updated)
+    - Offline → skip silently, never block the user
+    """
+    # Check cache — only hit the network once per day
+    cache = _load_update_cache()
+    last_check = cache.get("last_check", 0)
+    now = time.time()
+    one_day = 86400
+
+    if now - last_check < one_day and cache.get("latest"):
+        # Use cached result
+        latest    = cache["latest"]
+        deb_url   = cache.get("deb_url")
+        deb_name  = cache.get("deb_name")
+        notes     = cache.get("notes", "")
+    else:
+        # Fetch from GitHub (with short timeout to not slow startup)
+        try:
+            req = urllib.request.Request(
+                _UPDATE_URL,
+                headers={"User-Agent": f"TuxGenie/{__version__}"}
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+            latest = data.get("tag_name", "").lstrip("v").strip()
+            notes  = (data.get("body") or "")[:300].strip()
+            deb_url = deb_name = None
+            for asset in data.get("assets", []):
+                if asset.get("name", "").endswith("_all.deb"):
+                    deb_url  = asset["browser_download_url"]
+                    deb_name = asset["name"]
+                    break
+            # Save to cache
+            _save_update_cache({
+                "last_check": now, "latest": latest,
+                "deb_url": deb_url, "deb_name": deb_name, "notes": notes,
+            })
+        except Exception:
+            # Offline or server error — skip silently, never block the user
+            return
+
+    if not latest:
+        return
+
+    gap = _version_gap(__version__, latest)
+
+    if gap <= 0:
+        return  # Already up to date
+
+    # ── 1 minor version behind: recommend (yellow banner, skippable) ──
+    if gap == 1:
+        print(f"\n  {YELLOW}{BOLD}┌─────────────────────────────────────────────┐{R}")
+        print(f"  {YELLOW}{BOLD}│  Update available: v{__version__} → v{latest:<10s}      │{R}")
+        print(f"  {YELLOW}{BOLD}└─────────────────────────────────────────────┘{R}")
+        if notes:
+            print(f"  {DIM}{notes[:150]}{R}")
+        if deb_url and deb_name:
+            try:
+                ans = input(f"\n  Update now? [{C('y',GREEN,BOLD)} = yes  {C('Enter',DIM)} = skip]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return
+            if ans in ("y", "yes"):
+                _do_update_install(deb_url, deb_name, latest)
+        else:
+            info("Update: pip install --upgrade tuxgenie")
+        print()
+        return
+
+    # ── 2+ minor versions behind: force update (red banner, blocks) ──
+    print(f"\n  {BG_RED}{BOLD}  ┌──────────────────────────────────────────────────────┐  {R}")
+    print(f"  {BG_RED}{BOLD}  │  UPDATE REQUIRED: v{__version__} → v{latest:<10s}                │  {R}")
+    print(f"  {BG_RED}{BOLD}  │  Your version is {gap} releases behind.                  │  {R}")
+    print(f"  {BG_RED}{BOLD}  │  Please update to continue using TuxGenie.            │  {R}")
+    print(f"  {BG_RED}{BOLD}  └──────────────────────────────────────────────────────┘  {R}")
+    if notes:
+        print(f"  {DIM}{notes[:200]}{R}")
+
+    if deb_url and deb_name:
+        while True:
+            try:
+                ans = input(f"\n  {BOLD}Update now? [{C('y',GREEN,BOLD)} = yes  {C('q',RED,BOLD)} = quit]: {R}").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n  {RED}Update required to continue. Exiting.{R}")
+                sys.exit(0)
+            if ans in ("y", "yes"):
+                _do_update_install(deb_url, deb_name, latest)
+                return  # if install failed, loop back to ask again
+            if ans in ("q", "quit", "exit"):
+                print(f"\n  {RED}Update required to continue. Exiting.{R}")
+                sys.exit(0)
+            print(C("  Please type y to update or q to quit.", DIM))
+    else:
+        err("No .deb available. Please update manually:")
+        info("pip install --upgrade tuxgenie")
+        info("Then restart tuxgenie.")
+        sys.exit(1)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 7 — PROACTIVE STARTUP HEALTH CHECK
@@ -2503,6 +2639,7 @@ def main():
     args = parser.parse_args()
 
     banner()
+    startup_update_check()
     backend = load_backend()
 
     with Spinner("Collecting system info…"):

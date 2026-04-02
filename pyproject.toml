@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tuxgenie"
-version = "4.1.0"
+version = "4.2.0"
 description = "AI-powered Linux assistant — fix any Linux problem in plain English"
 readme = "README.md"
 license = "MIT"
