@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.2.1"
+__version__ = "4.2.2"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2250,12 +2250,23 @@ def _ver(v):
     except: return (0,)
 
 def _version_gap(current, latest):
-    """Return how many minor versions behind: 4.0→4.2 = 2, 4.0→5.0 = 10."""
+    """Return how many releases behind (major=10, minor=1, patch=1).
+    4.2.0→4.2.1 = 1, 4.1→4.2 = 1, 4.0→4.2 = 2, 4.0→5.0 = 10."""
     c, l = _ver(current), _ver(latest)
     if l <= c:
         return 0
-    # Major version diff counts as 10 minors
-    return (l[0] - c[0]) * 10 + (l[1] if len(l) > 1 else 0) - (c[1] if len(c) > 1 else 0)
+    # Pad to 3 elements
+    c = c + (0,) * (3 - len(c))
+    l = l + (0,) * (3 - len(l))
+    # Major version diff counts as 10
+    major_gap = (l[0] - c[0]) * 10
+    minor_gap = l[1] - c[1]
+    patch_gap = l[2] - c[2]
+    total = major_gap + minor_gap
+    # If only patch changed (same major.minor), still count as 1
+    if total == 0 and patch_gap > 0:
+        return 1
+    return max(total, 0)
 
 def _load_update_cache():
     """Load last update check result from disk."""
@@ -2312,13 +2323,13 @@ def startup_update_check():
     - 2+ minor versions behind → force update (red banner, blocks until updated)
     - Offline → skip silently, never block the user
     """
-    # Check cache — only hit the network once per day
+    # Check cache — only hit the network once every 4 hours
     cache = _load_update_cache()
     last_check = cache.get("last_check", 0)
     now = time.time()
-    one_day = 86400
+    cache_ttl = 14400  # 4 hours — catches new releases quickly without hammering API
 
-    if now - last_check < one_day and cache.get("latest"):
+    if now - last_check < cache_ttl and cache.get("latest"):
         # Use cached result
         latest    = cache["latest"]
         deb_url   = cache.get("deb_url")
