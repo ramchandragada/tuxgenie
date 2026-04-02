@@ -8,7 +8,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-TuxGenie v4.0 — Your wish is my command 🐧
+TuxGenie v4.1 — Your wish is my command 🐧
 AI-powered Linux assistant · Powered by Claude · Free forever
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.0.0"
+__version__ = "4.1.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -134,6 +134,33 @@ def save_cfg(updates: dict):
 
 # ── Backend ──────────────────────────────────────────────────────────────────
 
+# ── Smart model routing ───────────────────────────────────────────────────────
+# Simple tasks (install X, update, restart service) use Haiku (~80% cheaper).
+# Complex tasks (debugging, security audit, multi-step fixes) use Sonnet.
+_SIMPLE_KEYWORDS = [
+    "install", "update", "upgrade", "remove", "uninstall", "restart",
+    "start", "stop", "enable", "disable", "reboot", "shutdown",
+    "open", "launch", "check for updates", "free up", "clean",
+]
+_COMPLEX_KEYWORDS = [
+    "debug", "diagnose", "not working", "error", "fail", "broken",
+    "security", "audit", "slow", "crash", "permission", "boot",
+    "network", "can't connect", "won't", "doesn't", "conflict",
+]
+_HAIKU_MODEL  = "claude-haiku-4-5-20251001"
+_SONNET_MODEL = "claude-sonnet-4-6"
+
+def _classify_task(text: str) -> str:
+    """Return 'haiku' for simple tasks, 'sonnet' for complex ones."""
+    t = text.lower()
+    complex_score = sum(1 for k in _COMPLEX_KEYWORDS if k in t)
+    simple_score  = sum(1 for k in _SIMPLE_KEYWORDS  if k in t)
+    if complex_score > simple_score:
+        return "sonnet"
+    if simple_score > 0 and complex_score == 0:
+        return "haiku"
+    return "sonnet"  # default to sonnet when uncertain
+
 class AnthropicBackend:
     def __init__(self, api_key, model="claude-sonnet-4-6"):
         global _anthropic
@@ -172,22 +199,65 @@ class AnthropicBackend:
             import anthropic as _anth
             _anthropic = _anth
         self.model  = model
+        self.base_model = model  # user's chosen model (for settings)
+        self.auto_model = True   # enable smart model routing by default
         self.client = _anthropic.Anthropic(api_key=api_key)
-    def label(self): return f"Anthropic · {self.model}"
-    def ask(self, system, messages):
+        self._session_input_tokens  = 0
+        self._session_output_tokens = 0
+
+    def label(self):
+        return f"Anthropic · {self.model}"
+
+    def select_model_for_task(self, user_text: str, round_num: int = 1):
+        """Auto-select the cheapest model that can handle the task.
+        Round 1 simple tasks → Haiku. Retries or complex → Sonnet."""
+        if not self.auto_model:
+            return  # user manually picked a model, respect it
+        if round_num > 1:
+            # If first attempt failed, escalate to Sonnet
+            if self.model != _SONNET_MODEL and self.base_model != "claude-opus-4-6":
+                self.model = _SONNET_MODEL
+            return
+        complexity = _classify_task(user_text)
+        if complexity == "haiku" and self.base_model != "claude-opus-4-6":
+            self.model = _HAIKU_MODEL
+        else:
+            self.model = self.base_model
+
+    def ask(self, system, messages, max_tokens=4096):
         """Streaming call — prints a live progress counter while receiving."""
         chunks = []
         char_count = 0
         with self.client.messages.stream(
-            model=self.model, max_tokens=4096,
+            model=self.model, max_tokens=max_tokens,
             system=system, messages=messages
         ) as stream:
             for text in stream.text_stream:
                 chunks.append(text)
                 char_count += len(text)
                 print(f"\r  {CYAN}⚡ Receiving… {char_count} chars{R}", end="", flush=True)
+        # Track token usage from the stream's final message
+        final = stream.get_final_message()
+        if final and final.usage:
+            self._session_input_tokens  += final.usage.input_tokens
+            self._session_output_tokens += final.usage.output_tokens
         print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
         return "".join(chunks)
+
+    def session_cost_estimate(self) -> str:
+        """Return estimated session cost based on tracked tokens."""
+        # Pricing per million tokens (approximate, as of 2025)
+        model_prices = {
+            "claude-opus-4-6":          (15.0, 75.0),   # input, output per 1M tokens
+            "claude-sonnet-4-6":        (3.0, 15.0),
+            "claude-haiku-4-5-20251001":(0.80, 4.0),
+        }
+        # Use average pricing since model may switch mid-session
+        p_in, p_out = model_prices.get(self.model, (3.0, 15.0))
+        cost = (self._session_input_tokens * p_in + self._session_output_tokens * p_out) / 1_000_000
+        return (f"Session tokens: ~{self._session_input_tokens:,} in + "
+                f"~{self._session_output_tokens:,} out · "
+                f"Est. cost: ${cost:.4f}")
 
 # ── Config / API key ─────────────────────────────────────────────────────────
 def _load_api_key(cfg):
@@ -241,8 +311,13 @@ def feat_settings(backend, bctx, slog):
     """Settings: view/change API key and model."""
     hdr("Settings")
     info(f"Backend: {backend.label()}")
+    auto_tag = C(" (auto-routing ON)", GREEN) if backend.auto_model else ""
+    print(f"  {DIM}Smart model routing:{R}{auto_tag}")
+    if backend._session_input_tokens > 0:
+        print(f"  {DIM}{backend.session_cost_estimate()}{R}")
     print(f"\n  {C('[1]',CYAN)} Change API key")
     print(f"  {C('[2]',CYAN)} Change model")
+    print(f"  {C('[3]',CYAN)} Toggle smart model routing (auto Haiku/Sonnet)")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -269,12 +344,21 @@ def feat_settings(backend, bctx, slog):
             if 0 <= idx < len(AVAILABLE_MODELS):
                 chosen = AVAILABLE_MODELS[idx][0]
                 backend.model = chosen
+                backend.base_model = chosen
+                backend.auto_model = False  # manual selection disables auto-routing
                 save_cfg({"model": chosen})
                 ok(f"Model set to {chosen}")
+                info("Smart model routing disabled (you chose a specific model).")
             else:
                 warn("Invalid selection.")
         except (ValueError, EOFError, KeyboardInterrupt):
             warn("Invalid selection.")
+    elif ch == "3":
+        backend.auto_model = not backend.auto_model
+        if backend.auto_model:
+            ok("Smart model routing ON — Haiku for simple tasks, Sonnet for complex ones (saves ~80% on simple tasks).")
+        else:
+            ok(f"Smart model routing OFF — always using {backend.base_model}.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 3 — SYSTEM CONTEXT COLLECTORS
@@ -305,7 +389,7 @@ def _r(cmd, t=6):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True,
                            text=True, timeout=t)
-        return (r.stdout.strip() or r.stderr.strip())[:2000]
+        return (r.stdout.strip() or r.stderr.strip())[:1000]
     except Exception:
         return ""
 
@@ -601,8 +685,8 @@ DANGER_RE = [
 def is_dangerous(cmd):
     return any(re.search(p, cmd) for p in DANGER_RE)
 
-def ask_ai(backend, system, messages):
-    return backend.ask(system, messages)
+def ask_ai(backend, system, messages, max_tokens=4096):
+    return backend.ask(system, messages, max_tokens=max_tokens)
 
 def clean_json(text):
     text = re.sub(r"^```(?:json)?\s*\n?","",text.strip(),flags=re.MULTILINE)
@@ -931,6 +1015,14 @@ def step_prompt(cmd, risk, yes_to_all):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 5 — CORE FIX ENGINE  (shared by all features)
 # ═══════════════════════════════════════════════════════════════════════════════
+def _prune_messages(messages, max_keep=6):
+    """Keep conversation history bounded to save tokens.
+    Keeps: first user message (the original task) + last max_keep messages."""
+    if len(messages) <= max_keep + 1:
+        return messages
+    # Always keep the first message (original task description)
+    return [messages[0]] + messages[-(max_keep):]
+
 def fix_engine(backend, system, messages, session_log, max_rounds=10):
     """
     Runs the AI→display→execute→iterate loop.
@@ -940,12 +1032,27 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
     if not backend:
         err("No AI backend configured. Run settings to set up your API key.")
         return
+
+    # ── Smart model routing: pick cheapest model for the task ──
+    user_text = messages[0].get("content", "") if messages else ""
+    backend.select_model_for_task(user_text, round_num=1)
     print(f"\n  {CYAN}{BOLD}⚡ AI: {backend.label()}{R}")
 
     for rnd in range(1, max_rounds+1):
         hdr(f"Round {rnd}/{max_rounds}")
+
+        # Escalate model on retry rounds (Haiku failed → Sonnet)
+        if rnd > 1:
+            backend.select_model_for_task(user_text, round_num=rnd)
+
+        # Prune old messages to prevent token bloat
+        messages = _prune_messages(messages)
+
+        # Dynamic max_tokens: simple tasks need less output
+        out_tokens = 2048 if _classify_task(user_text) == "haiku" else 4096
+
         try:
-            raw = ask_ai(backend, system, messages)
+            raw = ask_ai(backend, system, messages, max_tokens=out_tokens)
         except RuntimeError as e:
             msg = str(e)
             if "401" in msg or "403" in msg or "invalid_api_key" in msg.lower():
@@ -1108,7 +1215,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     warn("Auto-mode paused — a step failed. Remaining steps need review.")
 
             entry = {"step":i,"command":cmd,"returncode":rc,
-                     "stdout":stdout[:3000],"stderr":stderr[:1000],
+                     "stdout":stdout[:1500],"stderr":stderr[:500],
                      "success": rc == 0 and not output_has_errors}
             step_outputs.append(entry)
             session_log.append(entry)
@@ -2436,6 +2543,8 @@ def main():
             choice = input(f"\n  {BOLD}{BLUE}TuxGenie >{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n  {YELLOW}{BOLD}Goodbye! Long Live Linux 🐧{R}")
+            if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
+                print(f"  {DIM}{backend.session_cost_estimate()}{R}")
             print(f"  {DIM}Thank you for using TuxGenie by Aspera Technologies.{R}\n")
             break
 

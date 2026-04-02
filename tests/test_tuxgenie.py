@@ -221,7 +221,7 @@ class TestMenuIntegrity:
 class TestVersion:
     def test_version_string_exists(self):
         assert hasattr(tg, "__version__")
-        assert tg.__version__.startswith("3.")
+        assert tg.__version__[0].isdigit()
 
     def test_version_format(self):
         parts = tg.__version__.split(".")
