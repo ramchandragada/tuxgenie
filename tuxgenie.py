@@ -8,7 +8,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-TuxGenie v4.2 — Your wish is my command 🐧
+TuxGenie v4.3 — Your wish is my command 🐧
 AI-powered Linux assistant · Powered by Claude · Free forever
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.2.2"
+__version__ = "4.3.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -47,6 +47,22 @@ try:
     import readline
 except ImportError:
     pass
+
+def _rl(ansi_str):
+    """Wrap ANSI escape codes for readline-safe input() prompts.
+    Without this, readline miscounts prompt width and text disappears
+    or wraps incorrectly when the user types long input."""
+    return re.sub(r'(\033\[[0-9;]*m)', r'\001\1\002', ansi_str)
+
+# Override builtin input to auto-fix ANSI prompts for readline
+_builtin_input = input
+def _safe_input(prompt=""):
+    """input() replacement that auto-wraps ANSI codes for readline."""
+    if '\033[' in prompt:
+        prompt = _rl(prompt)
+    return _builtin_input(prompt)
+import builtins
+builtins.input = _safe_input
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 1 — ANSI + UI
@@ -1075,15 +1091,23 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
 
     # ── Smart model routing: pick cheapest model for the task ──
     user_text = messages[0].get("content", "") if messages else ""
+    prev_model = backend.model
     backend.select_model_for_task(user_text, round_num=1)
-    print(f"\n  {CYAN}{BOLD}⚡ AI: {backend.label()}{R}")
+    if backend.auto_model and backend.model != prev_model:
+        why = "simple task → cheaper model" if backend.model == _HAIKU_MODEL else "complex task → smarter model"
+        print(f"\n  {CYAN}{BOLD}⚡ AI: {backend.label()}{R}  {DIM}({why}){R}")
+    else:
+        print(f"\n  {CYAN}{BOLD}⚡ AI: {backend.label()}{R}")
 
     for rnd in range(1, max_rounds+1):
         hdr(f"Round {rnd}/{max_rounds}")
 
         # Escalate model on retry rounds (Haiku failed → Sonnet)
         if rnd > 1:
+            prev_m = backend.model
             backend.select_model_for_task(user_text, round_num=rnd)
+            if backend.model != prev_m:
+                print(f"  {YELLOW}↑ Escalating to {backend.model} for better results{R}")
 
         # Prune old messages to prevent token bloat
         messages = _prune_messages(messages)
