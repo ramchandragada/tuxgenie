@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.2.0"
+__version__ = "4.2.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -689,9 +689,49 @@ def ask_ai(backend, system, messages, max_tokens=4096):
     return backend.ask(system, messages, max_tokens=max_tokens)
 
 def clean_json(text):
-    text = re.sub(r"^```(?:json)?\s*\n?","",text.strip(),flags=re.MULTILINE)
-    text = re.sub(r"\n?```\s*$","",text.strip(),flags=re.MULTILINE)
-    return text.strip()
+    """Extract valid JSON from AI response, even if surrounded by extra text."""
+    text = text.strip()
+    # Strip markdown fences
+    text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
+    text = re.sub(r"\n?```\s*$", "", text, flags=re.MULTILINE)
+    text = text.strip()
+
+    # If it parses directly, great
+    try:
+        json.loads(text)
+        return text
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Find the outermost { ... } block (the actual JSON object)
+    start = text.find("{")
+    if start == -1:
+        return text
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i+1]
+
+    # Fallback: return from first { to end
+    return text[start:]
 
 def run_cmd(cmd, timeout=60):
     try:
@@ -1049,7 +1089,8 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         messages = _prune_messages(messages)
 
         # Dynamic max_tokens: simple tasks need less output
-        out_tokens = 2048 if _classify_task(user_text) == "haiku" else 4096
+        # Haiku needs slightly more room since it's less concise than Sonnet
+        out_tokens = 3072 if _classify_task(user_text) == "haiku" else 4096
 
         try:
             raw = ask_ai(backend, system, messages, max_tokens=out_tokens)
