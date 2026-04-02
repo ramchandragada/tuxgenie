@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.4.0"
+__version__ = "4.5.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -680,12 +680,47 @@ CRITICAL — Preventing failures:
 - Each step that depends on a previous step must check that the previous step
   actually worked. For example, do NOT run 'sudo dpkg -i file.deb' without
   first checking 'test -s file.deb' (file exists and is not empty).
+
+CRITICAL — Handling websites and downloads:
+- Many download pages use JavaScript to render content. curl/wget will ONLY
+  get the static HTML, which may NOT contain actual download links.
+- When you curl a download page, CAREFULLY analyze what you actually received.
+  If the output is mostly HTML/CSS/JS scaffolding with no real .deb/.rpm/.tar
+  links visible, that means the page is JavaScript-rendered and curl CANNOT
+  get the real links.
+- NEVER invent or guess a download URL like 'app-linux-x64.deb' — if you
+  cannot find the EXACT URL in the page content, say so honestly.
+- After downloading a file, ALWAYS verify it's the right type:
+  'file downloaded_file' to check if it's actually a .deb/binary and NOT an
+  HTML page saved with a wrong extension.
+- If a downloaded file is actually HTML (not a real package), DELETE it and
+  report the failure — do NOT try to install it.
+
+CRITICAL — Knowing when to stop:
+- Some apps genuinely DO NOT have a Linux desktop version. If after checking
+  apt, snap, flatpak, and the official website you find NO Linux package,
+  you MUST say so honestly: "This app is not available for Linux."
+- Suggest alternatives: web app version, similar Linux apps, or Wine/browser.
+- Do NOT endlessly retry different download URL guesses. 2 failed download
+  attempts = the app likely has no Linux version. Stop and tell the user.
+- Set resolved:true when you've given the user an honest, final answer —
+  even if that answer is "not available for Linux."
+
+CRITICAL — Empty output awareness:
+- If a command returns exit code 0 but EMPTY output when output was expected
+  (e.g. grep found nothing, curl returned nothing, apt-cache search found
+  nothing), treat that as INCONCLUSIVE, not success.
+- An empty grep result means the thing you searched for does NOT exist.
+- An empty curl result means the download FAILED.
+
 - RETURN ONLY VALID JSON.
 """
 
 DANGER_RE = [
-    r"rm\s+-[rf]{1,2}\s+/",       # rm -rf /anything
-    r"rm\s+-[rf]{1,2}\s+~",       # rm -rf ~/anything
+    r"rm\s+-[rf]{1,2}\s+/\s*$",    # rm -rf / (root only)
+    r"rm\s+-[rf]{1,2}\s+/\s+\*",  # rm -rf / * (root with wildcard)
+    r"rm\s+-[rf]{1,2}\s+~\s*$",   # rm -rf ~ (home root only)
+    r"rm\s+-[rf]{1,2}\s+~/\s*$",  # rm -rf ~/ (home root only)
     r"rm\s+--no-preserve-root",   # explicit override of safety guard
     r"\bdd\s+if=", r"\bmkfs\b", r"\bfdisk\b",
     r"\bwipefs\b", r"\bshred\b",
@@ -834,7 +869,7 @@ def report_crash(exc_type, exc_val, exc_tb, feature="unknown"):
     else:
         info(f"Report manually: https://github.com/{_GITHUB_REPO}/issues")
 
-def feat_feedback():
+def feat_feedback(backend=None, bctx=None, slog=None):
     """Let user submit a feature request directly from the app."""
     hdr("Submit Feature Request — Shape the future of TuxGenie")
     print(f"\n  {DIM}Your ideas help make TuxGenie better for everyone worldwide.{R}")
@@ -1220,6 +1255,10 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 if aborted:
                     break
 
+            expects_output = False
+            empty_output = False
+            downloaded_html = False
+
             if is_gui_cmd(cmd):
                 # Launch GUI apps silently in background — never flood the terminal
                 print(f"\n  {CYAN}▶ Launching app…{R}")
@@ -1247,8 +1286,37 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 ]
                 output_has_errors = any(p.lower() in combined_out for p in _FAIL_PATTERNS)
 
-                if rc == 0 and not output_has_errors:
+                # ── Empty output detection ──
+                # Commands that produce no output when output was expected
+                _EXPECTS_OUTPUT = [
+                    "grep", "curl", "wget", "apt-cache search",
+                    "apt-cache show", "snap info", "flatpak search",
+                    "which", "find", "locate", "dpkg -s", "dpkg -l",
+                    "cat ", "head ", "tail ",
+                ]
+                expects_output = any(cmd.strip().startswith(k) or
+                                     (" | " in cmd and k in cmd)
+                                     for k in _EXPECTS_OUTPUT)
+                empty_output = not stdout.strip() and not stderr.strip()
+
+                # ── Downloaded file type check ──
+                # Detect if a downloaded file is actually HTML (not a real package)
+                downloaded_html = False
+                if ("curl" in cmd or "wget" in cmd) and rc == 0 and stdout.strip():
+                    out_lower = stdout.strip().lower()
+                    if (out_lower.startswith("<!doctype") or
+                        out_lower.startswith("<html") or
+                        "<head>" in out_lower[:500]):
+                        downloaded_html = True
+
+                if rc == 0 and not output_has_errors and not (expects_output and empty_output) and not downloaded_html:
                     ok("This step completed successfully.")
+                elif downloaded_html:
+                    warn("Downloaded an HTML page instead of a real file. The AI will fix this.")
+                    step_failed = True
+                elif rc == 0 and expects_output and empty_output:
+                    warn("Command returned empty output — result is inconclusive. The AI will review.")
+                    step_failed = True
                 elif rc == 0 and output_has_errors:
                     warn("Command ran but output suggests a problem. The AI will review this.")
                     step_failed = True
@@ -1269,9 +1337,16 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     yes_to_all = False
                     warn("Auto-mode paused — a step failed. Remaining steps need review.")
 
+            step_ok = (rc == 0 and not output_has_errors
+                       and not (expects_output and empty_output)
+                       and not downloaded_html)
             entry = {"step":i,"command":cmd,"returncode":rc,
                      "stdout":stdout[:1500],"stderr":stderr[:500],
-                     "success": rc == 0 and not output_has_errors}
+                     "success": step_ok}
+            if downloaded_html:
+                entry["note"] = "Downloaded HTML page instead of real file"
+            if expects_output and empty_output:
+                entry["note"] = "Empty output — result inconclusive"
             step_outputs.append(entry)
             session_log.append(entry)
 
@@ -1302,7 +1377,12 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 "error:", "not found", "not installed", "no such file",
                 "failed", "inactive", "dead",
             ])
-            if v_rc == 0 and not v_has_errors:
+            # ── Stronger verification: empty output = not verified ──
+            v_empty = not v_stdout.strip() and not v_stderr.strip()
+            # Reject weak verify commands that use || echo or || true
+            v_is_weak = ("|| echo" in verify_cmd or "|| true" in verify_cmd
+                         or "|| :" in verify_cmd)
+            if v_rc == 0 and not v_has_errors and not v_empty and not v_is_weak:
                 verified = True
                 print(f"\n  {GREEN}{BOLD}✓ VERIFIED — Task completed successfully!{R}")
                 if sc:
@@ -1311,7 +1391,12 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 _ask_rating()
                 return
             else:
-                warn("Verification failed — task is NOT yet complete.")
+                if v_is_weak:
+                    warn("Weak verify command rejected — needs a real check.")
+                elif v_empty:
+                    warn("Verification returned no output — cannot confirm success.")
+                else:
+                    warn("Verification failed — task is NOT yet complete.")
                 # Add verification output to step_outputs for the AI
                 step_outputs.append({
                     "step": "verify", "command": verify_cmd,
@@ -1348,7 +1433,29 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         passed_steps = [s for s in step_outputs if s.get("success", False)]
         tried_cmds   = [s.get("command","") for s in step_outputs if not s.get("skipped")]
 
+        # ── Count download failures across all rounds for early-stop ──
+        all_cmds_so_far = " ".join(m.get("content","") for m in messages if m.get("role") == "user")
+        download_failures = sum(1 for s in failed_steps
+                                if any(k in s.get("command","") for k in ("curl","wget","download")))
+        # Check all rounds by counting "404" and "not found" mentions in conversation
+        total_404s = all_cmds_so_far.lower().count("404") + all_cmds_so_far.lower().count("not found")
+
         feedback = "NOT YET RESOLVED.\n\n"
+
+        # ── Early stop: too many download failures → app likely doesn't exist ──
+        if download_failures >= 2 or total_404s >= 3:
+            feedback += (
+                "IMPORTANT: Multiple download attempts have FAILED (404 / not found). "
+                "This strongly suggests the app does NOT have a Linux desktop version. "
+                "You MUST either:\n"
+                "  1. Confirm the app is NOT available for Linux and tell the user honestly.\n"
+                "     Suggest: web app version, similar Linux alternatives, or Wine.\n"
+                "     Set resolved:true with a clear explanation.\n"
+                "  2. ONLY if you are CERTAIN a Linux version exists, provide the EXACT "
+                "verified URL (not a guess).\n"
+                "Do NOT try another wget/curl with a guessed URL.\n\n"
+            )
+
         if failed_steps:
             feedback += "FAILED steps (DO NOT repeat these commands or approaches):\n"
             for s in failed_steps:
@@ -2513,7 +2620,7 @@ MENU_ITEMS = [
     ("27", "appswitch", "App Finder",         "Find Linux equivalents of Windows apps",  feat_appswitch),
     ("28", "battery",   "Battery & Power",    "Improve battery life, fix overheating",   feat_battery),
     ("s",  "settings",  "Settings",           "Configure API key and model",             feat_settings),
-    ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                   None),
+    ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                   feat_feedback),
 ]
 
 def show_menu():
