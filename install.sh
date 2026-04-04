@@ -3,15 +3,18 @@
 # Works on Ubuntu, Debian, Linux Mint, and all Debian-based systems.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEB="$SCRIPT_DIR/tuxgenie_3.8.0_all.deb"
+
+# Auto-detect the .deb file next to this script (works for any version)
+DEB=$(ls "$SCRIPT_DIR"/tuxgenie_*_all.deb 2>/dev/null | sort -V | tail -1)
+VERSION=$(echo "$DEB" | grep -oP '(?<=tuxgenie_)[\d.]+(?=_all\.deb)' 2>/dev/null || echo "")
 
 install_tuxgenie() {
     echo ""
-    echo "  🧞 TuxGenie Installer"
+    echo "  TuxGenie Installer"
     echo "  ─────────────────────────────────────────────"
 
-    if [ ! -f "$DEB" ]; then
-        echo "  ✗ ERROR: Cannot find $DEB"
+    if [ -z "$DEB" ] || [ ! -f "$DEB" ]; then
+        echo "  ERROR: Cannot find a tuxgenie_*_all.deb file in this folder."
         echo "  Make sure install.sh is in the same folder as the .deb file."
         echo ""
         read -p "  Press Enter to close..."
@@ -22,9 +25,9 @@ install_tuxgenie() {
     OLD_VER=$(dpkg -l tuxgenie 2>/dev/null | awk '/^ii/ {print $3}')
     if [ -n "$OLD_VER" ]; then
         echo "  Found existing version: $OLD_VER"
-        echo "  Upgrading to v3.8.0 — your API key and settings will be kept."
+        echo "  Upgrading to v$VERSION — your API key and settings will be kept."
     else
-        echo "  Fresh install — installing TuxGenie v3.8.0."
+        echo "  Fresh install — installing TuxGenie v$VERSION."
     fi
     echo ""
     echo "  You may be asked for your password (this is normal for installing software)."
@@ -33,9 +36,9 @@ install_tuxgenie() {
     if sudo dpkg -i "$DEB"; then
         echo ""
         if [ -n "$OLD_VER" ]; then
-            echo "  ✓ Upgraded from v$OLD_VER  →  v3.8.0 successfully!"
+            echo "  Upgraded from v$OLD_VER to v$VERSION successfully!"
         else
-            echo "  ✓ TuxGenie v3.8.0 installed successfully!"
+            echo "  TuxGenie v$VERSION installed successfully!"
         fi
         echo ""
         echo "  How to use:"
@@ -71,5 +74,5 @@ else
         fi
     done
     # Fallback: no terminal found, try running directly with pkexec for GUI password prompt
-    sudo dpkg -i "$DEB" && zenity --info --text="TuxGenie v3.8.0 installed!\nOpen a terminal and type: tuxgenie" 2>/dev/null
+    sudo dpkg -i "$DEB" && zenity --info --text="TuxGenie v$VERSION installed!\nOpen a terminal and type: tuxgenie" 2>/dev/null
 fi
