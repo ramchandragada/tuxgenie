@@ -265,7 +265,8 @@ case "$1" in
     if [ "$SDK_OK" -eq 0 ]; then
         VENV_DIR="/tmp/.tuxgenie-bootstrap-venv"
         rm -rf "$VENV_DIR" 2>/dev/null || true
-        if python3 -m venv "$VENV_DIR" 2>/dev/null; then
+        apt-get install -y python3-venv >/dev/null 2>&1 || true
+        if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
             "$VENV_DIR/bin/pip" install anthropic --quiet 2>/dev/null || true
             # Copy installed packages to the system site-packages
             SITE=$("$VENV_DIR/bin/python3" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
@@ -291,8 +292,9 @@ case "$1" in
         update-desktop-database /usr/share/applications 2>/dev/null || true
     fi
 
+    VER=$(dpkg -s tuxgenie 2>/dev/null | awk '/^Version:/{print $2}')
     echo ""
-    printf "  \\033[32m\\033[1m\\xf0\\x9f\\xa7\\x9e TuxGenie v{VERSION} installed!\\033[0m  Run: tuxgenie\\n"
+    printf "  \\033[32m\\033[1m TuxGenie v%s installed!\\033[0m  Run: tuxgenie\\n" "$VER"
     echo ""
     echo "  You need an Anthropic API key to use this tool."
     echo "  Get your key at: https://console.anthropic.com"
