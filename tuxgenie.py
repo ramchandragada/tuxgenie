@@ -27,14 +27,14 @@ AI-powered Linux assistant · Powered by Claude · Free forever
 """
 
 import os, sys, json, re, stat, tarfile, datetime, textwrap, time, shlex, argparse
-import subprocess, urllib.request, urllib.error, threading
+import subprocess, urllib.request, urllib.error, threading, shutil
 try:
     import termios, tty as _tty
     _HAS_TERMIOS = True
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.9.0"
+__version__ = "5.0.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -943,101 +943,167 @@ _PASSTHROUGH = [
 # commands run without asking. Dangerous commands always ask regardless.
 _passthrough_auto = False
 
+# Commands whose first word is an interactive full-screen app — don't run
+# inside TuxGenie's output stream, just inform the user.
+_INTERACTIVE_CMDS = frozenset([
+    "vim", "vi", "nano", "emacs", "less", "more", "man",
+    "top", "htop", "btop", "iotop", "iftop", "nethogs",
+    "mc", "ranger", "ncdu", "mutt", "irssi", "tmux", "screen",
+])
+
+# Auto-inject -y for package managers that prompt interactively.
+# User already confirmed at TuxGenie level — second prompt is redundant.
+_NEEDS_YES_RE = re.compile(
+    r"^\s*(?:sudo\s+)?apt(?:-get)?\s+(?:upgrade|dist-upgrade|full-upgrade|install|remove|purge|autoremove)\b"
+    r"|^\s*sudo\s+snap\s+(?:install|remove|refresh)\b"
+    r"|^\s*(?:sudo\s+)?flatpak\s+(?:install|remove|update)\b"
+    r"|^\s*(?:sudo\s+)?dnf\s+(?:install|remove|upgrade|update)\b"
+    r"|^\s*(?:sudo\s+)?yum\s+(?:install|remove|upgrade|update)\b"
+    r"|^\s*(?:sudo\s+)?pacman\s+-S\b"
+    r"|^\s*(?:sudo\s+)?zypper\s+(?:install|remove|update)\b"
+)
+
+def _looks_like_command(text):
+    """
+    Return (True, first_word) if text looks like a shell command.
+    Detection: first word (after optional sudo/doas) exists in PATH
+    or is an absolute/relative path to an executable.
+    Returns (False, '') for natural language input.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False, ''
+    try:
+        parts = shlex.split(stripped)
+    except ValueError:
+        return False, ''
+    if not parts:
+        return False, ''
+
+    first = parts[0]
+    # Unwrap privilege escalation prefixes
+    idx = 0
+    while idx < len(parts) and parts[idx] in ('sudo', 'doas', 'pkexec'):
+        idx += 1
+    effective = parts[idx] if idx < len(parts) else first
+
+    # Absolute path
+    if effective.startswith('/'):
+        return os.path.isfile(effective), effective
+
+    # Relative path (./foo or ../foo)
+    if effective.startswith('./') or effective.startswith('../'):
+        return os.path.isfile(effective), effective
+
+    # Look up in PATH
+    if shutil.which(effective):
+        return True, effective
+
+    return False, ''
+
+def _classify_cmd_risk(cmd, effective_word):
+    """
+    Classify the risk level of a command.
+    Returns 'safe' | 'moderate' | 'dangerous'.
+    """
+    # Hard-coded danger patterns always win
+    if is_dangerous(cmd):
+        return 'dangerous'
+
+    # Check _PASSTHROUGH list for known risk labels
+    for pattern, risk, _ in _PASSTHROUGH:
+        if pattern.match(cmd):
+            return risk
+
+    # Heuristics for unknown commands
+    # sudo + destructive verbs → moderate
+    if re.search(r'\bsudo\b', cmd):
+        return 'moderate'
+
+    # Pure read-only commands
+    _READ_ONLY = frozenset([
+        'ls', 'cat', 'less', 'more', 'head', 'tail', 'grep', 'find',
+        'echo', 'printf', 'pwd', 'whoami', 'id', 'date', 'uptime',
+        'df', 'du', 'free', 'ps', 'top', 'htop', 'uname', 'lscpu',
+        'lsblk', 'lsusb', 'lspci', 'ip', 'ifconfig', 'ss', 'netstat',
+        'ping', 'dig', 'nslookup', 'traceroute', 'curl', 'wget',
+        'git', 'docker', 'systemctl', 'journalctl', 'dmesg',
+        'which', 'whereis', 'type', 'file', 'stat', 'wc', 'sort',
+        'uniq', 'cut', 'awk', 'sed', 'tr', 'diff', 'comm',
+        'env', 'printenv', 'set', 'export', 'history',
+    ])
+    if effective_word in _READ_ONLY:
+        return 'safe'
+
+    return 'moderate'
+
 def try_passthrough(user_input, session_log):
     """
-    Check if the user typed a well-known command that can run directly
-    without calling Claude. Saves API tokens and responds instantly.
-
-    Returns True if the command was handled (even if cancelled by user),
-    False if no pattern matched (caller should fall back to fix_engine).
+    If user_input looks like a shell command, run it directly without
+    calling Claude. Works for ANY command in PATH — not just a fixed list.
+    Returns True if handled, False to fall back to AI (natural language).
     """
     global _passthrough_auto
 
     cmd = user_input.strip()
-    matched_risk = None
-    matched_desc = None
+    is_cmd, effective_word = _looks_like_command(cmd)
 
-    for pattern, risk, desc in _PASSTHROUGH:
-        if pattern.match(cmd):
-            matched_risk = risk
-            matched_desc = desc
-            break
+    if not is_cmd:
+        return False  # Natural language — let AI handle it
 
-    if matched_risk is None:
-        return False  # Not a passthrough command — let AI handle it
+    # Full-screen interactive apps can't run inside our output stream
+    if effective_word in _INTERACTIVE_CMDS:
+        print(f"\n  {YELLOW}'{effective_word}' is an interactive app — open a terminal to run it.{R}")
+        return True
 
-    hard_danger = is_dangerous(cmd) or matched_risk == "dangerous"
+    risk   = _classify_cmd_risk(cmd, effective_word)
+    danger = risk == 'dangerous'
 
-    # Auto-run without asking if user previously pressed 'a' and not dangerous
-    if _passthrough_auto and not hard_danger:
-        print(f"\n  {CYAN}⚡ {cmd}{R}  {DIM}({matched_desc}){R}")
+    # Auto-run (no prompt) if auto-mode is on and not dangerous
+    if _passthrough_auto and not danger:
+        print(f"\n  {CYAN}⚡ {cmd}{R}")
     else:
-        # Show compact one-line header + risk badge
-        risk_badge = {
-            "safe":      f"{GREEN}SAFE{R}",
-            "moderate":  f"{YELLOW}CAREFUL{R}",
-            "dangerous": f"{RED}RISKY{R}",
-        }.get(matched_risk, "")
-
-        print(f"\n  {CYAN}{BOLD}⚡ Direct — no AI needed{R}  [{risk_badge}]")
-        print(f"  {CYAN}{cmd}{R}  {DIM}— {matched_desc}{R}")
-
-        if hard_danger:
-            print(f"  {RED}{BOLD}⚠  This action could be hard to undo!{R}")
+        badge = {'safe': f"{GREEN}SAFE{R}", 'moderate': f"{YELLOW}CAREFUL{R}",
+                 'dangerous': f"{RED}RISKY{R}"}.get(risk, '')
+        print(f"\n  {CYAN}{BOLD}⚡ Direct — no AI{R}  [{badge}]  {DIM}{cmd}{R}")
+        if danger:
+            print(f"  {RED}{BOLD}⚠  This could be irreversible — are you sure?{R}")
 
         try:
-            if hard_danger:
-                hint = f"  {C('y',GREEN,BOLD)} = yes    {C('n',RED,BOLD)} = cancel"
+            if danger:
+                hint = f"  {C('y',GREEN,BOLD)} yes    {C('n',RED,BOLD)} cancel"
             else:
-                hint = f"  {C('y',GREEN,BOLD)} = yes    {C('a',CYAN,BOLD)} = yes + auto-run future commands    {C('n',RED,BOLD)} = cancel"
-            print(f"\n{hint}")
-            ch = input(f"\n  {BOLD}>{R} ").strip().lower()
+                hint = f"  {C('y',GREEN,BOLD)} yes    {C('a',CYAN,BOLD)} yes & auto-run all future commands    {C('n',RED,BOLD)} cancel"
+            ch = input(f"\n{hint}\n\n  {BOLD}>{R} ").strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print()
-            return True
+            print(); return True
 
-        if ch in ("n", "no", "q", "quit", "exit", "cancel"):
-            print(C("  Cancelled.", YELLOW))
-            return True
-        if ch in ("a", "all") and not hard_danger:
+        if ch in ('n', 'no', 'q', 'quit', 'cancel', 'exit'):
+            print(C("  Cancelled.", YELLOW)); return True
+        if ch in ('a', 'all') and not danger:
             _passthrough_auto = True
-            print(C("  Auto-mode on — future commands will run without asking.", CYAN))
-        elif ch not in ("y", "yes", "a", "all"):
-            print(C("  Cancelled.", YELLOW))
-            return True
+            ok("Auto-mode on — commands will run without asking this session.")
+        elif ch not in ('y', 'yes', 'a', 'all'):
+            print(C("  Cancelled.", YELLOW)); return True
 
+    # Get sudo password once (cached for the session)
     sudo_pw = None
-    if cmd.startswith("sudo"):
+    if re.match(r'^\s*sudo\b', cmd):
         try:
             sudo_pw = get_or_cache_sudo_password()
         except KeyboardInterrupt:
-            warn("Cancelled.")
-            return True
+            warn("Cancelled."); return True
 
-    # Auto-inject -y for apt/snap/flatpak commands that prompt interactively.
-    # The user already confirmed at the TuxGenie prompt, so a second apt
-    # confirmation prompt would just confuse them (and abort if stdin is closed).
-    _NEEDS_YES = re.compile(
-        r"^\s*sudo\s+apt(?:-get)?\s+(upgrade|dist-upgrade|full-upgrade|install|remove|purge|autoremove)\b"
-        r"|^\s*sudo\s+snap\s+(install|remove|refresh)\b"
-        r"|^\s*flatpak\s+(install|remove|update)\b"
-    )
+    # Inject -y for package managers so their internal prompt doesn't abort
     exec_cmd = cmd
-    if _NEEDS_YES.match(cmd) and " -y" not in cmd and " --yes" not in cmd:
-        # Insert -y right after the subcommand word
+    if _NEEDS_YES_RE.match(cmd) and '-y' not in cmd and '--yes' not in cmd:
         exec_cmd = re.sub(
-            r"((?:sudo\s+)?(?:apt(?:-get)?|snap|flatpak)\s+\w+)",
-            r"\1 -y",
-            cmd, count=1
-        )
+            r'((?:sudo\s+)?(?:apt(?:-get)?|snap|flatpak|dnf|yum|pacman|zypper)\s+\S+)',
+            r'\1 -y', cmd, count=1)
 
     print(f"\n  {CYAN}▶ Running…{R}")
     rc, stdout, stderr = run_cmd_live(exec_cmd, sudo_password=sudo_pw)
-
-    if rc == 0:
-        ok("Done.")
-    else:
-        warn(f"Command exited with code {rc}.")
+    ok("Done.") if rc == 0 else warn(f"Exited with code {rc}.")
 
     session_log.append({"command": cmd, "rc": rc, "source": "passthrough"})
     return True
