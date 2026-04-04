@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.4.0"
+__version__ = "5.5.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -108,11 +108,11 @@ def banner():
     print(f"""
 {_top}
 {_row(f'{_genie}  {_logo}   {DIM}v{__version__}{R}  {DIM}· Free forever · Powered by Claude{R}')}
-{_row(f'{BWHITE}Your friendly AI assistant for Linux{R}  {DIM}— no experience needed!{R}')}
+{_row(f'{BOLD}Your friendly AI assistant for Linux{R}  {DIM}— no experience needed!{R}')}
 {_blank}
-{_row(f'{BGREEN}✔{R} {WHITE}Type anything in plain English{R}  {DIM}e.g. "my wifi stopped working"{R}')}
-{_row(f'{BGREEN}✔{R} {WHITE}Or type a number from the menu{R}   {DIM}e.g. "2" for Health Check{R}')}
-{_row(f'{BGREEN}✔{R} {WHITE}Or run any terminal command directly{R} {DIM}e.g. "ls -la" or "ping google.com"{R}')}
+{_row(f'{BGREEN}✔{R} {BOLD}Type anything in plain English{R}  {DIM}e.g. "my wifi stopped working"{R}')}
+{_row(f'{BGREEN}✔{R} {BOLD}Or type a number from the menu{R}   {DIM}e.g. "2" for Health Check{R}')}
+{_row(f'{BGREEN}✔{R} {BOLD}Or run any terminal command directly{R} {DIM}e.g. "ls -la" or "ping google.com"{R}')}
 {_blank}
 {_row(f'{DIM}Dedicated to Linus Torvalds · Built by Aspera Technologies · Open Source{R}')}
 {_bot}
@@ -3168,8 +3168,10 @@ def show_menu():
         print(f"\n  {bg}{BWHITE}{BOLD}  {icon} {title}  {R}  {DIM}{subtitle}{R}")
 
     def _item(num, label, tip):
-        n = f"{BOLD}{BCYAN}[{num}]{R}"
-        print(f"    {n:<22}  {BWHITE}{label:<22}{R}  {DIM}{tip}{R}")
+        # Pad BEFORE adding ANSI codes — otherwise f-string width counts invisible escape chars
+        num_s   = f"[{num}]".ljust(5)
+        label_s = label.ljust(26)
+        print(f"    {BCYAN}{BOLD}{num_s}{R}  {BOLD}{label_s}{R}  {DIM}{tip}{R}")
 
     print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🐧 What would you like to do today?  {R}")
 
@@ -3216,7 +3218,7 @@ def show_menu():
     print(f"""
   {BG_DARK}{BWHITE}  {C('[s]',GOLD,BOLD)} Settings   {C('[u]',BCYAN,BOLD)} Update   {C('[f]',PINK,BOLD)} Suggest Feature   {C('[q]',BRED,BOLD)} Quit  {R}
 
-  {BGREEN}{BOLD}💡 TIP:{R} {BWHITE}You don't need to pick a number!{R}
+  {BGREEN}{BOLD}💡 TIP:{R} {BOLD}You don't need to pick a number!{R}
      Just type what you need, like:
      {BCYAN}\"my wifi is not working\"{R}   {BCYAN}\"install chrome\"{R}   {BCYAN}\"why is it slow?\"{R}
 """)
@@ -3361,7 +3363,7 @@ def main():
     with Spinner("Collecting system info…"):
         bctx = base_ctx()
     ok("System info collected")
-    print(f"  {SKY}Your system:{R} {BWHITE}{bctx['os']}{R}  {DIM}· {bctx['kernel']} · {bctx['arch']}{R}")
+    print(f"  {SKY}Your system:{R} {BOLD}{bctx['os']}{R}  {DIM}· {bctx['kernel']} · {bctx['arch']}{R}")
 
     session_log: list = []
     feature_map = {num: fn   for num, _, name, _, fn in MENU_ITEMS}
@@ -3394,7 +3396,7 @@ def main():
 
     while True:
         try:
-            choice = input(f"\n  {BGREEN}{BOLD}❯{R} {BWHITE}").strip()
+            choice = input(f"\n  {BGREEN}{BOLD}❯{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
