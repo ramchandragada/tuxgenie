@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. 28 built-in tools. Free forever. Open source.">
+<meta property="og:title" content="TuxGenie — AI-Powered Linux Assistant">
+<meta property="og:description" content="Fix any Linux problem by just describing it in plain English.">
+<meta property="og:image" content="https://tuxgenie.com/og.png">
+<title>TuxGenie — AI-Powered Linux Assistant</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:#0d1117;color:#e6edf3;margin:0}
+.grad{background:linear-gradient(135deg,#f97316,#22c55e,#3b82f6,#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.mono{font-family:'JetBrains Mono',monospace}
+.tw{background:#161b22;border:1px solid #30363d;border-radius:12px;overflow:hidden}
+.tw-hdr{background:#21262d;padding:12px 16px;display:flex;align-items:center;gap:8px}
+.dot{width:12px;height:12px;border-radius:50%;display:inline-block}
+.tw-body{padding:20px;min-height:260px}
+.cursor{display:inline-block;width:2px;height:1em;background:#22c55e;vertical-align:text-bottom;animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.card{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:20px;transition:all .2s}
+.card:hover{border-color:#388bfd;transform:translateY(-2px);box-shadow:0 8px 24px rgba(56,139,253,.15)}
+.ibox{background:#161b22;border:1px solid #30363d;border-radius:10px;font-family:'JetBrains Mono',monospace}
+.btn-p{background:linear-gradient(135deg,#f97316,#22c55e);color:#000;font-weight:700;padding:13px 26px;border-radius:8px;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:all .2s;border:none;cursor:pointer}
+.btn-p:hover{opacity:.9;transform:translateY(-1px)}
+.btn-s{background:#21262d;color:#e6edf3;font-weight:600;padding:13px 26px;border-radius:8px;border:1px solid #30363d;text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:all .2s;cursor:pointer}
+.btn-s:hover{border-color:#8b949e;transform:translateY(-1px)}
+.pill{display:inline-flex;align-items:center;gap:6px;background:#21262d;border:1px solid #30363d;border-radius:20px;padding:4px 12px;font-size:13px;color:#8b949e}
+.nav-a{color:#8b949e;text-decoration:none;font-size:14px;font-weight:500;transition:color .2s}
+.nav-a:hover{color:#e6edf3}
+.glow{position:absolute;border-radius:50%;filter:blur(120px);opacity:.12;pointer-events:none}
+.cbtn{background:#21262d;border:1px solid #30363d;color:#8b949e;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:'JetBrains Mono',monospace;transition:all .2s}
+.cbtn:hover{background:#30363d;color:#e6edf3}
+.cat{font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;letter-spacing:.05em}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:#0d1117}
+::-webkit-scrollbar-thumb{background:#30363d;border-radius:3px}
+</style>
+</head>
+<body>
+<!-- NAV -->
+<nav style="position:sticky;top:0;z-index:50;border-bottom:1px solid #30363d;background:rgba(13,17,23,.95);backdrop-filter:blur(10px)">
+<div style="max-width:1100px;margin:0 auto;padding:0 24px;display:flex;align-items:center;justify-content:space-between;height:64px">
+  <div style="display:flex;align-items:center;gap:12px">
+    <span style="font-size:24px">🐧</span>
+    <span class="grad" style="font-size:20px;font-weight:800">TuxGenie</span>
+    <span class="pill" style="font-size:11px">v5.7.0</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:28px">
+    <a href="#features" class="nav-a" style="display:none" id="nav-links">Features</a>
+    <a href="#features" class="nav-a">Features</a>
+    <a href="#install" class="nav-a">Install</a>
+    <a href="#how" class="nav-a">How it works</a>
+  </div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="btn-s" style="padding:8px 16px;font-size:13px">⭐ GitHub</a>
+    <a href="#install" class="btn-p" style="padding:8px 16px;font-size:13px">Install Free</a>
+  </div>
+</div>
+</nav>
+
+<!-- HERO -->
+<section style="position:relative;overflow:hidden;padding:80px 24px 100px">
+  <div class="glow" style="width:500px;height:500px;background:#f97316;top:-150px;left:-100px"></div>
+  <div class="glow" style="width:500px;height:500px;background:#3b82f6;bottom:-150px;right:-100px"></div>
+  <div style="max-width:1100px;margin:0 auto">
+    <div style="text-align:center;margin-bottom:16px">
+      <span class="pill">✨ Powered by Claude AI &nbsp;·&nbsp; Free Forever &nbsp;·&nbsp; Open Source</span>
+    </div>
+    <h1 style="text-align:center;font-size:clamp(40px,7vw,72px);font-weight:900;line-height:1.1;margin:20px 0">
+      <span class="grad">Linux made</span><br>
+      <span>effortlessly simple</span>
+    </h1>
+    <p style="text-align:center;font-size:18px;color:#8b949e;max-width:600px;margin:0 auto 36px;line-height:1.7">
+      TuxGenie is your AI-powered Linux assistant. Describe what you need in plain English — it fixes, configures, and manages your system instantly.
+    </p>
+    <div style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-bottom:64px">
+      <a href="#install" class="btn-p" style="font-size:16px">🐧 Install TuxGenie — Free</a>
+      <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="btn-s" style="font-size:16px">View on GitHub →</a>
+    </div>
+    <!-- Terminal -->
+    <div style="max-width:720px;margin:0 auto" class="tw">
+      <div class="tw-hdr">
+        <span class="dot" style="background:#ff5f57"></span>
+        <span class="dot" style="background:#febc2e"></span>
+        <span class="dot" style="background:#28c840"></span>
+        <span class="mono" style="color:#8b949e;font-size:13px;margin-left:8px">tuxgenie</span>
+      </div>
+      <div class="tw-body mono" style="font-size:13px;line-height:1.7" id="term">
+        <div id="tlines"></div><span class="cursor" id="cur"></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div style="border-top:1px solid #30363d;border-bottom:1px solid #30363d;background:#161b22;padding:40px 24px">
+  <div style="max-width:1100px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:24px;text-align:center">
+    <div><div class="grad" style="font-size:36px;font-weight:900">28</div><div style="color:#8b949e;font-size:14px;margin-top:4px">Built-in Tools</div></div>
+    <div><div class="grad" style="font-size:36px;font-weight:900">0</div><div style="color:#8b949e;font-size:14px;margin-top:4px">Experience Needed</div></div>
+    <div><div class="grad" style="font-size:36px;font-weight:900">Free</div><div style="color:#8b949e;font-size:14px;margin-top:4px">Forever</div></div>
+    <div><div class="grad" style="font-size:36px;font-weight:900">Any</div><div style="color:#8b949e;font-size:14px;margin-top:4px">Linux Distro</div></div>
+  </div>
+</div>
+<!-- INSTALL -->
+<section id="install" style="padding:80px 24px">
+  <div style="max-width:680px;margin:0 auto;text-align:center">
+    <h2 class="grad" style="font-size:36px;font-weight:900;margin-bottom:8px">Get started in seconds</h2>
+    <p style="color:#8b949e;font-size:18px;margin-bottom:40px">One command. That's all it takes.</p>
+    <div class="ibox" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #30363d">
+        <span style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.08em">Install (all distros)</span>
+        <button class="cbtn" onclick="copyCmd(this,'curl -fsSL https://tuxgenie.com/install.sh | bash')">📋 Copy</button>
+      </div>
+      <div style="padding:18px 20px;text-align:left">
+        <span style="color:#8b949e">$</span>
+        <span style="color:#22c55e;font-weight:700;margin-left:8px">curl -fsSL https://tuxgenie.com/install.sh | bash</span>
+      </div>
+    </div>
+    <div class="ibox" style="margin-bottom:32px">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #30363d">
+        <span style="color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.08em">Or download .deb (Ubuntu / Debian)</span>
+        <button class="cbtn" onclick="copyCmd(this,'wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest | grep browser_download_url | cut -d\'\"\'  -f4)\nsudo dpkg -i tuxgenie_*.deb')">📋 Copy</button>
+      </div>
+      <div style="padding:18px 20px;text-align:left;font-size:13px;line-height:2">
+        <div><span style="color:#8b949e">$</span> <span style="color:#e6edf3">wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest | grep browser_download_url | cut -d'"' -f4)</span></div>
+        <div><span style="color:#8b949e">$</span> <span style="color:#e6edf3">sudo dpkg -i tuxgenie_*.deb</span></div>
+      </div>
+    </div>
+    <a href="https://github.com/ramchandragada/tuxgenie/releases/latest" target="_blank" class="btn-s" style="font-size:15px">⬇ Download Latest Release</a>
+    <p style="color:#8b949e;font-size:13px;margin-top:16px">Requires Python 3.8+ · Works on Ubuntu, Debian, Fedora, Arch & more</p>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how" style="padding:80px 24px;border-top:1px solid #30363d;background:#161b22">
+  <div style="max-width:1100px;margin:0 auto">
+    <div style="text-align:center;margin-bottom:56px">
+      <h2 class="grad" style="font-size:36px;font-weight:900;margin-bottom:8px">How it works</h2>
+      <p style="color:#8b949e;font-size:18px">No manuals. No Stack Overflow. Just describe your problem.</p>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:40px;text-align:center">
+      <div>
+        <div style="width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg,#f97316,#f59e0b);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;color:#000;margin:0 auto 16px">1</div>
+        <h3 style="font-size:18px;font-weight:700;margin-bottom:8px">Install TuxGenie</h3>
+        <p style="color:#8b949e;font-size:14px;line-height:1.7">One curl command installs everything. All 28 built-in tools are ready immediately — no configuration needed.</p>
+      </div>
+      <div>
+        <div style="width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg,#22c55e,#16a34a);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;color:#000;margin:0 auto 16px">2</div>
+        <h3 style="font-size:18px;font-weight:700;margin-bottom:8px">Describe your problem</h3>
+        <p style="color:#8b949e;font-size:14px;line-height:1.7">Type anything — <em>"my wifi stopped working"</em>, <em>"install chrome"</em>, or any shell command. TuxGenie handles all of it.</p>
+      </div>
+      <div>
+        <div style="width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg,#3b82f6,#6366f1);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;color:#000;margin:0 auto 16px">3</div>
+        <h3 style="font-size:18px;font-weight:700;margin-bottom:8px">TuxGenie gets it done</h3>
+        <p style="color:#8b949e;font-size:14px;line-height:1.7">Diagnoses, plans, and fixes. Commands run directly without AI when possible. AI only activates when truly needed — saving time and cost.</p>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- FEATURES -->
+<section id="features" style="padding:80px 24px">
+  <div style="max-width:1100px;margin:0 auto">
+    <div style="text-align:center;margin-bottom:56px">
+      <h2 class="grad" style="font-size:36px;font-weight:900;margin-bottom:8px">28 built-in tools</h2>
+      <p style="color:#8b949e;font-size:18px">Everything you need to manage, fix, and optimise your Linux system.</p>
+    </div>
+
+    <!-- FIX -->
+    <div style="margin-bottom:48px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <span class="cat" style="background:#1a2e1a;color:#22c55e">🔧 FIX &amp; TROUBLESHOOT</span>
+        <span style="color:#8b949e;font-size:13px">Having a problem? Start here</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px">
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🔧</div><div style="font-weight:700;margin-bottom:6px">Fix Any Issue</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Describe any Linux problem in plain English. TuxGenie diagnoses and fixes it step by step.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">📶</div><div style="font-weight:700;margin-bottom:6px">Network Doctor</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Diagnose and fix WiFi, internet, DNS, and connectivity problems automatically.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🖥️</div><div style="font-weight:700;margin-bottom:6px">Driver Check</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Detect and install missing GPU, WiFi, printer, and audio drivers instantly.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🔐</div><div style="font-weight:700;margin-bottom:6px">Permission Doctor</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Diagnose and fix "Permission denied" errors with a clear explanation.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🔊</div><div style="font-weight:700;margin-bottom:6px">Sound Fix</div><div style="color:#8b949e;font-size:13px;line-height:1.6">No audio, mic not working, HDMI sound issues — fixed in minutes.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🖥</div><div style="font-weight:700;margin-bottom:6px">Display Fix</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Wrong resolution, monitor not detected, multi-display problems solved.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🦷</div><div style="font-weight:700;margin-bottom:6px">Bluetooth Fix</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Device won't pair or keeps disconnecting — TuxGenie tracks it down.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🖨️</div><div style="font-weight:700;margin-bottom:6px">Printer Setup</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Install any printer, fix printing issues — USB and network printers.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">📷</div><div style="font-weight:700;margin-bottom:6px">Webcam Fix</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Camera not working in Zoom, Teams, or Meet? Fixed immediately.</div></div>
+      </div>
+    </div>
+
+    <!-- MONITOR -->
+    <div style="margin-bottom:48px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <span class="cat" style="background:#1a1f3a;color:#58a6ff">📊 CHECK &amp; MONITOR</span>
+        <span style="color:#8b949e;font-size:13px">See how your computer is doing</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px">
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">💚</div><div style="font-weight:700;margin-bottom:6px">Health Dashboard</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Full CPU, RAM, disk, and services health scan with AI analysis of issues.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">📋</div><div style="font-weight:700;margin-bottom:6px">Log Analyser</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Decode cryptic error messages and system logs in plain, clear English.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🔩</div><div style="font-weight:700;margin-bottom:6px">Hardware Info</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Full hardware report — CPU, RAM, GPU, storage, and more.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">⚙️</div><div style="font-weight:700;margin-bottom:6px">Process Inspector</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Tame CPU and memory hogs, kill zombie processes, restore performance.</div></div>
+      </div>
+    </div>
+
+    <!-- INSTALL -->
+    <div style="margin-bottom:48px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <span class="cat" style="background:#2a1f0e;color:#f97316">📦 INSTALL &amp; UPDATE</span>
+        <span style="color:#8b949e;font-size:13px">Get software and stay up to date</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px">
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">📦</div><div style="font-weight:700;margin-bottom:6px">Package Wizard</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Find and install software by description — "I need a video editor" → installed.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🔄</div><div style="font-weight:700;margin-bottom:6px">Update Advisor</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Safe upgrade analysis. See what's pending, install updates securely.</div></div>
+      </div>
+    </div>
+    <!-- SECURITY -->
+    <div style="margin-bottom:48px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <span class="cat" style="background:#1f1a2a;color:#a855f7">🛡️ SECURITY &amp; SAFETY</span>
+        <span style="color:#8b949e;font-size:13px">Protect your computer</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px">
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🛡️</div><div style="font-weight:700;margin-bottom:6px">Security Audit</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Harden firewall, SSH, and open ports. Know exactly how exposed you are.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">💾</div><div style="font-weight:700;margin-bottom:6px">Config Backup</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Snapshot all system configs to .tar.gz before making any changes.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">↩️</div><div style="font-weight:700;margin-bottom:6px">Session Rollback</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Undo anything TuxGenie did in a previous session with one command.</div></div>
+      </div>
+    </div>
+
+    <!-- POWER TOOLS -->
+    <div style="margin-bottom:48px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <span class="cat" style="background:#1c1c1c;color:#8b949e">⚡ POWER TOOLS</span>
+        <span style="color:#8b949e;font-size:13px">For advanced users</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px">
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">💿</div><div style="font-weight:700;margin-bottom:6px">Disk Detective</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Find space hogs and clean up safely. Never accidentally delete the wrong thing.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">⚙️</div><div style="font-weight:700;margin-bottom:6px">Service Manager</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Optimise startup services, fix failures, shave seconds off boot time.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">📝</div><div style="font-weight:700;margin-bottom:6px">Script Generator</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Describe a task in English → get a working, tested bash script instantly.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">⏰</div><div style="font-weight:700;margin-bottom:6px">Cron Assistant</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Schedule tasks in plain English. No cron syntax memorisation needed.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🚀</div><div style="font-weight:700;margin-bottom:6px">Boot Analyser</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Find exactly why boot is slow and reduce startup time by seconds.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🐳</div><div style="font-weight:700;margin-bottom:6px">Docker Helper</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Container troubleshooting, cleanup, and management made simple.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🔑</div><div style="font-weight:700;margin-bottom:6px">SSH Wizard</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Set up and harden SSH. Secure remote access without the complexity.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🐙</div><div style="font-weight:700;margin-bottom:6px">Git Helper</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Understand diffs, fix conflicts, undo commits — explained in plain English.</div></div>
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🔋</div><div style="font-weight:700;margin-bottom:6px">Battery &amp; Power</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Improve battery life and fix overheating issues on laptops.</div></div>
+      </div>
+    </div>
+
+    <!-- SWITCHING -->
+    <div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+        <span class="cat" style="background:#1a2a2a;color:#2dd4bf">🌍 SWITCHING TO LINUX?</span>
+        <span style="color:#8b949e;font-size:13px">Coming from Windows or Mac?</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
+        <div class="card"><div style="font-size:24px;margin-bottom:8px">🌍</div><div style="font-weight:700;margin-bottom:6px">App Finder</div><div style="color:#8b949e;font-size:13px;line-height:1.6">"What replaces Photoshop / Word / iTunes on Linux?" — TuxGenie finds the best alternatives and installs them.</div></div>
+        <div class="card" style="border-color:#22c55e44;background:linear-gradient(135deg,#161b22,#1a2e1a)"><div style="font-size:24px;margin-bottom:8px">💡</div><div style="font-weight:700;margin-bottom:6px">Any Terminal Command</div><div style="color:#8b949e;font-size:13px;line-height:1.6">Every command that works in a terminal works directly in TuxGenie — no AI delay, no token cost.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- OPEN SOURCE -->
+<section style="padding:80px 24px;border-top:1px solid #30363d;background:#161b22">
+  <div style="max-width:900px;margin:0 auto;text-align:center">
+    <div style="font-size:56px;margin-bottom:20px">🐧</div>
+    <h2 class="grad" style="font-size:36px;font-weight:900;margin-bottom:16px">Free and open source. Always.</h2>
+    <p style="color:#8b949e;font-size:17px;max-width:600px;margin:0 auto 36px;line-height:1.7">
+      TuxGenie is MIT licensed. No paywalls, no subscriptions, no tracking. Built by <strong style="color:#e6edf3">Aspera Technologies</strong> and dedicated to Linus Torvalds — creator of the Linux kernel.
+    </p>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-bottom:48px">
+      <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="btn-p" style="font-size:15px">⭐ Star on GitHub</a>
+      <a href="https://github.com/ramchandragada/tuxgenie/issues" target="_blank" class="btn-s" style="font-size:15px">🐛 Report an Issue</a>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;text-align:left">
+      <div class="ibox" style="padding:20px">
+        <div style="color:#22c55e;font-weight:700;margin-bottom:8px">🔑 Your API Key</div>
+        <div style="color:#8b949e;font-size:13px;line-height:1.6">You bring your own Anthropic API key. No middleman. Your data never touches our servers.</div>
+      </div>
+      <div class="ibox" style="padding:20px">
+        <div style="color:#f97316;font-weight:700;margin-bottom:8px">⚡ Smart &amp; Fast</div>
+        <div style="color:#8b949e;font-size:13px;line-height:1.6">Common commands bypass AI entirely — instant response, zero tokens. AI only when it genuinely helps.</div>
+      </div>
+      <div class="ibox" style="padding:20px">
+        <div style="color:#3b82f6;font-weight:700;margin-bottom:8px">🔄 Auto-Updates</div>
+        <div style="color:#8b949e;font-size:13px;line-height:1.6">Type <code style="color:#e6edf3;background:#21262d;padding:1px 6px;border-radius:4px">u</code> inside TuxGenie and you're on the latest version instantly.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer style="border-top:1px solid #30363d;padding:28px 24px">
+  <div style="max-width:1100px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px">
+    <div style="display:flex;align-items:center;gap:10px;color:#8b949e;font-size:13px">
+      <span>🐧</span>
+      <span class="grad" style="font-weight:800">TuxGenie</span>
+      <span>v5.7.0</span><span>·</span><span>MIT License</span><span>·</span><span>Built by Aspera Technologies</span>
+    </div>
+    <div style="display:flex;gap:24px">
+      <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="nav-a" style="font-size:13px">GitHub</a>
+      <a href="https://github.com/ramchandragada/tuxgenie/releases" target="_blank" class="nav-a" style="font-size:13px">Releases</a>
+      <a href="https://github.com/ramchandragada/tuxgenie/issues" target="_blank" class="nav-a" style="font-size:13px">Support</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Terminal typing animation
+const lines=[
+  {t:'prompt',v:'tuxgenie'},
+  {t:'out',v:'🐧 TuxGenie v5.7.0 — Your Linux AI assistant',c:'#f97316'},
+  {t:'blank'},
+  {t:'input',v:'my wifi is not working'},
+  {t:'out',v:'  🔍 Scanning network interfaces...',c:'#58a6ff'},
+  {t:'out',v:'  ✔ Found: wlan0 interface is down',c:'#22c55e'},
+  {t:'out',v:'  ⚡ Running: sudo ip link set wlan0 up',c:'#8b949e'},
+  {t:'out',v:'  ✔ WiFi restored successfully!',c:'#22c55e'},
+  {t:'blank'},
+  {t:'input',v:'sudo apt update'},
+  {t:'out',v:'  ⚡ Running directly — no AI needed',c:'#8b949e'},
+  {t:'out',v:'  ✔ Package lists updated. 847 packages checked.',c:'#22c55e'},
+  {t:'blank'},
+  {t:'input',v:'install chrome'},
+  {t:'out',v:'  📦 Searching for Google Chrome...',c:'#58a6ff'},
+  {t:'out',v:'  ✔ Installing via apt — done!',c:'#22c55e'},
+];
+const el=document.getElementById('tlines');
+let li=0,ci=0,curEl=null;
+function prompt(v){return'<span style="color:#22c55e">user@linux</span><span style="color:#8b949e">:~$</span> <span style="color:#e6edf3">'+v+'</span>';}
+function tick(){
+  if(li>=lines.length)return;
+  const ln=lines[li];
+  if(ln.t==='blank'||ln.t==='prompt'||ln.t==='out'&&ci===0&&!curEl){
+    const d=document.createElement('div');
+    if(ln.t==='blank'){d.innerHTML='&nbsp;';el.appendChild(d);li++;setTimeout(tick,80);return;}
+    if(ln.t==='prompt'){d.innerHTML=prompt(ln.v);el.appendChild(d);li++;setTimeout(tick,300);return;}
+    if(ln.t==='out'){d.style.color=ln.c||'#8b949e';d.textContent=ln.v;el.appendChild(d);li++;setTimeout(tick,ln.c==='#22c55e'?200:120);return;}
+  }
+  if(ln.t==='input'){
+    if(!curEl){curEl=document.createElement('div');curEl.innerHTML='<span style="color:#22c55e">user@linux</span><span style="color:#8b949e">:~$</span> <span id="tt" style="color:#e6edf3"></span>';el.appendChild(curEl);}
+    const tt=curEl.querySelector('#tt');
+    if(ci<ln.v.length){tt.textContent+=ln.v[ci++];el.parentElement.scrollTop=9999;setTimeout(tick,55);}
+    else{curEl=null;ci=0;li++;setTimeout(tick,500);}
+    return;
+  }
+}
+setTimeout(tick,800);
+
+function copyCmd(btn,txt){
+  navigator.clipboard.writeText(txt).then(()=>{
+    const orig=btn.textContent;btn.textContent='✅ Copied!';
+    setTimeout(()=>btn.textContent=orig,2000);
+  });
+}
+</script>
+</body>
+</html>
