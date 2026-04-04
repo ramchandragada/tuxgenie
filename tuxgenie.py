@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.5.0"
+__version__ = "5.6.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -90,8 +90,8 @@ def C(text, *codes): return "".join(codes)+str(text)+R
 def banner():
     # Each letter of TUXGENIE in a different vivid colour — gradient effect
     _letters = [
-        (ORANGE, "T"), (GOLD,    "U"), (LIME,    "X"), (BGREEN,  "G"),
-        (BCYAN,  "E"), (BBLUE,   "N"), (BMAGENTA,"I"), (PINK,    "E"),
+        (ORANGE,  "T"), (YELLOW,   "U"), (GREEN,   "X"), (GREEN,   "G"),
+        (CYAN,    "E"), (BLUE,     "N"), (MAGENTA, "I"), (RED,     "E"),
     ]
     _logo = "".join(f"{col}{BOLD}{ch}{R}" for col, ch in _letters)
     _genie = f"{BCYAN}{BOLD}🐧{R}"
@@ -123,12 +123,12 @@ def hdr(title, width=64):
     print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🔷 {title}  {' '*max(pad,0)}{R}")
 
 def section(title):
-    print(f"\n  {BCYAN}{BOLD}┄┄ {title} ┄┄{R}")
+    print(f"\n  {CYAN}{BOLD}┄┄ {title} ┄┄{R}")
 
-def ok(msg):  print(f"  {BGREEN}{BOLD}✔{R}  {msg}")
-def warn(msg):print(f"  {BYELLOW}{BOLD}⚠{R}  {msg}")
-def err(msg): print(f"  {BRED}{BOLD}✘{R}  {msg}")
-def info(msg):print(f"  {SKY}ℹ{R}  {msg}")
+def ok(msg):  print(f"  {GREEN}{BOLD}✔{R}  {msg}")
+def warn(msg):print(f"  {YELLOW}{BOLD}⚠{R}  {msg}")
+def err(msg): print(f"  {RED}{BOLD}✘{R}  {msg}")
+def info(msg):print(f"  {CYAN}ℹ{R}  {msg}")
 
 def trunc(text, max_lines):
     lines = text.splitlines()
@@ -3171,7 +3171,7 @@ def show_menu():
         # Pad BEFORE adding ANSI codes — otherwise f-string width counts invisible escape chars
         num_s   = f"[{num}]".ljust(5)
         label_s = label.ljust(26)
-        print(f"    {BCYAN}{BOLD}{num_s}{R}  {BOLD}{label_s}{R}  {DIM}{tip}{R}")
+        print(f"    {BLUE}{BOLD}{num_s}{R}  {BOLD}{label_s}{R}  {DIM}{tip}{R}")
 
     print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🐧 What would you like to do today?  {R}")
 
@@ -3220,7 +3220,7 @@ def show_menu():
 
   {BGREEN}{BOLD}💡 TIP:{R} {BOLD}You don't need to pick a number!{R}
      Just type what you need, like:
-     {BCYAN}\"my wifi is not working\"{R}   {BCYAN}\"install chrome\"{R}   {BCYAN}\"why is it slow?\"{R}
+     {BLUE}{BOLD}\"my wifi is not working\"{R}   {BLUE}{BOLD}\"install chrome\"{R}   {BLUE}{BOLD}\"why is it slow?\"{R}
 """)
 
 EXIT_WORDS = {"exit","quit","q","bye","logout"}
@@ -3236,26 +3236,26 @@ def show_help():
   {GREEN}{BOLD}The easy way:{R}  Just type what you need in plain English!
 
     Examples:
-      {CYAN}my wifi stopped working{R}
-      {CYAN}install google chrome{R}
-      {CYAN}my computer is slow{R}
-      {CYAN}how much disk space do I have{R}
-      {CYAN}update everything{R}
+      {BLUE}{BOLD}my wifi stopped working{R}
+      {BLUE}{BOLD}install google chrome{R}
+      {BLUE}{BOLD}my computer is slow{R}
+      {BLUE}{BOLD}how much disk space do I have{R}
+      {BLUE}{BOLD}update everything{R}
 
-  {GREEN}{BOLD}Or pick a number:{R}  Type a number from the menu (1-20)
+  {GREEN}{BOLD}Or pick a number:{R}  Type a number from the menu (1-28)
 
   {GREEN}{BOLD}Safety:{R}
     Before running any command, TuxGenie will:
-    {GREEN}✓{R} Explain what it does in plain English
-    {GREEN}✓{R} Show if it's safe, careful, or risky
-    {GREEN}✓{R} Ask for your permission first
-    {GREEN}✓{R} You can always say {BOLD}s{R} to skip or {BOLD}q{R} to stop
+    {GREEN}{BOLD}✓{R} Explain what it does in plain English
+    {GREEN}{BOLD}✓{R} Show if it's safe, careful, or risky
+    {GREEN}{BOLD}✓{R} Ask for your permission first
+    {GREEN}{BOLD}✓{R} You can always say {BOLD}s{R} to skip or {BOLD}q{R} to stop
 
   {GREEN}{BOLD}Commands:{R}
-    {C('help',CYAN)}     Show this help
-    {C('menu',CYAN)}     Show the feature menu
-    {C('s',CYAN)}        Change API key
-    {C('q',CYAN)}        Quit TuxGenie
+    {BLUE}{BOLD}help{R}     Show this help
+    {BLUE}{BOLD}menu{R}     Show the feature menu
+    {BLUE}{BOLD}s{R}        Change API key
+    {RED}{BOLD}q{R}        Quit TuxGenie
 """)
 
 def first_run_check():
@@ -3363,7 +3363,7 @@ def main():
     with Spinner("Collecting system info…"):
         bctx = base_ctx()
     ok("System info collected")
-    print(f"  {SKY}Your system:{R} {BOLD}{bctx['os']}{R}  {DIM}· {bctx['kernel']} · {bctx['arch']}{R}")
+    print(f"  {CYAN}{BOLD}Your system:{R}  {BOLD}{bctx['os']}{R}  {DIM}· {bctx['kernel']} · {bctx['arch']}{R}")
 
     session_log: list = []
     feature_map = {num: fn   for num, _, name, _, fn in MENU_ITEMS}
@@ -3426,14 +3426,14 @@ def main():
             _active_feature = choice
             fn(backend, bctx, session_log)
             save_session(session_log)
-            print(f"\n  {DIM}Type a number, describe a problem, or {BCYAN}menu{R} {DIM}/ {BCYAN}help{R} {DIM}/ {BRED}q{R}")
+            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}help{R} {DIM}/ {RED}{BOLD}q{R}")
         else:
             # Natural language → try direct passthrough first, then AI
             if not try_passthrough(choice, session_log):
                 sys_p = BASE_SYS + _sys_ctx_block(bctx)
                 fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
             save_session(session_log)
-            print(f"\n  {DIM}Type a number, describe a problem, or {BCYAN}menu{R} {DIM}/ {BCYAN}help{R} {DIM}/ {BRED}q{R}")
+            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}help{R} {DIM}/ {RED}{BOLD}q{R}")
 
     save_session(session_log)
 
