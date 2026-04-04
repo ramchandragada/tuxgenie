@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.7.0"
+__version__ = "4.8.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -998,8 +998,25 @@ def try_passthrough(user_input, session_log):
             warn("Cancelled.")
             return True
 
+    # Auto-inject -y for apt/snap/flatpak commands that prompt interactively.
+    # The user already confirmed at the TuxGenie prompt, so a second apt
+    # confirmation prompt would just confuse them (and abort if stdin is closed).
+    _NEEDS_YES = re.compile(
+        r"^\s*sudo\s+apt(?:-get)?\s+(upgrade|dist-upgrade|full-upgrade|install|remove|purge|autoremove)\b"
+        r"|^\s*sudo\s+snap\s+(install|remove|refresh)\b"
+        r"|^\s*flatpak\s+(install|remove|update)\b"
+    )
+    exec_cmd = cmd
+    if _NEEDS_YES.match(cmd) and " -y" not in cmd and " --yes" not in cmd:
+        # Insert -y right after the subcommand word
+        exec_cmd = re.sub(
+            r"((?:sudo\s+)?(?:apt(?:-get)?|snap|flatpak)\s+\w+)",
+            r"\1 -y",
+            cmd, count=1
+        )
+
     print(f"\n  {CYAN}▶ Running…{R}")
-    rc, stdout, stderr = run_cmd_live(cmd, sudo_password=sudo_pw)
+    rc, stdout, stderr = run_cmd_live(exec_cmd, sudo_password=sudo_pw)
 
     if rc == 0:
         ok("Done.")
