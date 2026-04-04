@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "4.8.0"
+__version__ = "4.9.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -939,6 +939,10 @@ _PASSTHROUGH = [
      "dangerous", "Power off the system"),
 ]
 
+# Session flag: once user presses 'a', all future safe/moderate passthrough
+# commands run without asking. Dangerous commands always ask regardless.
+_passthrough_auto = False
+
 def try_passthrough(user_input, session_log):
     """
     Check if the user typed a well-known command that can run directly
@@ -947,6 +951,8 @@ def try_passthrough(user_input, session_log):
     Returns True if the command was handled (even if cancelled by user),
     False if no pattern matched (caller should fall back to fix_engine).
     """
+    global _passthrough_auto
+
     cmd = user_input.strip()
     matched_risk = None
     matched_desc = None
@@ -960,35 +966,45 @@ def try_passthrough(user_input, session_log):
     if matched_risk is None:
         return False  # Not a passthrough command — let AI handle it
 
-    safety_styles = {
-        "safe":      (GREEN,  "SAFE — just looks at info, changes nothing"),
-        "moderate":  (YELLOW, "CAREFUL — makes a change, but it's reversible"),
-        "dangerous": (RED,    "RISKY — this could be hard to undo"),
-    }
-    col, explain = safety_styles[matched_risk]
+    hard_danger = is_dangerous(cmd) or matched_risk == "dangerous"
 
-    print(f"\n  {CYAN}{BOLD}⚡ Direct execution — no AI needed{R}")
-    print(f"  {DIM}{'─'*50}{R}")
-    print(f"  {BOLD}Command:{R}  {CYAN}{cmd}{R}")
-    print(f"  {BOLD}Action: {R}  {matched_desc}")
-    print(f"\n  {col}{BOLD}  {explain}  {R}")
+    # Auto-run without asking if user previously pressed 'a' and not dangerous
+    if _passthrough_auto and not hard_danger:
+        print(f"\n  {CYAN}⚡ {cmd}{R}  {DIM}({matched_desc}){R}")
+    else:
+        # Show compact one-line header + risk badge
+        risk_badge = {
+            "safe":      f"{GREEN}SAFE{R}",
+            "moderate":  f"{YELLOW}CAREFUL{R}",
+            "dangerous": f"{RED}RISKY{R}",
+        }.get(matched_risk, "")
 
-    if is_dangerous(cmd):
-        print(f"\n  {RED}{BOLD}⚠  WARNING: This action is potentially irreversible!{R}")
+        print(f"\n  {CYAN}{BOLD}⚡ Direct — no AI needed{R}  [{risk_badge}]")
+        print(f"  {CYAN}{cmd}{R}  {DIM}— {matched_desc}{R}")
 
-    while True:
+        if hard_danger:
+            print(f"  {RED}{BOLD}⚠  This action could be hard to undo!{R}")
+
         try:
-            print(f"\n    {C('y',GREEN,BOLD)} = yes, run it    {C('n',RED,BOLD)} = cancel")
-            ch = input(f"\n  {BOLD}Your choice:{R} ").strip().lower()
+            if hard_danger:
+                hint = f"  {C('y',GREEN,BOLD)} = yes    {C('n',RED,BOLD)} = cancel"
+            else:
+                hint = f"  {C('y',GREEN,BOLD)} = yes    {C('a',CYAN,BOLD)} = yes + auto-run future commands    {C('n',RED,BOLD)} = cancel"
+            print(f"\n{hint}")
+            ch = input(f"\n  {BOLD}>{R} ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print()
             return True
-        if ch in ("y", "yes"):
-            break
+
         if ch in ("n", "no", "q", "quit", "exit", "cancel"):
             print(C("  Cancelled.", YELLOW))
             return True
-        print(C("  Type y to run or n to cancel.", DIM))
+        if ch in ("a", "all") and not hard_danger:
+            _passthrough_auto = True
+            print(C("  Auto-mode on — future commands will run without asking.", CYAN))
+        elif ch not in ("y", "yes", "a", "all"):
+            print(C("  Cancelled.", YELLOW))
+            return True
 
     sudo_pw = None
     if cmd.startswith("sudo"):
