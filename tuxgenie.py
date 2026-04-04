@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.3.0"
+__version__ = "5.4.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -67,47 +67,68 @@ builtins.input = _safe_input
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 1 — ANSI + UI
 # ═══════════════════════════════════════════════════════════════════════════════
-R="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
+R="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"; ITALIC="\033[3m"
+# Standard colours
 GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"
 CYAN="\033[36m"; BLUE="\033[34m"; MAGENTA="\033[35m"; WHITE="\033[37m"
+# Bright / vivid variants — the "light theme" feel
+BRED="\033[91m"; BGREEN="\033[92m"; BYELLOW="\033[93m"
+BBLUE="\033[94m"; BMAGENTA="\033[95m"; BCYAN="\033[96m"; BWHITE="\033[97m"
+# 256-colour extras for a modern palette
+ORANGE="\033[38;5;208m"; PINK="\033[38;5;213m"; LIME="\033[38;5;118m"
+GOLD="\033[38;5;220m";   CORAL="\033[38;5;203m"; TEAL="\033[38;5;43m"
+INDIGO="\033[38;5;135m"; SKY="\033[38;5;117m";   PEACH="\033[38;5;216m"
+# Background colours for card/section headers
 BG_RED="\033[41m"; BG_GREEN="\033[42m"; BG_BLUE="\033[44m"
+BG_MAGENTA="\033[45m"; BG_CYAN="\033[46m"
+BG_DARK="\033[48;5;235m";  BG_NAVY="\033[48;5;17m"
+BG_PURPLE="\033[48;5;55m"; BG_TEAL="\033[48;5;23m"
+BG_ORANGE="\033[48;5;130m";BG_FOREST="\033[48;5;22m"
 
 def C(text, *codes): return "".join(codes)+str(text)+R
 
 def banner():
+    # Each letter of TUXGENIE in a different vivid colour — gradient effect
+    _letters = [
+        (ORANGE, "T"), (GOLD,    "U"), (LIME,    "X"), (BGREEN,  "G"),
+        (BCYAN,  "E"), (BBLUE,   "N"), (BMAGENTA,"I"), (PINK,    "E"),
+    ]
+    _logo = "".join(f"{col}{BOLD}{ch}{R}" for col, ch in _letters)
+    _genie = f"{BCYAN}{BOLD}🐧{R}"
+    W = 66
+    _top    = f"  {DIM}╭{'─'*W}╮{R}"
+    _bot    = f"  {DIM}╰{'─'*W}╯{R}"
+    _blank  = f"  {DIM}│{R}{' '*(W)}{DIM}│{R}"
+    def _row(content, pad=W):
+        # strip ANSI for length calc
+        plain = re.sub(r'\033\[[0-9;]*m', '', content)
+        spaces = pad - len(plain)
+        return f"  {DIM}│{R} {content}{' '*max(spaces-1,0)}{DIM}│{R}"
+
     print(f"""
-{BLUE}{BOLD}
-  ████████╗██╗   ██╗██╗  ██╗ ██████╗ ███████╗███╗   ██╗██╗███████╗
-     ██╔══╝██║   ██║╚██╗██╔╝██╔════╝ ██╔════╝████╗  ██║██║██╔════╝
-     ██║   ██║   ██║ ╚███╔╝ ██║  ███╗█████╗  ██╔██╗ ██║██║█████╗
-     ██║   ██║   ██║ ██╔██╗ ██║   ██║██╔══╝  ██║╚██╗██║██║██╔══╝
-     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
-     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝{R}
-{MAGENTA}{BOLD}        Your AI assistant for Linux — no experience needed 🐧{R}
-{DIM}        v{__version__} · Free forever · Powered by Claude{R}
-
-{GREEN}{BOLD}  Welcome!{R} TuxGenie helps you fix, manage, and understand your
-  Linux computer using plain English. Just describe what you need
-  and TuxGenie will guide you step by step.
-
-  {CYAN}Nothing runs without your permission.{R} You're always in control.
-
-{DIM}  Dedicated to Linus Torvalds — Creator of the Linux Kernel 🐧
-  Built with love by Aspera Technologies · Open Source · Free Forever{R}
+{_top}
+{_row(f'{_genie}  {_logo}   {DIM}v{__version__}{R}  {DIM}· Free forever · Powered by Claude{R}')}
+{_row(f'{BWHITE}Your friendly AI assistant for Linux{R}  {DIM}— no experience needed!{R}')}
+{_blank}
+{_row(f'{BGREEN}✔{R} {WHITE}Type anything in plain English{R}  {DIM}e.g. "my wifi stopped working"{R}')}
+{_row(f'{BGREEN}✔{R} {WHITE}Or type a number from the menu{R}   {DIM}e.g. "2" for Health Check{R}')}
+{_row(f'{BGREEN}✔{R} {WHITE}Or run any terminal command directly{R} {DIM}e.g. "ls -la" or "ping google.com"{R}')}
+{_blank}
+{_row(f'{DIM}Dedicated to Linus Torvalds · Built by Aspera Technologies · Open Source{R}')}
+{_bot}
 """)
 
 def hdr(title, width=64):
-    print(f"\n{BLUE}{BOLD}{'─'*width}{R}")
-    print(f"{BLUE}{BOLD}  {title}{R}")
-    print(f"{BLUE}{BOLD}{'─'*width}{R}")
+    pad = width - len(title) - 3
+    print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🔷 {title}  {' '*max(pad,0)}{R}")
 
 def section(title):
-    print(f"\n{CYAN}{BOLD}  ▸ {title}{R}")
+    print(f"\n  {BCYAN}{BOLD}┄┄ {title} ┄┄{R}")
 
-def ok(msg):  print(f"  {C('✓', GREEN, BOLD)} {msg}")
-def warn(msg):print(f"  {C('⚠', YELLOW, BOLD)} {msg}")
-def err(msg): print(f"  {C('✗', RED, BOLD)} {msg}")
-def info(msg):print(f"  {C('·', BLUE)} {msg}")
+def ok(msg):  print(f"  {BGREEN}{BOLD}✔{R}  {msg}")
+def warn(msg):print(f"  {BYELLOW}{BOLD}⚠{R}  {msg}")
+def err(msg): print(f"  {BRED}{BOLD}✘{R}  {msg}")
+def info(msg):print(f"  {SKY}ℹ{R}  {msg}")
 
 def trunc(text, max_lines):
     lines = text.splitlines()
@@ -118,10 +139,10 @@ def trunc(text, max_lines):
 
 def print_output(rc, stdout, stderr):
     if stdout:
-        print(f"\n{C('  OUTPUT:', GREEN)}\n{DIM}{trunc(stdout,25)}{R}")
+        print(f"\n  {TEAL}{BOLD}OUTPUT{R}\n{DIM}{trunc(stdout,25)}{R}")
     if rc != 0 and stderr:
-        print(f"\n{C('  STDERR:', RED)}\n{DIM}{trunc(stderr,10)}{R}")
-    print(C("  ✓ OK", GREEN) if rc == 0 else C(f"  ✗ Exit {rc}", RED))
+        print(f"\n  {CORAL}{BOLD}STDERR{R}\n{DIM}{trunc(stderr,10)}{R}")
+    print(f"  {BGREEN}{BOLD}✔ Done{R}" if rc == 0 else f"  {BRED}{BOLD}✘ Exit {rc}{R}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 2 — CONFIG  (persistent API key + session log path)
@@ -3143,58 +3164,61 @@ MENU_ITEMS = [
 ]
 
 def show_menu():
-    W = 70
-    print(f"\n{BLUE}{BOLD}{'━'*W}{R}")
-    print(f"{BLUE}{BOLD}  What would you like to do?{R}")
-    print(f"{BLUE}{BOLD}{'━'*W}{R}")
+    def _cat(bg, icon, title, subtitle):
+        print(f"\n  {bg}{BWHITE}{BOLD}  {icon} {title}  {R}  {DIM}{subtitle}{R}")
 
-    # Grouped categories for beginners
-    print(f"\n  {GREEN}{BOLD}🔧 FIX & TROUBLESHOOT{R}  {DIM}— Having a problem? Start here{R}")
-    print(f"    {C('[1]',CYAN,BOLD)}  Fix a Problem         {DIM}Describe what's wrong in plain English{R}")
-    print(f"    {C('[4]',CYAN,BOLD)}  Fix Internet/WiFi     {DIM}Can't connect? Slow internet?{R}")
-    print(f"    {C('[7]',CYAN,BOLD)}  Fix Missing Drivers   {DIM}WiFi, GPU, printer not working?{R}")
-    print(f"    {C('[13]',CYAN,BOLD)} Fix Permissions       {DIM}'Permission denied' errors{R}")
-    print(f"    {C('[22]',CYAN,BOLD)} Fix Sound/Audio       {DIM}No sound, mic not working, HDMI audio?{R}")
-    print(f"    {C('[23]',CYAN,BOLD)} Fix Display/Screen    {DIM}Wrong resolution, monitor not detected?{R}")
-    print(f"    {C('[24]',CYAN,BOLD)} Fix Bluetooth         {DIM}Device won't pair, keeps disconnecting?{R}")
-    print(f"    {C('[25]',CYAN,BOLD)} Set Up Printer        {DIM}Install printer or fix printing problems{R}")
-    print(f"    {C('[26]',CYAN,BOLD)} Fix Webcam            {DIM}Camera not working in Zoom/Teams/Meet?{R}")
+    def _item(num, label, tip):
+        n = f"{BOLD}{BCYAN}[{num}]{R}"
+        print(f"    {n:<22}  {BWHITE}{label:<22}{R}  {DIM}{tip}{R}")
 
-    print(f"\n  {GREEN}{BOLD}🌍 SWITCHING TO LINUX?{R}  {DIM}— Coming from Windows or Mac?{R}")
-    print(f"    {C('[27]',CYAN,BOLD)} Find Linux App        {DIM}\"What replaces Photoshop/Word/iTunes?\" {R}")
+    print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🐧 What would you like to do today?  {R}")
 
-    print(f"\n  {CYAN}{BOLD}📊 CHECK & MONITOR{R}  {DIM}— See how your computer is doing{R}")
-    print(f"    {C('[2]',CYAN,BOLD)}  System Health Check   {DIM}Is everything running OK?{R}")
-    print(f"    {C('[9]',CYAN,BOLD)}  Explain Error Logs    {DIM}Decode confusing error messages{R}")
-    print(f"    {C('[17]',CYAN,BOLD)} Hardware Info          {DIM}What's inside my computer?{R}")
-    print(f"    {C('[19]',CYAN,BOLD)} Running Programs       {DIM}What's using CPU/memory?{R}")
+    _cat(BG_FOREST, "🔧", "FIX & TROUBLESHOOT", "Having a problem? Start here")
+    _item("1",  "Fix a Problem",       "Describe what's wrong in plain English")
+    _item("4",  "Fix Internet / WiFi", "Can't connect? Slow internet?")
+    _item("7",  "Fix Missing Drivers", "WiFi, GPU, or printer not working?")
+    _item("13", "Fix Permissions",     "'Permission denied' errors")
+    _item("22", "Fix Sound / Audio",   "No sound, mic not working, HDMI audio?")
+    _item("23", "Fix Display",         "Wrong resolution, monitor not detected?")
+    _item("24", "Fix Bluetooth",       "Device won't pair or keeps disconnecting?")
+    _item("25", "Set Up Printer",      "Install printer or fix printing problems")
+    _item("26", "Fix Webcam",          "Camera not working in Zoom / Teams / Meet?")
 
-    print(f"\n  {MAGENTA}{BOLD}📦 INSTALL & UPDATE{R}  {DIM}— Get software and stay up to date{R}")
-    print(f"    {C('[3]',CYAN,BOLD)}  Install Software      {DIM}\"I need a video editor\" → done{R}")
-    print(f"    {C('[10]',CYAN,BOLD)} Check for Updates      {DIM}Keep your system safe and current{R}")
+    _cat(BG_TEAL, "🌍", "SWITCHING TO LINUX?", "Coming from Windows or Mac?")
+    _item("27", "Find Linux App",      '"What replaces Photoshop / Word / iTunes?"')
 
-    print(f"\n  {YELLOW}{BOLD}🛡️  SECURITY & SAFETY{R}  {DIM}— Protect your computer{R}")
-    print(f"    {C('[5]',CYAN,BOLD)}  Security Check        {DIM}Are you protected? Find out{R}")
-    print(f"    {C('[16]',CYAN,BOLD)} Backup Settings        {DIM}Save your config before changes{R}")
-    print(f"    {C('[20]',CYAN,BOLD)} Undo Changes           {DIM}Oops? Roll back what TuxGenie did{R}")
+    _cat(BG_PURPLE, "📊", "CHECK & MONITOR", "See how your computer is doing")
+    _item("2",  "System Health Check", "Is everything running OK?")
+    _item("9",  "Explain Error Logs",  "Decode confusing error messages")
+    _item("17", "Hardware Info",       "What's inside my computer?")
+    _item("19", "Running Programs",    "What's using CPU / memory?")
 
-    print(f"\n  {BLUE}{BOLD}⚡ POWER TOOLS{R}  {DIM}— For when you're feeling adventurous{R}")
-    print(f"    {C('[6]',CYAN,BOLD)}  Free Up Disk Space    {DIM}Running out of storage?{R}")
-    print(f"    {C('[8]',CYAN,BOLD)}  Manage Services       {DIM}Speed up startup, fix failures{R}")
-    print(f"    {C('[11]',CYAN,BOLD)} Generate a Script      {DIM}\"Back up my files nightly\" → script{R}")
-    print(f"    {C('[12]',CYAN,BOLD)} Schedule a Task        {DIM}Run things automatically{R}")
-    print(f"    {C('[14]',CYAN,BOLD)} Speed Up Boot          {DIM}Computer starts slowly?{R}")
-    print(f"    {C('[15]',CYAN,BOLD)} Docker Help            {DIM}Container troubleshooting{R}")
-    print(f"    {C('[18]',CYAN,BOLD)} SSH Setup              {DIM}Remote access to another computer{R}")
-    print(f"    {C('[21]',CYAN,BOLD)} Git Helper             {DIM}Fix conflicts, undo commits, explain diffs{R}")
-    print(f"    {C('[28]',CYAN,BOLD)} Battery & Power        {DIM}Battery draining fast? Laptop overheating?{R}")
+    _cat(BG_ORANGE, "📦", "INSTALL & UPDATE", "Get software and stay up to date")
+    _item("3",  "Install Software",    '"I need a video editor" → installed')
+    _item("10", "Check for Updates",   "Keep your system safe and current")
 
-    print(f"\n  {C('[s]',DIM,BOLD)} Settings    {C('[u]',CYAN,BOLD)} Update    {C('[f]',MAGENTA,BOLD)} Suggest a Feature    {C('[q]',RED,BOLD)} Quit")
-    print(f"{BLUE}{BOLD}{'━'*W}{R}")
+    _cat(BG_NAVY, "🛡️ ", "SECURITY & SAFETY", "Protect your computer")
+    _item("5",  "Security Check",      "Are you protected? Find out now")
+    _item("16", "Backup Settings",     "Save your config before making changes")
+    _item("20", "Undo Changes",        "Oops? Roll back what TuxGenie did")
+
+    _cat(BG_DARK, "⚡", "POWER TOOLS", "For when you're feeling adventurous")
+    _item("6",  "Free Up Disk Space",  "Running out of storage?")
+    _item("8",  "Manage Services",     "Speed up startup, fix service failures")
+    _item("11", "Generate a Script",   '"Back up my files nightly" → bash script')
+    _item("12", "Schedule a Task",     "Run things automatically on a schedule")
+    _item("14", "Speed Up Boot",       "Computer starts slowly? Fix it")
+    _item("15", "Docker Help",         "Container troubleshooting & cleanup")
+    _item("18", "SSH Setup",           "Remote access to another computer")
+    _item("21", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
+    _item("28", "Battery & Power",     "Battery draining fast? Laptop overheating?")
+
     print(f"""
-  {GREEN}{BOLD}💡 EASY TIP:{R} You don't need to pick a number!
-     Just type what you need in plain English, like:
-     {CYAN}\"my wifi is not working\"{R}  or  {CYAN}\"install chrome\"{R}  or  {CYAN}\"why is it slow?\"{R}
+  {BG_DARK}{BWHITE}  {C('[s]',GOLD,BOLD)} Settings   {C('[u]',BCYAN,BOLD)} Update   {C('[f]',PINK,BOLD)} Suggest Feature   {C('[q]',BRED,BOLD)} Quit  {R}
+
+  {BGREEN}{BOLD}💡 TIP:{R} {BWHITE}You don't need to pick a number!{R}
+     Just type what you need, like:
+     {BCYAN}\"my wifi is not working\"{R}   {BCYAN}\"install chrome\"{R}   {BCYAN}\"why is it slow?\"{R}
 """)
 
 EXIT_WORDS = {"exit","quit","q","bye","logout"}
@@ -3337,7 +3361,7 @@ def main():
     with Spinner("Collecting system info…"):
         bctx = base_ctx()
     ok("System info collected")
-    print(f"  {DIM}Your system: {bctx['os']} · {bctx['kernel']} · {bctx['arch']}{R}")
+    print(f"  {SKY}Your system:{R} {BWHITE}{bctx['os']}{R}  {DIM}· {bctx['kernel']} · {bctx['arch']}{R}")
 
     session_log: list = []
     feature_map = {num: fn   for num, _, name, _, fn in MENU_ITEMS}
@@ -3370,9 +3394,9 @@ def main():
 
     while True:
         try:
-            choice = input(f"\n  {BOLD}{BLUE}TuxGenie >{R} ").strip()
+            choice = input(f"\n  {BGREEN}{BOLD}❯{R} {BWHITE}").strip()
         except (EOFError, KeyboardInterrupt):
-            print(f"\n\n  {YELLOW}{BOLD}Goodbye! Long Live Linux 🐧{R}")
+            print(f"\n\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
                 print(f"  {DIM}{backend.session_cost_estimate()}{R}")
             print(f"  {DIM}Thank you for using TuxGenie by Aspera Technologies.{R}\n")
@@ -3381,7 +3405,7 @@ def main():
         if not choice:
             continue
         if choice.lower() in EXIT_WORDS:
-            print(f"\n  {YELLOW}{BOLD}Goodbye! Long Live Linux 🐧{R}")
+            print(f"\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             print(f"  {DIM}Thank you for using TuxGenie by Aspera Technologies.{R}\n")
             break
         if choice.lower() in HELP_WORDS:
@@ -3400,14 +3424,14 @@ def main():
             _active_feature = choice
             fn(backend, bctx, session_log)
             save_session(session_log)
-            print(f"\n  {DIM}Type a number, describe a problem, or type {BOLD}menu{R}{DIM} / {BOLD}help{R}{DIM} / {BOLD}q{R}")
+            print(f"\n  {DIM}Type a number, describe a problem, or {BCYAN}menu{R} {DIM}/ {BCYAN}help{R} {DIM}/ {BRED}q{R}")
         else:
             # Natural language → try direct passthrough first, then AI
             if not try_passthrough(choice, session_log):
                 sys_p = BASE_SYS + _sys_ctx_block(bctx)
                 fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
             save_session(session_log)
-            print(f"\n  {DIM}Type a number, describe a problem, or type {BOLD}menu{R}{DIM} / {BOLD}help{R}{DIM} / {BOLD}q{R}")
+            print(f"\n  {DIM}Type a number, describe a problem, or {BCYAN}menu{R} {DIM}/ {BCYAN}help{R} {DIM}/ {BRED}q{R}")
 
     save_session(session_log)
 
