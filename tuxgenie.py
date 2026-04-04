@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.2.0"
+__version__ = "5.3.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1007,33 +1007,36 @@ def _looks_like_command(text):
     if effective.startswith('./') or effective.startswith('../'):
         return os.path.isfile(effective), effective
 
-    # Shell builtins (no file in PATH but valid bash commands)
-    if effective in _SHELL_BUILTINS:
-        return True, effective
-
-    # Common English words that happen to share a name with rarely-used
-    # system utilities — treat as natural language when typed alone or with
-    # English-looking arguments (e.g. "install chrome", "select all", "find me")
+    # Common English words/verbs that share names with system utilities.
+    # Must be checked BEFORE builtins so "set up a printer", "help me with git",
+    # "install chrome browser" all go to AI instead of running as commands.
     _ENGLISH_WORDS = frozenset([
         'install', 'select', 'find', 'locate', 'link', 'sort', 'cut',
         'diff', 'touch', 'stat', 'head', 'tail', 'join', 'split',
         'test', 'time', 'wait', 'watch', 'run', 'start', 'stop',
         'open', 'close', 'show', 'list', 'check', 'fix', 'help',
         'make', 'build', 'clean', 'reset', 'update', 'upgrade',
+        'set', 'get', 'put',
     ])
     if effective in _ENGLISH_WORDS:
-        # If it looks like a natural language phrase (has English words after it)
-        # rather than command flags, send to AI
-        rest = text.strip()[len(effective):].strip()
-        # Command flags start with - or are known options; English phrases don't
-        if rest and not rest.startswith('-') and shutil.which(effective) is None:
-            return False, ''
-        # If the word IS in PATH (e.g. /usr/bin/find, /bin/sort), allow it
-        # only if it has flag-like arguments
-        if shutil.which(effective) and (not rest or rest.startswith('-')):
+        rest = stripped[len(effective):].strip()
+        if rest:
+            words_after = rest.split()
+            # Flags (start with -) or paths (start with / ~ .) indicate a real command
+            has_flag = any(w.startswith('-') for w in words_after)
+            has_path = any(w.startswith('/') or w.startswith('~') or w.startswith('.') for w in words_after)
+            if not has_flag and not has_path:
+                return False, ''  # Plain English phrase → send to AI
+        # Has flags/paths, or no rest → treat as command if it exists
+        if effective in _SHELL_BUILTINS:
             return True, effective
-        if not shutil.which(effective):
-            return False, ''
+        if shutil.which(effective):
+            return True, effective
+        return False, ''
+
+    # Shell builtins (no file in PATH but valid bash commands)
+    if effective in _SHELL_BUILTINS:
+        return True, effective
 
     # Look up in PATH
     if shutil.which(effective):
