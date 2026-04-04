@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.1.0"
+__version__ = "5.2.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -963,11 +963,23 @@ _NEEDS_YES_RE = re.compile(
     r"|^\s*(?:sudo\s+)?zypper\s+(?:install|remove|update)\b"
 )
 
+# Shell builtins that have no file in PATH but are valid commands.
+# These run via `bash -c` or are handled specially.
+_SHELL_BUILTINS = frozenset([
+    'history', 'alias', 'unalias', 'export', 'declare', 'typeset',
+    'local', 'readonly', 'set', 'unset', 'shopt', 'let', 'eval',
+    'source', '.', 'type', 'command', 'builtin', 'enable', 'help',
+    'jobs', 'bg', 'fg', 'wait', 'disown', 'suspend', 'times',
+    'dirs', 'pushd', 'popd', 'hash', 'ulimit', 'umask',
+    'getopts', 'caller', 'fc', 'bind', 'compgen', 'complete',
+    'cd', 'pwd', 'echo', 'printf', 'test', 'true', 'false',
+    'kill', 'trap', 'read', 'mapfile', 'readarray',
+])
+
 def _looks_like_command(text):
     """
     Return (True, first_word) if text looks like a shell command.
-    Detection: first word (after optional sudo/doas) exists in PATH
-    or is an absolute/relative path to an executable.
+    Detects: executables in PATH, absolute/relative paths, shell builtins.
     Returns (False, '') for natural language input.
     """
     stripped = text.strip()
@@ -995,9 +1007,48 @@ def _looks_like_command(text):
     if effective.startswith('./') or effective.startswith('../'):
         return os.path.isfile(effective), effective
 
+    # Shell builtins (no file in PATH but valid bash commands)
+    if effective in _SHELL_BUILTINS:
+        return True, effective
+
+    # Common English words that happen to share a name with rarely-used
+    # system utilities — treat as natural language when typed alone or with
+    # English-looking arguments (e.g. "install chrome", "select all", "find me")
+    _ENGLISH_WORDS = frozenset([
+        'install', 'select', 'find', 'locate', 'link', 'sort', 'cut',
+        'diff', 'touch', 'stat', 'head', 'tail', 'join', 'split',
+        'test', 'time', 'wait', 'watch', 'run', 'start', 'stop',
+        'open', 'close', 'show', 'list', 'check', 'fix', 'help',
+        'make', 'build', 'clean', 'reset', 'update', 'upgrade',
+    ])
+    if effective in _ENGLISH_WORDS:
+        # If it looks like a natural language phrase (has English words after it)
+        # rather than command flags, send to AI
+        rest = text.strip()[len(effective):].strip()
+        # Command flags start with - or are known options; English phrases don't
+        if rest and not rest.startswith('-') and shutil.which(effective) is None:
+            return False, ''
+        # If the word IS in PATH (e.g. /usr/bin/find, /bin/sort), allow it
+        # only if it has flag-like arguments
+        if shutil.which(effective) and (not rest or rest.startswith('-')):
+            return True, effective
+        if not shutil.which(effective):
+            return False, ''
+
     # Look up in PATH
     if shutil.which(effective):
         return True, effective
+
+    # Last resort: ask bash itself if it knows this command
+    # Catches functions, aliases loaded in .bashrc, and edge cases
+    try:
+        probe = subprocess.run(
+            ['bash', '-c', f'type -t {shlex.quote(effective)} 2>/dev/null'],
+            capture_output=True, text=True, timeout=2)
+        if probe.stdout.strip() in ('file', 'builtin', 'function', 'alias', 'keyword'):
+            return True, effective
+    except Exception:
+        pass
 
     return False, ''
 
@@ -1066,6 +1117,39 @@ def try_passthrough(user_input, session_log):
         print(f"  {DIM}Run it manually in a terminal if you are certain.{R}")
         return True
 
+    # ── Special handling for shell builtins that need context ──────────────
+    # 'history' — bash subprocess has no history; read ~/.bash_history directly
+    if effective_word == 'history':
+        hist_file = os.path.expanduser('~/.bash_history')
+        try:
+            lines = open(hist_file).read().splitlines()
+            # Support: history, history 20, history -20
+            args = cmd.split()[1:]
+            n = 500
+            if args:
+                try: n = abs(int(args[-1]))
+                except ValueError: pass
+            shown = lines[-n:]
+            start = max(1, len(lines) - n + 1)
+            for idx2, l in enumerate(shown, start):
+                print(f"  {DIM}{idx2:5d}  {l}{R}")
+        except FileNotFoundError:
+            print(f"  {DIM}(no bash history found){R}")
+        ok("Done.")
+        return True
+
+    # 'cd' — cannot change TuxGenie's working dir but acknowledge it
+    if effective_word == 'cd':
+        parts2 = shlex.split(cmd)
+        target = parts2[1] if len(parts2) > 1 else os.path.expanduser('~')
+        target = os.path.expanduser(target)
+        if os.path.isdir(target):
+            os.chdir(target)
+            ok(f"Directory: {os.getcwd()}")
+        else:
+            warn(f"cd: {target}: No such directory")
+        return True
+
     # Get sudo password once (cached for the whole session)
     sudo_pw = None
     if re.match(r'^\s*sudo\b', cmd):
@@ -1080,6 +1164,10 @@ def try_passthrough(user_input, session_log):
         exec_cmd = re.sub(
             r'((?:sudo\s+)?(?:apt(?:-get)?|snap|flatpak|dnf|yum|pacman|zypper)\s+\S+)',
             r'\1 -y', cmd, count=1)
+
+    # Shell builtins that aren't already handled above need bash -i to run
+    if effective_word in _SHELL_BUILTINS and not shutil.which(effective_word):
+        exec_cmd = f'bash -i -c {shlex.quote(exec_cmd)} 2>&1'
 
     print(f"  {CYAN}▶ Running…{R}")
     rc, stdout, stderr = run_cmd_live(exec_cmd, sudo_password=sudo_pw)
