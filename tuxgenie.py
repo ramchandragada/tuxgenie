@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.0.0"
+__version__ = "5.1.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1043,8 +1043,6 @@ def try_passthrough(user_input, session_log):
     calling Claude. Works for ANY command in PATH — not just a fixed list.
     Returns True if handled, False to fall back to AI (natural language).
     """
-    global _passthrough_auto
-
     cmd = user_input.strip()
     is_cmd, effective_word = _looks_like_command(cmd)
 
@@ -1059,34 +1057,16 @@ def try_passthrough(user_input, session_log):
     risk   = _classify_cmd_risk(cmd, effective_word)
     danger = risk == 'dangerous'
 
-    # Auto-run (no prompt) if auto-mode is on and not dangerous
-    if _passthrough_auto and not danger:
-        print(f"\n  {CYAN}⚡ {cmd}{R}")
-    else:
-        badge = {'safe': f"{GREEN}SAFE{R}", 'moderate': f"{YELLOW}CAREFUL{R}",
-                 'dangerous': f"{RED}RISKY{R}"}.get(risk, '')
-        print(f"\n  {CYAN}{BOLD}⚡ Direct — no AI{R}  [{badge}]  {DIM}{cmd}{R}")
-        if danger:
-            print(f"  {RED}{BOLD}⚠  This could be irreversible — are you sure?{R}")
+    # Show what we're running (transparency), but never ask for permission
+    print(f"\n  {CYAN}⚡ {cmd}{R}")
 
-        try:
-            if danger:
-                hint = f"  {C('y',GREEN,BOLD)} yes    {C('n',RED,BOLD)} cancel"
-            else:
-                hint = f"  {C('y',GREEN,BOLD)} yes    {C('a',CYAN,BOLD)} yes & auto-run all future commands    {C('n',RED,BOLD)} cancel"
-            ch = input(f"\n{hint}\n\n  {BOLD}>{R} ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print(); return True
+    # Dangerous commands (rm -rf /, fork bomb, disk wipe) — only these get blocked
+    if danger:
+        print(f"  {RED}{BOLD}⚠  Blocked: this command could permanently destroy data.{R}")
+        print(f"  {DIM}Run it manually in a terminal if you are certain.{R}")
+        return True
 
-        if ch in ('n', 'no', 'q', 'quit', 'cancel', 'exit'):
-            print(C("  Cancelled.", YELLOW)); return True
-        if ch in ('a', 'all') and not danger:
-            _passthrough_auto = True
-            ok("Auto-mode on — commands will run without asking this session.")
-        elif ch not in ('y', 'yes', 'a', 'all'):
-            print(C("  Cancelled.", YELLOW)); return True
-
-    # Get sudo password once (cached for the session)
+    # Get sudo password once (cached for the whole session)
     sudo_pw = None
     if re.match(r'^\s*sudo\b', cmd):
         try:
@@ -1101,7 +1081,7 @@ def try_passthrough(user_input, session_log):
             r'((?:sudo\s+)?(?:apt(?:-get)?|snap|flatpak|dnf|yum|pacman|zypper)\s+\S+)',
             r'\1 -y', cmd, count=1)
 
-    print(f"\n  {CYAN}▶ Running…{R}")
+    print(f"  {CYAN}▶ Running…{R}")
     rc, stdout, stderr = run_cmd_live(exec_cmd, sudo_password=sudo_pw)
     ok("Done.") if rc == 0 else warn(f"Exited with code {rc}.")
 
@@ -1561,73 +1541,54 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
             warn("No steps returned — issue may already be resolved.")
             return
 
-        step_outputs    = []
-        aborted         = False
-        yes_to_all      = False
+        step_outputs = []
+        aborted      = False
 
         for i, step in enumerate(steps, 1):
-            step_failed     = False
+            step_failed       = False
             output_has_errors = False
-            risk    = step.get("risk","safe").lower()
-            cmd     = step.get("command","").strip()
-            desc    = step.get("description","")
+            risk    = step.get("risk", "safe").lower()
+            cmd     = step.get("command", "").strip()
+            desc    = step.get("description", "")
             root    = step.get("requires_root", False)
-            exp_out = step.get("expected_output","")
-            meaning = step.get("what_this_means","")
+            exp_out = step.get("expected_output", "")
+            meaning = step.get("what_this_means", "")
 
             if is_dangerous(cmd):
                 risk = "dangerous"
 
-            # Visual safety badge
-            rb = {
-                "safe":     C(" ✓ SAFE ",      GREEN,  BOLD),
-                "moderate": C(" ⚠ CAREFUL ",   YELLOW, BOLD),
-                "dangerous":C(" ✗ RISKY ",      RED,    BOLD),
-            }.get(risk, C(f" {risk.upper()} ", DIM))
-            root_b = f"  {C('🔑 needs admin password', YELLOW)}" if root else ""
-
             pct = int(i / len(steps) * 100)
-            bar_filled = int(pct / 5)
-            bar = C("█" * bar_filled, CYAN) + C("░" * (20 - bar_filled), DIM)
+            bar = C("█" * int(pct/5), CYAN) + C("░" * (20 - int(pct/5)), DIM)
+            rb  = {"safe":     C(" SAFE ",    GREEN,  BOLD),
+                   "moderate": C(" WORKING ", CYAN,   BOLD),
+                   "dangerous":C(" RISKY ",   RED,    BOLD),
+                  }.get(risk, C(f" {risk.upper()} ", DIM))
+
             print(f"\n{'─'*60}")
-            print(f"  {BOLD}Step {i} of {len(steps)}{R}  {rb}  {bar} {CYAN}{BOLD}{pct}%{R}")
+            print(f"  {BOLD}Step {i}/{len(steps)}{R}  {rb}  {bar} {CYAN}{BOLD}{pct}%{R}")
             print(f"  {desc}")
-            if root_b:
-                print(root_b)
             if meaning:
-                print(f"  {CYAN}→ What happens:{R} {meaning}")
+                print(f"  {DIM}→ {meaning}{R}")
             if cmd:
-                print(f"\n  {DIM}Command:{R} {C(cmd,CYAN)}")
-            if exp_out:
-                print(f"  {DIM}You should see:{R} {exp_out}")
-            if risk == "dangerous":
-                print(f"\n  {BG_RED}{BOLD}  ⚠  WARNING: This could cause damage — read carefully!  ⚠  {R}")
+                print(f"  {DIM}$ {cmd}{R}")
 
             if not cmd:
-                info("(just information — nothing to run)"); continue
+                info("(informational — nothing to run)"); continue
 
-            choice = step_prompt(cmd, risk, yes_to_all)
-
-            if choice == "run_all":
-                yes_to_all = True
-                choice     = "run"
-                ok("Auto-mode ON — safe steps will run without asking.")
-                warn("Risky steps will still ask you first.")
-
-            if choice == "abort":
-                warn("Stopped. Nothing else will run."); aborted = True; break
-
-            if choice == "skip":
-                print(C("  ↳ Skipped this step.", YELLOW))
-                step_outputs.append({"step":i,"command":cmd,"skipped":True})
+            # Block only genuinely destructive commands (DANGER_RE matches)
+            if risk == "dangerous":
+                print(f"\n  {BG_RED}{BOLD}  ⚠  This command could permanently destroy data.  {R}")
+                print(f"  {RED}Skipping for safety. Run manually if you are certain.{R}")
+                step_outputs.append({"step": i, "command": cmd, "skipped": True})
                 continue
 
+            # Get sudo password once — cached for the whole session
             sudo_pw = None
             if cmd.strip().startswith("sudo"):
                 try:
                     sudo_pw = get_or_cache_sudo_password()
                 except KeyboardInterrupt:
-                    warn("Stopped. Nothing else will run."); aborted = True
+                    warn("Stopped."); aborted = True
                 if aborted:
                     break
 
@@ -1894,18 +1855,53 @@ def feat_health(backend, bctx, slog):
     hdr("Health Dashboard — Full system scan")
     with Spinner("Collecting health data…"):
         ctx = {**bctx, **health_ctx()}
-    ok("Data collected")
 
-    sys_p = BASE_SYS + """
-Additional instructions for HEALTH CHECK mode:
-- Analyse CPU, memory, disk, failed services, zombie processes, temperatures.
-- Report any anomalies or warnings.
-- If everything looks healthy, say so explicitly and return resolved:true.
-- Suggest preventive maintenance steps even if nothing is broken.
-""" + _sys_ctx_block(ctx)
+    # ── Display directly — no AI needed for basic health data ──
+    section("System Overview")
+    print(f"  {DIM}OS:{R}      {ctx.get('os','?')}")
+    print(f"  {DIM}Kernel:{R}  {ctx.get('kernel','?')}  ·  {ctx.get('arch','?')}")
+    print(f"  {DIM}Uptime:{R}  {ctx.get('uptime','?')}")
 
-    msg = "Please perform a full system health check and report any issues or warnings."
-    fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
+    section("CPU & Memory")
+    for line in ctx.get('cpu_usage','').splitlines()[:3]:
+        if line.strip(): print(f"  {line}")
+    for line in ctx.get('memory','').splitlines()[:3]:
+        if line.strip(): print(f"  {line}")
+
+    section("Disk Space")
+    for line in ctx.get('disk','').splitlines():
+        if line.strip():
+            pct = re.search(r'(\d+)%', line)
+            col = RED if pct and int(pct.group(1)) >= 90 else (YELLOW if pct and int(pct.group(1)) >= 75 else GREEN)
+            print(f"  {col}{line}{R}")
+
+    section("Failed Services")
+    failed = ctx.get('failed_services','').strip()
+    if failed and 'failed' in failed.lower():
+        for line in failed.splitlines()[:10]:
+            if line.strip(): print(f"  {RED}{line}{R}")
+    else:
+        ok("No failed services")
+
+    section("Temperatures")
+    temps = ctx.get('temps','').strip()
+    if temps:
+        for line in temps.splitlines()[:8]:
+            if line.strip(): print(f"  {line}")
+    else:
+        print(f"  {DIM}(temperature sensors not available){R}")
+
+    # If any issues found, let AI suggest fixes
+    has_issues = (
+        any(int(m.group(1)) >= 90 for m in [re.search(r'(\d+)%', l) for l in ctx.get('disk','').splitlines() if l] if m)
+        or ('failed' in failed.lower() if failed else False)
+    )
+    if has_issues:
+        print(f"\n  {YELLOW}{BOLD}Issues detected — asking Claude for recommendations…{R}")
+        sys_p = BASE_SYS + "\nHealth check found issues. Suggest specific fixes." + _sys_ctx_block(ctx)
+        fix_engine(backend, sys_p, [{"role":"user","content":"Fix the issues found in the health check."}], slog)
+    else:
+        print(f"\n  {GREEN}{BOLD}✓ System looks healthy!{R}")
 
 # ── FEATURE 3: Package Wizard ─────────────────────────────────────────────────
 def feat_packages(backend, bctx, slog):
@@ -2042,20 +2038,53 @@ Additional instructions for LOG ANALYSER mode:
 
 # ── FEATURE 10: Update Advisor ────────────────────────────────────────────────
 def feat_updates(backend, bctx, slog):
-    hdr("Update Advisor — Safe upgrade analysis")
-    with Spinner("Checking for updates…"):
-        ctx = {**bctx, **update_ctx()}
-    ok("Update info collected")
-    sys_p = BASE_SYS + """
-Additional instructions for UPDATE ADVISOR mode:
-- List pending updates grouped by: Security (critical), Major version bumps, Regular updates.
-- Warn about packages that commonly cause breakage on upgrade.
-- Recommend a safe upgrade order.
-- Suggest taking a snapshot/backup before major updates.
-- If no updates available, confirm system is up to date.
-""" + _sys_ctx_block(ctx)
-    msg = "Analyse pending updates and tell me which are safe to apply and in what order."
-    fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
+    hdr("Check for Updates — Keep your system current")
+    pkg = bctx.get('pkg_mgr', 'apt')
+
+    # ── Run update directly — no AI needed ──
+    print(f"\n  {CYAN}Refreshing package lists…{R}")
+    sudo_pw = None
+    try:
+        sudo_pw = get_or_cache_sudo_password()
+    except KeyboardInterrupt:
+        return
+
+    if pkg == 'apt':
+        run_cmd_live("sudo apt-get update -q", sudo_password=sudo_pw)
+        rc, out, _ = run_cmd_live("apt list --upgradable 2>/dev/null | tail -n +2", sudo_password=None)
+        lines = [l for l in out.splitlines() if l.strip()]
+        if lines:
+            print(f"\n  {YELLOW}{BOLD}{len(lines)} update(s) available:{R}")
+            for l in lines[:20]: print(f"  {DIM}{l}{R}")
+            try:
+                ch = input(f"\n  {BOLD}Install all updates now? [y/n]:{R} ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return
+            if ch in ('y', 'yes'):
+                print(f"\n  {CYAN}▶ Installing updates…{R}")
+                run_cmd_live("sudo apt-get upgrade -y", sudo_password=sudo_pw)
+                run_cmd_live("sudo apt-get autoremove -y", sudo_password=sudo_pw)
+                ok("System fully updated.")
+        else:
+            ok("System is up to date.")
+    elif pkg in ('dnf', 'yum'):
+        run_cmd_live(f"sudo {pkg} check-update", sudo_password=sudo_pw)
+        try:
+            ch = input(f"\n  {BOLD}Install all updates? [y/n]:{R} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if ch in ('y', 'yes'):
+            run_cmd_live(f"sudo {pkg} upgrade -y", sudo_password=sudo_pw)
+            ok("System updated.")
+    elif pkg == 'pacman':
+        run_cmd_live("sudo pacman -Syu --noconfirm", sudo_password=sudo_pw)
+        ok("System updated.")
+    else:
+        # Fallback for unknown package managers — let AI handle
+        with Spinner("Checking for updates…"):
+            ctx = {**bctx, **update_ctx()}
+        sys_p = BASE_SYS + "\nCheck for and apply system updates." + _sys_ctx_block(ctx)
+        fix_engine(backend, sys_p, [{"role":"user","content":"Update my system."}], slog)
 
 # ── FEATURE 11: Script Generator ─────────────────────────────────────────────
 def feat_script(backend, bctx, slog):
@@ -2256,22 +2285,33 @@ def feat_hardware(backend, bctx, slog):
     hdr("Hardware Info — Full system report")
     with Spinner("Gathering hardware info…"):
         ctx = {**bctx, **hardware_ctx()}
-    ok("Hardware info collected")
 
-    sys_p = f"""You are TuxGenie, hardware expert.
-Analyse the system hardware and produce a clear, structured report.
+    # ── Display directly — pure data, no AI needed ──
+    section("CPU")
+    for line in ctx.get('cpu','').splitlines()[:6]:
+        if line.strip(): print(f"  {line}")
 
-Return JSON with:
-- analysis: comprehensive plain-English hardware summary
-- steps: [checks to verify hardware health, benchmark commands, optional upgrades]
-- success_check: "Your hardware report is complete"
-- resolved: false (so we can show all steps)
+    section("Memory")
+    for line in ctx.get('memory','').splitlines()[:4]:
+        if line.strip(): print(f"  {line}")
 
-System data: {json.dumps(ctx, indent=2)}
-RETURN ONLY VALID JSON."""
+    section("Storage")
+    for line in ctx.get('disks','').splitlines()[:10]:
+        if line.strip(): print(f"  {line}")
 
-    msg = "Give me a complete hardware report and flag any concerns."
-    fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
+    section("Graphics")
+    for line in ctx.get('gpu','').splitlines()[:6]:
+        if line.strip(): print(f"  {line}")
+
+    section("Network Interfaces")
+    for line in ctx.get('network','').splitlines()[:8]:
+        if line.strip(): print(f"  {line}")
+
+    section("USB Devices")
+    for line in ctx.get('usb','').splitlines()[:8]:
+        if line.strip(): print(f"  {line}")
+
+    ok("Hardware report complete. Ask TuxGenie if you need help with any device.")
 
 # ── FEATURE 18: SSH Setup Wizard ─────────────────────────────────────────────
 def feat_ssh(backend, bctx, slog):
@@ -2301,30 +2341,42 @@ Additional instructions for SSH SETUP WIZARD mode:
 
 # ── FEATURE 19: Process Inspector ────────────────────────────────────────────
 def feat_processes(backend, bctx, slog):
-    hdr("Process Inspector — Tame runaway processes")
-    ps_ctx = {
-        **bctx,
-        "top_cpu":    _r("ps aux --sort=-%cpu | head -15"),
-        "top_mem":    _r("ps aux --sort=-%mem | head -15"),
-        "zombies":    _r("ps aux | awk '$8==\"Z\"'"),
-        "load_avg":   _r("cat /proc/loadavg"),
-        "open_files": _r("lsof 2>/dev/null | wc -l"),
-        "threads":    _r("ps -eLf | wc -l"),
-    }
+    hdr("Process Inspector — Running programs")
+    with Spinner("Collecting process data…"):
+        top_cpu = _r("ps aux --sort=-%cpu | head -16")
+        top_mem = _r("ps aux --sort=-%mem | head -16")
+        load    = _r("cat /proc/loadavg")
+        zombies = _r("ps aux | awk '$8==\"Z\"' | wc -l").strip()
+
+    section("Load Average")
+    print(f"  {load}")
+
+    section("Top by CPU")
+    for line in top_cpu.splitlines()[:12]:
+        if line.strip(): print(f"  {DIM}{line}{R}")
+
+    section("Top by Memory")
+    for line in top_mem.splitlines()[:12]:
+        if line.strip(): print(f"  {DIM}{line}{R}")
+
+    if zombies and zombies != '0':
+        print(f"\n  {YELLOW}⚠  {zombies} zombie process(es) detected{R}")
+
+    # Only call AI if user has a specific problem to solve
     try:
-        problem = input(f"\n{BOLD}Describe the issue (or Enter for general analysis):{R}\n{C('(e.g. 100% CPU, out of memory, zombie processes)',DIM)}\n> ").strip()
+        problem = input(f"\n  {BOLD}Any specific issue? (Enter to finish):{R} ").strip()
     except (EOFError, KeyboardInterrupt):
         return
     if not problem:
-        problem = "Analyse processes: find CPU/memory hogs, zombies, and suggest fixes."
+        return
 
+    ps_ctx = {**bctx, "top_cpu": top_cpu, "top_mem": top_mem,
+              "load_avg": load, "zombies": zombies}
     sys_p = BASE_SYS + """
 Additional instructions for PROCESS INSPECTOR mode:
 - Identify which process is the problem and WHY it's misbehaving.
-- Suggest: nice/renice, kill signals (SIGTERM before SIGKILL), ulimits.
+- Suggest: nice/renice, kill signals (SIGTERM before SIGKILL).
 - For memory leaks: identify the process and suggest restart/update.
-- Explain zombie processes and how to clean them up safely.
-- Provide commands to monitor the fix in real time.
 """ + _sys_ctx_block(ps_ctx)
     fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
