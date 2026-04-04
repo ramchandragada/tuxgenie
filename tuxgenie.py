@@ -732,6 +732,200 @@ DANGER_RE = [
 def is_dangerous(cmd):
     return any(re.search(p, cmd) for p in DANGER_RE)
 
+# ── Passthrough: commands that run directly without calling Claude ─────────────
+# Each entry: (compiled_regex, risk_level, human_readable_description)
+# Risk levels: "safe" | "moderate" | "dangerous"
+_PASSTHROUGH = [
+    # ── apt / apt-get ──────────────────────────────────────────────────────────
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+update\s*$"),
+     "safe",     "Refresh package lists from repositories"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+upgrade\s*$"),
+     "moderate", "Upgrade all installed packages"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+dist-upgrade\s*$"),
+     "moderate", "Full distribution upgrade"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+full-upgrade\s*$"),
+     "moderate", "Full upgrade (removes conflicting packages)"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+autoremove(?:\s+--purge)?\s*$"),
+     "moderate", "Remove unused dependency packages"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+autoclean\s*$"),
+     "safe",     "Remove outdated cached package files"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+clean\s*$"),
+     "safe",     "Clear entire local package cache"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+install\s+[\w\-\+\.\~]+(?:\s+[\w\-\+\.\~]+)*\s*$"),
+     "moderate", "Install package(s)"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+remove\s+[\w\-\+\.]+(?:\s+[\w\-\+\.]+)*\s*$"),
+     "moderate", "Remove package(s)"),
+    (re.compile(r"^\s*sudo\s+apt(?:-get)?\s+purge\s+[\w\-\+\.]+(?:\s+[\w\-\+\.]+)*\s*$"),
+     "moderate", "Purge package(s) and their config files"),
+    (re.compile(r"^\s*apt(?:-cache)?\s+search\s+.+$"),
+     "safe",     "Search for packages"),
+    (re.compile(r"^\s*apt(?:-cache)?\s+show\s+[\w\-\.]+\s*$"),
+     "safe",     "Show package details"),
+    # ── systemctl ──────────────────────────────────────────────────────────────
+    (re.compile(r"^\s*(?:sudo\s+)?systemctl\s+status\s+[\w\.\-@\\]+\s*$"),
+     "safe",     "Check service status"),
+    (re.compile(r"^\s*sudo\s+systemctl\s+start\s+[\w\.\-@\\]+\s*$"),
+     "moderate", "Start service"),
+    (re.compile(r"^\s*sudo\s+systemctl\s+stop\s+[\w\.\-@\\]+\s*$"),
+     "moderate", "Stop service"),
+    (re.compile(r"^\s*sudo\s+systemctl\s+restart\s+[\w\.\-@\\]+\s*$"),
+     "moderate", "Restart service"),
+    (re.compile(r"^\s*sudo\s+systemctl\s+reload\s+[\w\.\-@\\]+\s*$"),
+     "moderate", "Reload service configuration"),
+    (re.compile(r"^\s*sudo\s+systemctl\s+enable\s+[\w\.\-@\\]+\s*$"),
+     "moderate", "Enable service to start at boot"),
+    (re.compile(r"^\s*sudo\s+systemctl\s+disable\s+[\w\.\-@\\]+\s*$"),
+     "moderate", "Disable service from starting at boot"),
+    (re.compile(r"^\s*(?:sudo\s+)?systemctl\s+list-units(?:\s+--\S+)*\s*$"),
+     "safe",     "List active systemd units"),
+    # ── snap ───────────────────────────────────────────────────────────────────
+    (re.compile(r"^\s*sudo\s+snap\s+install\s+[\w\-\.]+(?:\s+--[\w\-=]+)*\s*$"),
+     "moderate", "Install snap package"),
+    (re.compile(r"^\s*sudo\s+snap\s+remove\s+[\w\-\.]+\s*$"),
+     "moderate", "Remove snap package"),
+    (re.compile(r"^\s*sudo\s+snap\s+refresh\s*(?:[\w\-\.]+)?\s*$"),
+     "moderate", "Update snap package(s)"),
+    (re.compile(r"^\s*snap\s+list\s*$"),
+     "safe",     "List installed snaps"),
+    (re.compile(r"^\s*snap\s+find\s+.+$"),
+     "safe",     "Search for snaps"),
+    # ── flatpak ────────────────────────────────────────────────────────────────
+    (re.compile(r"^\s*flatpak\s+install\s+(?:--[\w\-]+\s+)*[\w\.\-]+\s*$"),
+     "moderate", "Install flatpak app"),
+    (re.compile(r"^\s*flatpak\s+remove\s+[\w\.\-]+\s*$"),
+     "moderate", "Remove flatpak app"),
+    (re.compile(r"^\s*flatpak\s+update\s*$"),
+     "moderate", "Update all flatpak apps"),
+    (re.compile(r"^\s*flatpak\s+list\s*$"),
+     "safe",     "List installed flatpaks"),
+    # ── system info (read-only) ────────────────────────────────────────────────
+    (re.compile(r"^\s*df(?:\s+-[hHiTa]+)?\s*$"),
+     "safe",     "Show disk space usage"),
+    (re.compile(r"^\s*free(?:\s+-[hmgbkst]+)?\s*$"),
+     "safe",     "Show memory usage"),
+    (re.compile(r"^\s*uptime\s*$"),
+     "safe",     "Show system uptime and load"),
+    (re.compile(r"^\s*uname(?:\s+-[a-zA-Z]+)?\s*$"),
+     "safe",     "Show kernel/OS info"),
+    (re.compile(r"^\s*lsb_release(?:\s+-[a-z]+)?\s*$"),
+     "safe",     "Show Linux distribution info"),
+    (re.compile(r"^\s*top\s*$"),
+     "safe",     "Interactive process viewer"),
+    (re.compile(r"^\s*htop\s*$"),
+     "safe",     "Interactive process viewer (htop)"),
+    (re.compile(r"^\s*ps\s+(?:aux|auxf|ef|e|u)\s*$"),
+     "safe",     "List running processes"),
+    (re.compile(r"^\s*lscpu\s*$"),
+     "safe",     "Show CPU information"),
+    (re.compile(r"^\s*lsblk(?:\s+-\w+)?\s*$"),
+     "safe",     "Show block devices"),
+    (re.compile(r"^\s*lsusb(?:\s+-v)?\s*$"),
+     "safe",     "List USB devices"),
+    (re.compile(r"^\s*lspci(?:\s+-[a-z]+)?\s*$"),
+     "safe",     "List PCI devices"),
+    # ── networking ────────────────────────────────────────────────────────────
+    (re.compile(r"^\s*ip\s+(?:addr|address|link|route|r|neigh|a)\s*$"),
+     "safe",     "Show network interfaces/routes"),
+    (re.compile(r"^\s*ifconfig\s*$"),
+     "safe",     "Show network interfaces"),
+    (re.compile(r"^\s*ping\s+(?:-c\s+\d+\s+)?[\w\.\-]+\s*$"),
+     "safe",     "Ping a host"),
+    (re.compile(r"^\s*netstat(?:\s+-\w+)?\s*$"),
+     "safe",     "Show network connections"),
+    (re.compile(r"^\s*ss(?:\s+-\w+)?\s*$"),
+     "safe",     "Show socket statistics"),
+    (re.compile(r"^\s*nslookup\s+[\w\.\-]+\s*$"),
+     "safe",     "DNS lookup"),
+    (re.compile(r"^\s*dig\s+[\w\.\-]+(?:\s+\w+)?\s*$"),
+     "safe",     "DNS query"),
+    (re.compile(r"^\s*traceroute\s+[\w\.\-]+\s*$"),
+     "safe",     "Trace network route to host"),
+    (re.compile(r"^\s*curl\s+-[Iss]+\s+https?://[\w\.\-/]+\s*$"),
+     "safe",     "HTTP request (info/headers only)"),
+    # ── logs ──────────────────────────────────────────────────────────────────
+    (re.compile(r"^\s*(?:sudo\s+)?journalctl(?:\s+(?:-[a-zA-Z]+|--\S+|[\w\.\-@]+))*\s*$"),
+     "safe",     "View systemd journal logs"),
+    (re.compile(r"^\s*(?:sudo\s+)?dmesg(?:\s+-[a-zA-Z]+)?\s*$"),
+     "safe",     "View kernel ring buffer (boot messages)"),
+    # ── reboot / shutdown (dangerous) ─────────────────────────────────────────
+    (re.compile(r"^\s*sudo\s+reboot\s*$"),
+     "dangerous", "Reboot the system now"),
+    (re.compile(r"^\s*sudo\s+shutdown\s+-[hrP]\s+(?:now|\d+)\s*(?:.*)$"),
+     "dangerous", "Shut down the system"),
+    (re.compile(r"^\s*sudo\s+poweroff\s*$"),
+     "dangerous", "Power off the system"),
+]
+
+def try_passthrough(user_input, session_log):
+    """
+    Check if the user typed a well-known command that can run directly
+    without calling Claude. Saves API tokens and responds instantly.
+
+    Returns True if the command was handled (even if cancelled by user),
+    False if no pattern matched (caller should fall back to fix_engine).
+    """
+    cmd = user_input.strip()
+    matched_risk = None
+    matched_desc = None
+
+    for pattern, risk, desc in _PASSTHROUGH:
+        if pattern.match(cmd):
+            matched_risk = risk
+            matched_desc = desc
+            break
+
+    if matched_risk is None:
+        return False  # Not a passthrough command — let AI handle it
+
+    safety_styles = {
+        "safe":      (GREEN,  "SAFE — just looks at info, changes nothing"),
+        "moderate":  (YELLOW, "CAREFUL — makes a change, but it's reversible"),
+        "dangerous": (RED,    "RISKY — this could be hard to undo"),
+    }
+    col, explain = safety_styles[matched_risk]
+
+    print(f"\n  {CYAN}{BOLD}⚡ Direct execution — no AI needed{R}")
+    print(f"  {DIM}{'─'*50}{R}")
+    print(f"  {BOLD}Command:{R}  {CYAN}{cmd}{R}")
+    print(f"  {BOLD}Action: {R}  {matched_desc}")
+    print(f"\n  {col}{BOLD}  {explain}  {R}")
+
+    if is_dangerous(cmd):
+        print(f"\n  {RED}{BOLD}⚠  WARNING: This action is potentially irreversible!{R}")
+
+    while True:
+        try:
+            print(f"\n    {C('y',GREEN,BOLD)} = yes, run it    {C('n',RED,BOLD)} = cancel")
+            ch = input(f"\n  {BOLD}Your choice:{R} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return True
+        if ch in ("y", "yes"):
+            break
+        if ch in ("n", "no", "q", "quit", "exit", "cancel"):
+            print(C("  Cancelled.", YELLOW))
+            return True
+        print(C("  Type y to run or n to cancel.", DIM))
+
+    sudo_pw = None
+    if cmd.startswith("sudo"):
+        try:
+            sudo_pw = get_or_cache_sudo_password()
+        except KeyboardInterrupt:
+            warn("Cancelled.")
+            return True
+
+    print(f"\n  {CYAN}▶ Running…{R}")
+    rc, stdout, stderr = run_cmd_live(cmd, sudo_password=sudo_pw)
+
+    if rc == 0:
+        ok("Done.")
+    else:
+        warn(f"Command exited with code {rc}.")
+
+    session_log.append({"command": cmd, "rc": rc, "source": "passthrough"})
+    return True
+
 def ask_ai(backend, system, messages, max_tokens=4096):
     return backend.ask(system, messages, max_tokens=max_tokens)
 
@@ -2826,8 +3020,9 @@ def main():
 
     # ── One-shot mode: tuxgenie "describe problem" ────────────────────────────
     if args.issue:
-        sys_p = BASE_SYS + _sys_ctx_block(bctx)
-        fix_engine(backend, sys_p, [{"role": "user", "content": args.issue}], session_log)
+        if not try_passthrough(args.issue, session_log):
+            sys_p = BASE_SYS + _sys_ctx_block(bctx)
+            fix_engine(backend, sys_p, [{"role": "user", "content": args.issue}], session_log)
         save_session(session_log)
         return
 
@@ -2882,9 +3077,10 @@ def main():
             save_session(session_log)
             print(f"\n  {DIM}Type a number, describe a problem, or type {BOLD}menu{R}{DIM} / {BOLD}help{R}{DIM} / {BOLD}q{R}")
         else:
-            # Natural language → Fix Issue directly
-            sys_p = BASE_SYS + _sys_ctx_block(bctx)
-            fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
+            # Natural language → try direct passthrough first, then AI
+            if not try_passthrough(choice, session_log):
+                sys_p = BASE_SYS + _sys_ctx_block(bctx)
+                fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
             save_session(session_log)
             print(f"\n  {DIM}Type a number, describe a problem, or type {BOLD}menu{R}{DIM} / {BOLD}help{R}{DIM} / {BOLD}q{R}")
 
