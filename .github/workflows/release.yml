@@ -1,13 +1,13 @@
 name: Release
 
-# Step 2 of 2: Triggered by a tag push (from auto-tag.yml or manually).
-# Builds the .deb + PyPI wheel and publishes the GitHub Release.
-# This is the same proven approach that published v4.3.0 through v4.5.0.
+# Fires on every push to main.
+# Reads __version__ from tuxgenie.py. If no release exists for that version,
+# builds the .deb + wheel and publishes everything in one workflow run.
+# softprops/action-gh-release@v2 creates the tag itself — no second trigger needed.
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: ["main", "master"]
 
 permissions:
   contents: write
@@ -18,45 +18,71 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      - name: Read version from tuxgenie.py
+        id: ver
+        run: |
+          VER=$(python3 -c "
+          import re, sys
+          m = re.search(r'__version__\s*=\s*[\"\']([\d.]+)[\"\']', open('tuxgenie.py').read())
+          sys.exit('__version__ not found') if not m else print(m.group(1))
+          ")
+          echo "VERSION=$VER" >> "$GITHUB_OUTPUT"
+          echo "TAG=v$VER"    >> "$GITHUB_OUTPUT"
+          echo "Detected: $VER"
+
+      - name: Check if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "v${{ steps.ver.outputs.VERSION }}" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true"  >> "$GITHUB_OUTPUT"
+            echo "v${{ steps.ver.outputs.VERSION }} already released — nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "v${{ steps.ver.outputs.VERSION }} is new — building release."
+          fi
+
       - name: Install build tools
+        if: steps.check.outputs.exists == 'false'
         run: pip install build twine
 
-      - name: Extract version from tag
-        id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
       - name: Build .deb
-        run: TUXGENIE_VERSION=${{ steps.version.outputs.VERSION }} python3 create_deb.py
+        if: steps.check.outputs.exists == 'false'
+        run: TUXGENIE_VERSION=${{ steps.ver.outputs.VERSION }} python3 create_deb.py
 
       - name: Build PyPI wheel + sdist
+        if: steps.check.outputs.exists == 'false'
         run: python -m build --sdist --wheel
 
-      - name: Verify PyPI artifacts
-        run: twine check dist/*.whl dist/*.tar.gz
-
       - name: Publish to PyPI
+        if: steps.check.outputs.exists == 'false'
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*.whl dist/*.tar.gz
-        continue-on-error: true   # don't block release if PyPI token not configured
+        run: twine check dist/*.whl dist/*.tar.gz && twine upload dist/*.whl dist/*.tar.gz
+        continue-on-error: true
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
+        if: steps.check.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          name: "TuxGenie v${{ steps.version.outputs.VERSION }}"
+          tag_name: ${{ steps.ver.outputs.TAG }}
+          name: "TuxGenie v${{ steps.ver.outputs.VERSION }}"
           body: |
             ## Install
 
             **Debian / Ubuntu / Linux Mint (.deb)**
             ```bash
-            sudo dpkg -i tuxgenie_${{ steps.version.outputs.VERSION }}_all.deb
+            sudo dpkg -i tuxgenie_${{ steps.ver.outputs.VERSION }}_all.deb
             ```
 
             **Any Linux distro (pip)**
@@ -75,9 +101,9 @@ jobs:
             tuxgenie
             ```
           files: |
-            tuxgenie_${{ steps.version.outputs.VERSION }}_all.deb
+            tuxgenie_${{ steps.ver.outputs.VERSION }}_all.deb
             install.sh
-            dist/tuxgenie-${{ steps.version.outputs.VERSION }}-py3-none-any.whl
-            dist/tuxgenie-${{ steps.version.outputs.VERSION }}.tar.gz
+            dist/tuxgenie-${{ steps.ver.outputs.VERSION }}-py3-none-any.whl
+            dist/tuxgenie-${{ steps.ver.outputs.VERSION }}.tar.gz
           draft: false
           prerelease: false
