@@ -173,43 +173,126 @@ def _classify_task(text: str) -> str:
     JSON with shell commands, which is its strongest skill."""
     return "haiku"  # Always start with Haiku, escalate on failure
 
+def _try_pip_install():
+    """Try to install the anthropic SDK using every known pip method.
+    Returns True on success."""
+    attempts = [
+        [sys.executable, "-m", "pip", "install", "anthropic", "--quiet", "--upgrade"],
+        [sys.executable, "-m", "pip", "install", "anthropic", "--quiet", "--upgrade", "--break-system-packages"],
+        ["pip3", "install", "anthropic", "--quiet", "--upgrade"],
+        ["pip3", "install", "anthropic", "--quiet", "--upgrade", "--break-system-packages"],
+    ]
+    for attempt in attempts:
+        try:
+            if subprocess.run(attempt, capture_output=True).returncode == 0:
+                return True
+        except FileNotFoundError:
+            continue
+    return False
+
+def _bootstrap_anthropic_sdk():
+    """Install the anthropic SDK using every strategy available.
+    Tries: existing pip → apt install pip → ensurepip → venv fallback.
+    Returns True if the SDK is importable afterward."""
+    import importlib
+
+    # Quick check: maybe it's already installed
+    try:
+        importlib.import_module("anthropic")
+        return True
+    except ImportError:
+        pass
+
+    print(f"  {CYAN}Installing anthropic SDK…{R}")
+
+    # Strategy 1: pip already available
+    if _try_pip_install():
+        return True
+
+    # Strategy 2: install python3-pip via apt, then retry
+    print(f"  {DIM}pip not found — installing python3-pip…{R}")
+    subprocess.run(["sudo", "apt-get", "install", "-y", "python3-pip"],
+                   capture_output=True)
+    if _try_pip_install():
+        return True
+
+    # Strategy 3: ensurepip (Python's built-in pip bootstrapper, works offline)
+    print(f"  {DIM}Trying ensurepip…{R}")
+    try:
+        subprocess.run([sys.executable, "-m", "ensurepip", "--upgrade"],
+                       capture_output=True, timeout=60)
+        if _try_pip_install():
+            return True
+    except Exception:
+        pass
+
+    # Strategy 4: create a temporary venv (has its own pip), install there,
+    # then add the venv's site-packages to sys.path so we can import
+    print(f"  {DIM}Trying venv fallback…{R}")
+    venv_dir = os.path.join(os.path.expanduser("~"), ".local", "share",
+                            "tuxgenie", ".bootstrap-venv")
+    try:
+        # Ensure python3-venv is available
+        subprocess.run(["sudo", "apt-get", "install", "-y", "python3-venv"],
+                       capture_output=True, timeout=120)
+    except Exception:
+        pass
+    try:
+        import venv as _venv_mod
+        _venv_mod.create(venv_dir, with_pip=True, clear=True)
+        venv_pip = os.path.join(venv_dir, "bin", "pip")
+        rc = subprocess.run([venv_pip, "install", "anthropic", "--quiet"],
+                            capture_output=True, timeout=120).returncode
+        if rc == 0:
+            # Find the venv's site-packages and add to path
+            venv_py = os.path.join(venv_dir, "bin", "python3")
+            result = subprocess.run(
+                [venv_py, "-c",
+                 "import site; print(site.getsitepackages()[0])"],
+                capture_output=True, text=True, timeout=10)
+            venv_site = result.stdout.strip()
+            if venv_site and os.path.isdir(venv_site):
+                sys.path.insert(0, venv_site)
+                try:
+                    importlib.import_module("anthropic")
+                    return True
+                except ImportError:
+                    pass
+    except Exception:
+        pass
+
+    return False
+
 class AnthropicBackend:
     def __init__(self, api_key, model="claude-haiku-4-5-20251001"):
         global _anthropic
         if _anthropic is None:
-            print("  Installing anthropic SDK…")
-            installed = False
-            # Try all known methods to install anthropic
-            attempts = [
-                [sys.executable, "-m", "pip", "install", "anthropic", "--quiet", "--upgrade"],
-                [sys.executable, "-m", "pip", "install", "anthropic", "--quiet", "--upgrade", "--break-system-packages"],
-                ["pip3", "install", "anthropic", "--quiet", "--upgrade"],
-                ["pip3", "install", "anthropic", "--quiet", "--upgrade", "--break-system-packages"],
-            ]
-            for attempt in attempts:
-                try:
-                    if subprocess.run(attempt, capture_output=True).returncode == 0:
-                        installed = True; break
-                except FileNotFoundError:
-                    continue
-            if not installed:
-                # pip itself missing — try installing it first via apt
-                print("  pip not found — installing it now…")
-                subprocess.run(["sudo", "apt-get", "install", "-y", "python3-pip"],
-                               capture_output=True)
-                for attempt in attempts:
-                    try:
-                        if subprocess.run(attempt, capture_output=True).returncode == 0:
-                            installed = True; break
-                    except FileNotFoundError:
-                        continue
-            if not installed:
+            if not _bootstrap_anthropic_sdk():
                 print(f"\n  {RED}{BOLD}Could not install the anthropic SDK.{R}")
-                print(f"  Please run this command manually and restart tuxgenie:")
-                print(f"\n    {CYAN}sudo apt install python3-pip && pip3 install anthropic{R}\n")
-                sys.exit(1)
-            import anthropic as _anth
-            _anthropic = _anth
+                print(f"  TuxGenie will try to fix this automatically…\n")
+                # Last-ditch: try to install everything in one shot with full output
+                # so the user can at least SEE what's happening
+                print(f"  {CYAN}Running: sudo apt install -y python3-pip python3-venv{R}")
+                subprocess.run(["sudo", "apt-get", "install", "-y",
+                                "python3-pip", "python3-venv"])
+                print(f"\n  {CYAN}Running: pip3 install anthropic{R}")
+                subprocess.run([sys.executable, "-m", "pip", "install",
+                                "anthropic", "--break-system-packages"])
+                # Final check
+                try:
+                    import anthropic as _anth
+                    _anthropic = _anth
+                except ImportError:
+                    print(f"\n  {RED}{BOLD}Still could not import anthropic.{R}")
+                    print(f"  This usually means your Python environment is broken.")
+                    print(f"  Please run these commands and restart tuxgenie:\n")
+                    print(f"    {CYAN}sudo apt install -y python3-pip python3-venv{R}")
+                    print(f"    {CYAN}pip3 install anthropic --break-system-packages{R}\n")
+                    input(f"  Press Enter to close...")
+                    sys.exit(1)
+            if _anthropic is None:
+                import anthropic as _anth
+                _anthropic = _anth
         self.model  = model
         self.base_model = model  # user's chosen model (for settings)
         self.auto_model = True   # enable smart model routing by default

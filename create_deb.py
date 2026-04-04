@@ -190,7 +190,7 @@ Section: utils
 Priority: optional
 Architecture: {ARCH}
 Installed-Size: {INSTALLED_KB}
-Depends: python3 (>= 3.8)
+Depends: python3 (>= 3.8), python3-pip | python3-venv
 Recommends: python3-pip
 Conflicts: ai-terminal, tuxgenie (<< {VERSION})
 Replaces: ai-terminal, tuxgenie (<< {VERSION})
@@ -220,16 +220,67 @@ case "$1" in
     rm -rf /usr/lib/ai-terminal 2>/dev/null || true
     rm -f  /usr/share/applications/ai-terminal.desktop 2>/dev/null || true
 
-    # Ensure pip is available, then install anthropic SDK
-    if ! python3 -m pip --version >/dev/null 2>&1; then
-        apt-get install -y python3-pip >/dev/null 2>&1 || true
+    # -- Robust dependency bootstrap --
+    # Goal: get the 'anthropic' Python package installed by any means.
+    # We try multiple strategies because distros vary widely:
+    #   1. pip already available     -> use it directly
+    #   2. pip missing, apt works    -> install python3-pip via apt, then pip
+    #   3. pip missing, no apt       -> try ensurepip (stdlib bootstrap)
+    #   4. all pip methods fail      -> create a venv with built-in pip
+    # Strategy 4 always works if python3-venv is installed (declared as dep).
+
+    _install_sdk() {
+        # Try pip methods in order of preference
+        python3 -m pip install anthropic --quiet --upgrade 2>/dev/null && return 0
+        python3 -m pip install anthropic --quiet --upgrade --break-system-packages 2>/dev/null && return 0
+        pip3 install anthropic --quiet --upgrade 2>/dev/null && return 0
+        pip3 install anthropic --quiet --upgrade --break-system-packages 2>/dev/null && return 0
+        return 1
+    }
+
+    SDK_OK=0
+
+    # Strategy 1: pip already works
+    if python3 -m pip --version >/dev/null 2>&1; then
+        _install_sdk && SDK_OK=1
     fi
-    if python3 -m pip install anthropic --quiet --upgrade 2>/dev/null; then
-        :
-    elif python3 -m pip install anthropic --quiet --upgrade --break-system-packages 2>/dev/null; then
-        :
-    else
-        pip3 install anthropic --quiet --upgrade --break-system-packages 2>/dev/null || true
+
+    # Strategy 2: install python3-pip via apt
+    if [ "$SDK_OK" -eq 0 ]; then
+        apt-get install -y python3-pip >/dev/null 2>&1 || true
+        if python3 -m pip --version >/dev/null 2>&1; then
+            _install_sdk && SDK_OK=1
+        fi
+    fi
+
+    # Strategy 3: ensurepip (Python's built-in pip bootstrapper)
+    if [ "$SDK_OK" -eq 0 ]; then
+        python3 -m ensurepip --upgrade >/dev/null 2>&1 || true
+        if python3 -m pip --version >/dev/null 2>&1; then
+            _install_sdk && SDK_OK=1
+        fi
+    fi
+
+    # Strategy 4: create a venv with its own pip, install there, copy to system
+    if [ "$SDK_OK" -eq 0 ]; then
+        VENV_DIR="/tmp/.tuxgenie-bootstrap-venv"
+        rm -rf "$VENV_DIR" 2>/dev/null || true
+        if python3 -m venv "$VENV_DIR" 2>/dev/null; then
+            "$VENV_DIR/bin/pip" install anthropic --quiet 2>/dev/null || true
+            # Copy installed packages to the system site-packages
+            SITE=$("$VENV_DIR/bin/python3" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+            SYS_SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+            if [ -n "$SITE" ] && [ -n "$SYS_SITE" ] && [ -d "$SITE" ]; then
+                cp -rn "$SITE"/* "$SYS_SITE/" 2>/dev/null || true
+                SDK_OK=1
+            fi
+            rm -rf "$VENV_DIR" 2>/dev/null || true
+        fi
+    fi
+
+    # If all strategies failed, don't block install -- runtime will retry
+    if [ "$SDK_OK" -eq 0 ]; then
+        echo "  Note: anthropic SDK will be installed on first run of tuxgenie." >&2
     fi
 
     # Register icons with the desktop environment
