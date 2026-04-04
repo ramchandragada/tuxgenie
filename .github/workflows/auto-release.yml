@@ -1,0 +1,167 @@
+name: Auto Release on Version Bump
+
+# Fires on every push to main.
+# Reads __version__ from tuxgenie.py.
+# If a GitHub release for that version does not yet exist, creates the tag,
+# builds the .deb + PyPI wheel, and publishes the release automatically.
+# No manual tagging needed — just bump __version__ and push to main.
+
+on:
+  push:
+    branches: ["main", "master"]
+
+permissions:
+  contents: write   # create tags + releases
+
+jobs:
+  auto-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need full history to check existing tags
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Read version from tuxgenie.py
+        id: version
+        run: |
+          VER=$(python3 -c "
+          import re, sys
+          m = re.search(r'__version__\s*=\s*[\"\']([\d.]+)[\"\'\ ]', open('tuxgenie.py').read())
+          if not m:
+              sys.exit('Could not find __version__ in tuxgenie.py')
+          print(m.group(1))
+          ")
+          echo "VERSION=$VER" >> "$GITHUB_OUTPUT"
+          echo "TAG=v$VER"    >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VER"
+
+      - name: Check if release already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.version.outputs.VERSION }}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true"  >> "$GITHUB_OUTPUT"
+            echo "Release $TAG already exists — skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release $TAG not found — will create it."
+          fi
+
+      - name: Install build tools
+        if: steps.check.outputs.exists == 'false'
+        run: pip install build twine
+
+      - name: Build .deb
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          TUXGENIE_VERSION=${{ steps.version.outputs.VERSION }} python3 create_deb.py
+
+      - name: Build PyPI wheel + sdist
+        if: steps.check.outputs.exists == 'false'
+        run: python -m build --sdist --wheel
+
+      - name: Verify PyPI artifacts
+        if: steps.check.outputs.exists == 'false'
+        run: twine check dist/*.whl dist/*.tar.gz
+
+      - name: Publish to PyPI
+        if: steps.check.outputs.exists == 'false'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*.whl dist/*.tar.gz
+        # If PYPI_API_TOKEN is not set, this step fails but the release still
+        # gets created — add the secret in repo Settings > Secrets to enable.
+        continue-on-error: true
+
+      - name: Create tag and GitHub Release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.TAG }}"
+          VER="${{ steps.version.outputs.VERSION }}"
+          DEB="tuxgenie_${VER}_all.deb"
+
+          # Create annotated tag
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "TuxGenie $TAG"
+          git push origin "$TAG"
+
+          # Build release notes from git log since last tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep "^v" | sed -n '2p')
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges | head -30)
+          else
+            CHANGES="Initial release."
+          fi
+
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "TuxGenie v${VER}" \
+            --notes "## What's new in v${VER}
+
+${CHANGES}
+
+---
+
+## Install
+
+**Debian / Ubuntu / Linux Mint (.deb — recommended)**
+\`\`\`bash
+sudo dpkg -i ${DEB}
+\`\`\`
+
+**Any Linux distro (pip)**
+\`\`\`bash
+pip install --upgrade tuxgenie
+\`\`\`
+
+**Set your API key**
+\`\`\`bash
+export ANTHROPIC_API_KEY=\"sk-ant-...\"
+\`\`\`
+Get a free key at https://console.anthropic.com
+
+**Run**
+\`\`\`bash
+tuxgenie
+\`\`\`" \
+            "$DEB" \
+            install.sh \
+            dist/tuxgenie-${VER}-py3-none-any.whl \
+            dist/tuxgenie-${VER}.tar.gz \
+            2>/dev/null || \
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "TuxGenie v${VER}" \
+            --notes "## What's new in v${VER}
+
+${CHANGES}
+
+---
+
+## Install
+
+**Debian / Ubuntu / Linux Mint (.deb — recommended)**
+\`\`\`bash
+sudo dpkg -i ${DEB}
+\`\`\`
+
+**Any Linux distro (pip)**
+\`\`\`bash
+pip install --upgrade tuxgenie
+\`\`\`" \
+            "$DEB" \
+            install.sh
+
+          echo "Release $TAG created successfully."
