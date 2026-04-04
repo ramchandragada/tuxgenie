@@ -152,7 +152,7 @@ def _generate_tuxgenie_icon(size):
 
 # ── Package metadata ──────────────────────────────────────────────────────────
 PACKAGE = "tuxgenie"
-VERSION = os.environ.get("TUXGENIE_VERSION", "3.9.0")
+VERSION = os.environ.get("TUXGENIE_VERSION", "4.6.0")
 ARCH    = "all"
 DEB_OUT = f"{PACKAGE}_{VERSION}_{ARCH}.deb"
 
