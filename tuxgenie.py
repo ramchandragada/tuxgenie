@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.6.0"
+__version__ = "5.7.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -88,34 +88,24 @@ BG_ORANGE="\033[48;5;130m";BG_FOREST="\033[48;5;22m"
 def C(text, *codes): return "".join(codes)+str(text)+R
 
 def banner():
-    # Each letter of TUXGENIE in a different vivid colour — gradient effect
     _letters = [
-        (ORANGE,  "T"), (YELLOW,   "U"), (GREEN,   "X"), (GREEN,   "G"),
-        (CYAN,    "E"), (BLUE,     "N"), (MAGENTA, "I"), (RED,     "E"),
+        (ORANGE,  "T"), (YELLOW,  "U"), (GREEN,   "X"), (GREEN,   "G"),
+        (CYAN,    "E"), (BLUE,    "N"), (MAGENTA, "I"), (RED,     "E"),
     ]
     _logo = "".join(f"{col}{BOLD}{ch}{R}" for col, ch in _letters)
-    _genie = f"{BCYAN}{BOLD}🐧{R}"
-    W = 66
-    _top    = f"  {DIM}╭{'─'*W}╮{R}"
-    _bot    = f"  {DIM}╰{'─'*W}╯{R}"
-    _blank  = f"  {DIM}│{R}{' '*(W)}{DIM}│{R}"
-    def _row(content, pad=W):
-        # strip ANSI for length calc
-        plain = re.sub(r'\033\[[0-9;]*m', '', content)
-        spaces = pad - len(plain)
-        return f"  {DIM}│{R} {content}{' '*max(spaces-1,0)}{DIM}│{R}"
+    _line = f"  {DIM}{'─'*66}{R}"
 
     print(f"""
-{_top}
-{_row(f'{_genie}  {_logo}   {DIM}v{__version__}{R}  {DIM}· Free forever · Powered by Claude{R}')}
-{_row(f'{BOLD}Your friendly AI assistant for Linux{R}  {DIM}— no experience needed!{R}')}
-{_blank}
-{_row(f'{BGREEN}✔{R} {BOLD}Type anything in plain English{R}  {DIM}e.g. "my wifi stopped working"{R}')}
-{_row(f'{BGREEN}✔{R} {BOLD}Or type a number from the menu{R}   {DIM}e.g. "2" for Health Check{R}')}
-{_row(f'{BGREEN}✔{R} {BOLD}Or run any terminal command directly{R} {DIM}e.g. "ls -la" or "ping google.com"{R}')}
-{_blank}
-{_row(f'{DIM}Dedicated to Linus Torvalds · Built by Aspera Technologies · Open Source{R}')}
-{_bot}
+{_line}
+  {CYAN}{BOLD}🐧{R}  {_logo}   {DIM}v{__version__} · Free forever · Powered by Claude{R}
+  {BOLD}Your friendly AI assistant for Linux{R}  {DIM}— no experience needed!{R}
+{_line}
+  {GREEN}{BOLD}✔{R}  {BOLD}Type anything in plain English{R}    {DIM}e.g. "my wifi stopped working"{R}
+  {GREEN}{BOLD}✔{R}  {BOLD}Or pick a number from the menu{R}     {DIM}e.g. "2" for Health Check{R}
+  {GREEN}{BOLD}✔{R}  {BOLD}Or run any terminal command directly{R}  {DIM}e.g. "ls -la"{R}
+{_line}
+  {DIM}Dedicated to Linus Torvalds · Built by Aspera Technologies · Open Source{R}
+{_line}
 """)
 
 def hdr(title, width=64):
