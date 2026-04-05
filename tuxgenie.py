@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.11.0"
+__version__ = "5.12.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1827,6 +1827,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
 
         step_outputs = []
         aborted      = False
+        yes_to_all   = False
 
         for i, step in enumerate(steps, 1):
             step_failed       = False
