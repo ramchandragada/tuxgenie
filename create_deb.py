@@ -28,113 +28,138 @@ def _generate_tuxgenie_icon(size):
     Draw the TuxGenie icon at any size using only Python stdlib.
 
     Design (scales with 'size', master grid is 64x64):
-      - Dark navy circle background
-      - Terminal window with title bar + traffic-light dots (red/yellow/green)
-      - Bright-green '>' prompt + cursor block
-      - Tux penguin (black head, white belly, orange beak) in bottom-right
-      - 8-pointed gold star sparkle in top-right  (omitted at < 48px)
+      - Vibrant blue-to-indigo gradient circle background
+      - Large centred Tux penguin (black body, white belly, orange beak/feet)
+      - Classic eye detail (white patches → black pupils → white shine)
+      - Wings as side flippers
+      - Small gold star sparkle top-right (48px+)
     """
     img = [[[0, 0, 0, 0] for _ in range(size)] for _ in range(size)]
-    S = size / 64.0
+    S  = size / 64.0
+    MX = size / 2.0
+    MY = size / 2.0
 
-    def p(x, y, r, g, b, a=255):
-        ix, iy = int(x), int(y)
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _set(ix, iy, r, g, b, a=255):
         if 0 <= ix < size and 0 <= iy < size:
             img[iy][ix] = [r, g, b, a]
 
+    def _blend(ix, iy, r, g, b, alpha):
+        if 0 <= ix < size and 0 <= iy < size:
+            s = img[iy][ix]
+            a = alpha / 255.0
+            img[iy][ix] = [
+                int(s[0]*(1-a) + r*a),
+                int(s[1]*(1-a) + g*a),
+                int(s[2]*(1-a) + b*a),
+                max(s[3], alpha),
+            ]
+
     def disk(cx, cy, rad, r, g, b, a=255):
         ri = int(rad) + 2
-        r2_out = (rad + 0.5) ** 2
-        r2_in  = max(0.0, rad - 0.5) ** 2
         for dy in range(-ri, ri + 1):
             for dx in range(-ri, ri + 1):
-                d2 = dx * dx + dy * dy
-                if d2 > r2_out:
+                d = math.sqrt(dx*dx + dy*dy)
+                if d > rad + 1:
                     continue
-                if d2 <= r2_in:
-                    p(int(cx) + dx, int(cy) + dy, r, g, b, a)
+                ix, iy = int(cx) + dx, int(cy) + dy
+                if d <= rad - 0.5:
+                    _set(ix, iy, r, g, b, a)
                 else:
-                    alpha = max(0.0, min(1.0, rad - math.sqrt(d2) + 0.5))
-                    if alpha > 0:
-                        p(int(cx) + dx, int(cy) + dy, r, g, b, int(a * alpha))
+                    af = max(0.0, min(1.0, rad - d + 0.5))
+                    _blend(ix, iy, r, g, b, int(a * af))
 
-    def box(x1, y1, x2, y2, r, g, b, a=255):
-        for y in range(max(0, int(y1)), min(size, int(y2) + 1)):
-            for x in range(max(0, int(x1)), min(size, int(x2) + 1)):
-                p(x, y, r, g, b, a)
+    def ellipse(cx, cy, rx, ry, r, g, b, a=255):
+        for dy in range(-int(ry) - 2, int(ry) + 3):
+            for dx in range(-int(rx) - 2, int(rx) + 3):
+                nx = dx / max(rx, 0.01)
+                ny = dy / max(ry, 0.01)
+                d = math.sqrt(nx*nx + ny*ny)
+                if d > 1 + 1/max(rx, ry):
+                    continue
+                ix, iy = int(cx) + dx, int(cy) + dy
+                if d <= 1 - 0.5/max(rx, ry):
+                    _set(ix, iy, r, g, b, a)
+                else:
+                    af = max(0.0, min(1.0, (1 - d) * max(rx, ry) + 0.5))
+                    _blend(ix, iy, r, g, b, int(a * af))
 
-    # 1. Dark navy background circle
-    disk(size / 2, size / 2, size / 2 - 0.5, 13, 17, 23)
-
-    # 2. Terminal window body + border
-    tx1, ty1 = int(7 * S), int(9 * S)
-    tx2, ty2 = int(57 * S), int(55 * S)
-    box(tx1, ty1, tx2, ty2, 22, 27, 34)
-    for x in range(tx1, tx2 + 1):
-        p(x, ty1, 48, 54, 61); p(x, ty2, 48, 54, 61)
-    for y in range(ty1, ty2 + 1):
-        p(tx1, y, 48, 54, 61); p(tx2, y, 48, 54, 61)
-
-    # 3. Title bar
-    tbh = max(1, int(11 * S))
-    box(tx1 + 1, ty1 + 1, tx2 - 1, ty1 + tbh, 33, 38, 47)
-
-    # 4. Traffic-light dots (macOS style)
-    dot_y = ty1 + tbh // 2 + 1
-    dot_r = max(1.0, 2.0 * S)
-    disk(tx1 + 6  * S, dot_y, dot_r, 255, 95,  87)   # red
-    disk(tx1 + 12 * S, dot_y, dot_r, 254, 188, 46)   # yellow
-    disk(tx1 + 18 * S, dot_y, dot_r, 40,  200, 64)   # green
-
-    # 5. Bright-green '>' prompt
-    py0 = ty1 + tbh + max(1, int(5 * S))
-    px0 = tx1 + max(1, int(3 * S))
-    arm = max(2, int(5 * S))
-    for i in range(arm + 1):
-        p(px0 + i, py0 + i,           0, 255, 65)
-        p(px0 + i, py0 + 2 * arm - i, 0, 255, 65)
-
-    # 6. Cursor block (semi-transparent green)
-    cx0 = px0 + arm + max(1, int(2 * S))
-    box(cx0, py0, cx0 + max(2, int(4 * S)), py0 + max(2, int(arm * 1.8)), 0, 200, 50, 180)
-
-    # 7. Tux penguin in bottom-right of terminal (32px and above)
-    if size >= 32:
-        pc_x = int(44 * S)
-        pc_y = int(42 * S)
-        pr   = max(4, int(7 * S))
-        eo   = max(1, int(2.5 * S))   # eye horizontal offset
-        er   = max(1, int(1.5 * S))   # eye white radius
-        ep   = max(1, int(0.7 * S))   # pupil radius
-        bw   = max(1, int(1.5 * S))   # beak half-width
-        disk(pc_x, pc_y,              pr,        35,  35,  35)   # black head
-        disk(pc_x, pc_y + int(S),     pr * 0.52, 220, 220, 220)  # white belly
-        disk(pc_x - eo, pc_y - eo,    er,        255, 255, 255)   # left eye white
-        disk(pc_x + eo, pc_y - eo,    er,        255, 255, 255)   # right eye white
-        disk(pc_x - eo, pc_y - eo,    ep,        0,   0,   0)     # left pupil
-        disk(pc_x + eo, pc_y - eo,    ep,        0,   0,   0)     # right pupil
-        box(pc_x - bw, pc_y + int(0.5 * S), pc_x + bw, pc_y + int(2.5 * S), 255, 165, 0)  # orange beak
-
-    # 8. Gold 8-point star sparkle in top-right (48px and above)
-    if size >= 48:
-        scx = int(50 * S)
-        scy = int(15 * S)
-        sr  = max(3, int(5 * S))
-        for ai in range(8):
-            angle  = math.radians(ai * 45)
-            length = sr if ai % 2 == 0 else max(1, sr // 2)
-            for ri in range(1, length + 1):
-                p(int(scx + ri * math.cos(angle)), int(scy + ri * math.sin(angle)), 255, 215, 0)
-        disk(scx, scy, max(1.5, 1.5 * S), 255, 240, 100)
-
-    # 9. Clip everything outside the background circle to transparent
-    r2 = (size / 2) ** 2
+    # ── 1. Blue gradient background circle ───────────────────────────────────
+    bg_r = size / 2 - 0.5
     for y in range(size):
         for x in range(size):
-            if (x - size / 2) ** 2 + (y - size / 2) ** 2 > r2:
+            if (x - MX)**2 + (y - MY)**2 <= bg_r**2:
+                t  = (x + y) / (size * 2.0)
+                rr = int(22  + t * 18)
+                gg = int(100 + t * 22)
+                bb = int(215 + t * 22)
+                img[y][x] = [rr, gg, bb, 255]
+
+    # ── Penguin geometry (64px master grid) ──────────────────────────────────
+    HC_X, HC_Y  = MX,          MY - 16*S    # head centre
+    BC_X, BC_Y  = MX,          MY +  8*S    # body centre
+    WL_X, WL_Y  = MX - 16*S,   MY +  5*S   # left wing
+    WR_X, WR_Y  = MX + 16*S,   MY +  5*S   # right wing
+    FL_X, FL_Y  = MX -  6*S,   BC_Y + 16*S # left foot
+    FR_X, FR_Y  = MX +  6*S,   BC_Y + 16*S # right foot
+
+    # ── 2. Wings (drawn behind body) ─────────────────────────────────────────
+    ellipse(WL_X, WL_Y, 5*S, 10*S, 28, 28, 35)
+    ellipse(WR_X, WR_Y, 5*S, 10*S, 28, 28, 35)
+
+    # ── 3. Black body ────────────────────────────────────────────────────────
+    ellipse(BC_X, BC_Y, 13*S, 17*S, 28, 28, 35)
+
+    # ── 4. White belly ───────────────────────────────────────────────────────
+    ellipse(BC_X, BC_Y + 1*S, 8*S, 12*S, 238, 238, 232)
+
+    # ── 5. Black head ────────────────────────────────────────────────────────
+    disk(HC_X, HC_Y, 10*S, 28, 28, 35)
+
+    # ── 6. White face patch ──────────────────────────────────────────────────
+    ellipse(HC_X, HC_Y + 2*S, 7*S, 6.5*S, 238, 238, 232)
+
+    # ── 7. Eyes: white → black pupil → shine ─────────────────────────────────
+    EYE_Y  = HC_Y - 2*S
+    EYE_OX = 3.5*S
+    disk(HC_X - EYE_OX, EYE_Y, 2.5*S, 255, 255, 255)
+    disk(HC_X + EYE_OX, EYE_Y, 2.5*S, 255, 255, 255)
+    disk(HC_X - EYE_OX, EYE_Y, 1.3*S, 20,  20,  25)
+    disk(HC_X + EYE_OX, EYE_Y, 1.3*S, 20,  20,  25)
+    if size >= 32:
+        disk(HC_X - EYE_OX + 0.9*S, EYE_Y - 0.9*S, max(0.6, 0.7*S), 255, 255, 255)
+        disk(HC_X + EYE_OX + 0.9*S, EYE_Y - 0.9*S, max(0.6, 0.7*S), 255, 255, 255)
+
+    # ── 8. Orange beak ───────────────────────────────────────────────────────
+    ellipse(HC_X, HC_Y + 4*S, 3.2*S, 2.2*S, 255, 145, 0)
+
+    # ── 9. Orange feet (32px+) ───────────────────────────────────────────────
+    if size >= 32:
+        ellipse(FL_X, FL_Y, 5*S, 2.5*S, 255, 145, 0)
+        ellipse(FR_X, FR_Y, 5*S, 2.5*S, 255, 145, 0)
+
+    # ── 10. Gold sparkle top-right (48px+) ───────────────────────────────────
+    if size >= 48:
+        scx = MX + 17*S
+        scy = MY - 19*S
+        sr  = 4.5*S
+        for ai in range(8):
+            ang    = math.radians(ai * 45)
+            length = sr if ai % 2 == 0 else sr * 0.45
+            ri_f   = 0.5
+            while ri_f <= length:
+                _set(int(scx + ri_f*math.cos(ang)), int(scy + ri_f*math.sin(ang)), 255, 220, 60)
+                ri_f += 0.5
+        disk(scx, scy, max(1.5, 1.4*S), 255, 240, 100)
+
+    # ── 11. Clip to circle ────────────────────────────────────────────────────
+    for y in range(size):
+        for x in range(size):
+            if (x - MX)**2 + (y - MY)**2 > (size/2)**2:
                 img[y][x] = [0, 0, 0, 0]
 
-    # 10. Encode as PNG (RGBA, 8-bit, no interlace)
+    # ── 12. Encode as PNG (RGBA 8-bit) ───────────────────────────────────────
     def png_chunk(name, data):
         body = name + data
         return (struct.pack('>I', len(data)) + body +
