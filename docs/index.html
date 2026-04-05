@@ -61,27 +61,73 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
 ::-webkit-scrollbar{width:6px}
 ::-webkit-scrollbar-track{background:#f8fafc}
 ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:3px}
-</style>
+/* RESPONSIVE */
+.hero-grid{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:44px}
+.nav-links{display:flex;align-items:center;gap:28px}
+.nav-btns{display:flex;align-items:center;gap:10px}
+.hamburger{display:none;flex-direction:column;gap:5px;cursor:pointer;padding:6px;border:none;background:none}
+.hamburger span{display:block;width:22px;height:2px;background:#475569;border-radius:2px;transition:all .25s}
+.mob-menu{display:none;position:absolute;top:64px;left:0;right:0;background:#fff;border-bottom:1px solid #e2e8f0;padding:16px 24px;box-shadow:0 8px 24px rgba(0,0,0,.08);z-index:49;flex-direction:column;gap:4px}
+.mob-menu.open{display:flex}
+.mob-menu a{color:#475569;text-decoration:none;font-size:15px;font-weight:500;padding:10px 0;border-bottom:1px solid #f1f5f9}
+.mob-menu a:last-child{border-bottom:none}
+@media(max-width:900px){
+  .nav-links{display:none}
+  .nav-btns{display:none}
+  .hamburger{display:flex}
+  .hero-grid{grid-template-columns:1fr!important;gap:36px}
+  .hero-terminal-wrap{display:none}
+}
+@media(max-width:640px){
+  .sec{padding:52px 16px!important}
+  .two-col{grid-template-columns:1fr!important}
+  .sh2{font-size:26px!important}
+  .hero-stat-row{gap:16px!important}
+  .ibox .mono{font-size:12px!important;padding:14px 16px!important}
+}
+@media(max-width:480px){
+  .sec{padding:40px 14px!important}
+  .shadow-card{padding:22px!important}
+  .card{padding:16px!important}
+  .btn-p,.btn-s{padding:11px 18px!important;font-size:14px!important}
+}</style>
 </head>
 <body>
 <!-- NAV -->
-<nav class="nav">
+<nav class="nav" style="position:sticky;top:0;z-index:50">
 <div style="max-width:1100px;margin:0 auto;padding:0 24px;display:flex;align-items:center;justify-content:space-between;height:64px">
-  <div style="display:flex;align-items:center;gap:12px">
+  <!-- Logo → always goes home -->
+  <a href="#" style="display:flex;align-items:center;gap:10px;text-decoration:none;flex-shrink:0" aria-label="TuxGenie home">
     <span style="font-size:26px">🐧</span>
     <span class="grad" style="font-size:20px;font-weight:900">TuxGenie</span>
     <span class="pill" style="font-size:11px;padding:3px 10px">v5.10.0</span>
-  </div>
-  <div style="display:flex;align-items:center;gap:28px">
+  </a>
+  <!-- Desktop links -->
+  <div class="nav-links">
     <a href="#features" class="nav-a">Features</a>
     <a href="#distros" class="nav-a">Compatibility</a>
     <a href="#install" class="nav-a">Install</a>
     <a href="#how" class="nav-a">How it works</a>
   </div>
-  <div style="display:flex;align-items:center;gap:10px">
-    <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="btn-s" style="padding:8px 18px;font-size:13px">⭐ GitHub</a>
+  <!-- Desktop buttons -->
+  <div class="nav-btns">
+    <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener" class="btn-s" style="padding:8px 18px;font-size:13px">⭐ GitHub</a>
     <a href="#install" class="btn-p" style="padding:8px 18px;font-size:13px">Install Free</a>
   </div>
+  <!-- Hamburger (mobile) -->
+  <button class="hamburger" id="hbtn" aria-label="Open menu" onclick="toggleMenu()">
+    <span></span><span></span><span></span>
+  </button>
+</div>
+<!-- Mobile dropdown -->
+<div class="mob-menu" id="mobmenu">
+  <a href="#features" onclick="closeMenu()">⚡ Features</a>
+  <a href="#distros" onclick="closeMenu()">🐧 Compatibility</a>
+  <a href="#install" onclick="closeMenu()">⬇ Install</a>
+  <a href="#how" onclick="closeMenu()">💡 How it works</a>
+  <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener" onclick="closeMenu()">⭐ GitHub</a>
+  <a href="#install" onclick="closeMenu()" style="color:#16a34a;font-weight:700">🐧 Install Free</a>
 </div>
 </nav>
 
@@ -91,7 +137,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
   <div style="position:absolute;width:400px;height:400px;border-radius:50%;background:linear-gradient(135deg,#fed7aa,#fef9c3);top:-100px;right:-80px;opacity:.5;pointer-events:none"></div>
   <div style="position:absolute;width:300px;height:300px;border-radius:50%;background:linear-gradient(135deg,#bbf7d0,#bfdbfe);bottom:-80px;left:-60px;opacity:.5;pointer-events:none"></div>
 
-  <div style="max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center">
+  <div style="max-width:1100px;margin:0 auto" class="hero-grid">
     <!-- LEFT: Text -->
     <div>
       <div style="margin-bottom:20px">
@@ -110,16 +156,16 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
         <span style="font-size:18px;flex-shrink:0">🔑</span>
         <div style="font-size:13px;color:#92400e;line-height:1.6">
           <strong>AI features require a free Anthropic API key.</strong> Get one at
-          <a href="https://console.anthropic.com" target="_blank" style="color:#d97706;font-weight:600">console.anthropic.com</a>.
+          <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:#d97706;font-weight:600">console.anthropic.com</a>.
           Usage is billed by Anthropic (typically a few cents per session). Terminal commands run <strong>free</strong> — no AI used.
         </div>
       </div>
       <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:36px">
         <a href="#install" class="btn-p" style="font-size:15px">🐧 Install TuxGenie — Free</a>
-        <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="btn-s" style="font-size:15px">View on GitHub →</a>
+        <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener" class="btn-s" style="font-size:15px">View on GitHub →</a>
       </div>
       <!-- Mini stats -->
-      <div style="display:flex;gap:28px">
+      <div style="display:flex;gap:28px;flex-wrap:wrap" class="hero-stat-row">
         <div><span style="font-size:24px;font-weight:900" class="grad">29</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Built-in Tools</span></div>
         <div style="width:1px;background:#e2e8f0"></div>
         <div><span style="font-size:24px;font-weight:900" class="grad">BYOK</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Your API Key</span></div>
@@ -128,7 +174,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       </div>
     </div>
     <!-- RIGHT: Tux + Terminal -->
-    <div style="position:relative">
+    <div style="position:relative" class="hero-terminal-wrap">
       <!-- Tux Penguin SVG -->
       <div style="position:absolute;top:-30px;right:-10px;z-index:2">
         <svg width="90" height="110" viewBox="0 0 90 110" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -261,7 +307,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       <div class="shadow-card" style="text-align:center">
         <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#d97706,#f59e0b);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">2</div>
         <h3 style="font-size:18px;font-weight:700;margin-bottom:10px;color:#0f172a">Add your API key</h3>
-        <p style="color:#64748b;font-size:14px;line-height:1.75">Get a free key at <a href="https://console.anthropic.com" target="_blank" style="color:#d97706;font-weight:600">console.anthropic.com</a>. TuxGenie connects directly — your data never touches our servers. <strong style="color:#0f172a">Pay-as-you-go</strong> via Anthropic (pennies per session).</p>
+        <p style="color:#64748b;font-size:14px;line-height:1.75">Get a free key at <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:#d97706;font-weight:600">console.anthropic.com</a>. TuxGenie connects directly — your data never touches our servers. <strong style="color:#0f172a">Pay-as-you-go</strong> via Anthropic (pennies per session).</p>
       </div>
       <div class="shadow-card" style="text-align:center">
         <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#16a34a,#22c55e);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">3</div>
@@ -284,7 +330,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       <div style="font-size:14px;color:#166534;line-height:1.7">
         <strong>TuxGenie is free and open source.</strong> The app itself costs nothing to install or use.<br>
         <strong>AI features</strong> (diagnosis, fixes, script generation) use the <strong>Anthropic Claude API</strong> — you'll need a free API key from
-        <a href="https://console.anthropic.com" target="_blank" style="color:#15803d;font-weight:700;text-decoration:underline">console.anthropic.com</a>.
+        <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:#15803d;font-weight:700;text-decoration:underline">console.anthropic.com</a>.
         Anthropic charges for AI usage (Haiku model ~$0.25 per million tokens — a typical session costs a fraction of a cent).
         <strong>Terminal commands bypass AI entirely and are always free.</strong>
       </div>
@@ -296,7 +342,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
     <!-- Install panel (JS-rendered) -->
     <div id="ipanel"></div>
 
-    <a href="https://github.com/ramchandragada/tuxgenie/releases/latest" target="_blank" class="btn-s" style="font-size:14px;margin-top:28px;display:inline-flex">⬇ Download Latest Release</a>
+    <a href="https://github.com/ramchandragada/tuxgenie/releases/latest" target="_blank" rel="noopener" class="btn-s" style="font-size:14px;margin-top:28px;display:inline-flex">⬇ Download Latest Release</a>
     <p style="color:#94a3b8;font-size:13px;margin-top:14px">Requires Python 3.8+ · Free forever</p>
   </div>
 </section>
@@ -339,7 +385,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       </div>
     </div>
     <!-- INSTALL/UPDATE + SECURITY -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:44px">
+    <div class="two-col">
       <div>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
           <span class="cat" style="background:#fff7ed;color:#c2410c">📦 INSTALL &amp; UPDATE</span>
@@ -407,13 +453,13 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       MIT licensed. No paywalls, no subscriptions, no tracking. Built by <strong style="color:#fff">Aspera Technologies</strong> and dedicated to Linus Torvalds — creator of the Linux kernel.
     </p>
     <div style="display:flex;flex-wrap:wrap;gap:14px;justify-content:center;margin-bottom:48px">
-      <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="btn-p" style="font-size:15px">⭐ Star on GitHub</a>
-      <a href="https://github.com/ramchandragada/tuxgenie/issues" target="_blank" style="background:rgba(255,255,255,.1);color:#fff;font-weight:600;padding:13px 26px;border-radius:10px;border:1px solid rgba(255,255,255,.2);text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:all .2s;font-size:15px">🐛 Report Issue</a>
+      <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener" class="btn-p" style="font-size:15px">⭐ Star on GitHub</a>
+      <a href="https://github.com/ramchandragada/tuxgenie/issues" target="_blank" rel="noopener" style="background:rgba(255,255,255,.1);color:#fff;font-weight:600;padding:13px 26px;border-radius:10px;border:1px solid rgba(255,255,255,.2);text-decoration:none;display:inline-flex;align-items:center;gap:8px;transition:all .2s;font-size:15px">🐛 Report Issue</a>
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;text-align:left">
       <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px">
         <div style="color:#4ade80;font-weight:700;margin-bottom:8px;font-size:15px">🔑 Your API Key — Your Cost</div>
-        <div style="color:#94a3b8;font-size:13px;line-height:1.7">You bring your own <a href="https://console.anthropic.com" target="_blank" style="color:#86efac">Anthropic API key</a>. No middleman, no markup. AI usage is billed directly by Anthropic — typically a fraction of a cent per session. We make nothing from your usage.</div>
+        <div style="color:#94a3b8;font-size:13px;line-height:1.7">You bring your own <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:#86efac">Anthropic API key</a>. No middleman, no markup. AI usage is billed directly by Anthropic — typically a fraction of a cent per session. We make nothing from your usage.</div>
       </div>
       <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px">
         <div style="color:#fb923c;font-weight:700;margin-bottom:8px;font-size:15px">⚡ Smart &amp; Fast</div>
@@ -430,20 +476,35 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
 <!-- FOOTER -->
 <footer style="background:#fff;border-top:1px solid #e2e8f0;padding:28px 24px">
   <div style="max-width:1100px;margin:0 auto;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px">
-    <div style="display:flex;align-items:center;gap:10px;color:#64748b;font-size:13px">
+    <a href="#" style="display:flex;align-items:center;gap:10px;color:#64748b;font-size:13px;text-decoration:none" aria-label="TuxGenie home">
       <span>🐧</span>
       <span class="grad" style="font-weight:900;font-size:15px">TuxGenie</span>
       <span>v5.10.0</span><span>·</span><span>MIT License</span><span>·</span><span>Built by Aspera Technologies</span>
-    </div>
-    <div style="display:flex;gap:24px">
-      <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="nav-a" style="font-size:13px">GitHub</a>
-      <a href="https://github.com/ramchandragada/tuxgenie/releases" target="_blank" class="nav-a" style="font-size:13px">Releases</a>
-      <a href="https://github.com/ramchandragada/tuxgenie/issues" target="_blank" class="nav-a" style="font-size:13px">Support</a>
+    </a>
+    <div style="display:flex;flex-wrap:wrap;gap:20px">
+      <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener" class="nav-a" style="font-size:13px">GitHub</a>
+      <a href="https://github.com/ramchandragada/tuxgenie/releases" target="_blank" rel="noopener" class="nav-a" style="font-size:13px">Releases</a>
+      <a href="https://github.com/ramchandragada/tuxgenie/issues" target="_blank" rel="noopener" class="nav-a" style="font-size:13px">Support</a>
+      <a href="https://console.anthropic.com" target="_blank" rel="noopener" class="nav-a" style="font-size:13px">Get API Key</a>
     </div>
   </div>
 </footer>
 
 <script>
+/* ── MOBILE NAV ── */
+function toggleMenu(){
+  const m=document.getElementById('mobmenu');
+  const b=document.getElementById('hbtn');
+  const open=m.classList.toggle('open');
+  b.setAttribute('aria-expanded',open);
+}
+function closeMenu(){document.getElementById('mobmenu').classList.remove('open');}
+// Close menu when clicking outside
+document.addEventListener('click',function(e){
+  const nav=document.querySelector('.nav');
+  if(!nav.contains(e.target)) closeMenu();
+});
+
 /* ── DISTRO SELECTOR ── */
 const distros=[
   {id:'ubuntu',   name:'Ubuntu',       icon:'https://cdn.simpleicons.org/ubuntu/E95420',   family:'deb'},
