@@ -34,7 +34,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.7.0"
+__version__ = "5.8.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -958,8 +958,10 @@ _passthrough_auto = False
 # inside TuxGenie's output stream, just inform the user.
 _INTERACTIVE_CMDS = frozenset([
     "vim", "vi", "nano", "emacs", "less", "more", "man",
-    "top", "htop", "btop", "iotop", "iftop", "nethogs",
+    "top", "htop", "btop", "iotop", "iftop", "nethogs", "atop", "glances",
     "mc", "ranger", "ncdu", "mutt", "irssi", "tmux", "screen",
+    "nmtui", "cfdisk", "parted", "gdisk", "cgdisk",
+    "ftp", "sftp", "telnet",
 ])
 
 # Auto-inject -y for package managers that prompt interactively.
@@ -974,8 +976,7 @@ _NEEDS_YES_RE = re.compile(
     r"|^\s*(?:sudo\s+)?zypper\s+(?:install|remove|update)\b"
 )
 
-# Shell builtins that have no file in PATH but are valid commands.
-# These run via `bash -c` or are handled specially.
+# Shell builtins — no file in PATH but valid bash commands.
 _SHELL_BUILTINS = frozenset([
     'history', 'alias', 'unalias', 'export', 'declare', 'typeset',
     'local', 'readonly', 'set', 'unset', 'shopt', 'let', 'eval',
@@ -985,6 +986,119 @@ _SHELL_BUILTINS = frozenset([
     'getopts', 'caller', 'fc', 'bind', 'compgen', 'complete',
     'cd', 'pwd', 'echo', 'printf', 'test', 'true', 'false',
     'kill', 'trap', 'read', 'mapfile', 'readarray',
+    'exec', 'logout', 'newgrp', 'login',
+    # bash keyword constructs (type -t returns 'keyword')
+    'if', 'then', 'else', 'elif', 'fi', 'for', 'while', 'do',
+    'done', 'case', 'esac', 'in', 'function', 'select', 'until',
+    'return', 'break', 'continue', 'coproc', 'time', '[[', ']]',
+])
+
+# Comprehensive set of known Linux executables.
+# Ensures detection works even when the tool is not installed on the
+# current machine — covers every command in the user's workflow.
+_KNOWN_LINUX_CMDS = frozenset([
+    # File & directory
+    'ls','ll','la','dir','vdir','cat','tac','nl','od','xxd','strings',
+    'head','tail','less','more','most','bat','cp','mv','rm','mkdir',
+    'rmdir','touch','ln','readlink','realpath','basename','dirname',
+    'stat','file','tree','du','df','lsof','truncate','dd','sync',
+    'shred','wipe','install','mktemp',
+    # Search
+    'grep','egrep','fgrep','rg','ag','ack','find','locate','updatedb',
+    'which','whereis','type','whatis','apropos',
+    # Text processing
+    'awk','gawk','sed','cut','sort','uniq','wc','tr','diff','patch',
+    'comm','join','paste','fold','fmt','pr','expand','unexpand',
+    'split','csplit','tee','xargs','column','rev','nl','od','hexdump',
+    # Archives & compression
+    'tar','zip','unzip','gzip','gunzip','bzip2','bunzip2','xz','unxz',
+    'zcat','zless','7z','7za','7zr','rar','unrar','ar','cpio',
+    # Network
+    'ping','ping6','traceroute','tracepath','mtr','ss','netstat',
+    'ip','ifconfig','iwconfig','nmcli','nmtui','ethtool','brctl',
+    'arp','arping','route','dig','nslookup','host','dnsdomainname',
+    'whois','curl','wget','nc','ncat','nmap','tcpdump','wireshark',
+    'tshark','iptraf','nethogs','iftop','bmon','vnstat','speedtest',
+    'ssh','scp','rsync','sftp','ftp','smbclient','nfs','mount.nfs',
+    # Firewall & security
+    'ufw','iptables','ip6tables','firewall-cmd','nft','fail2ban-client',
+    'openssl','gpg','gpg2','ssh-keygen','ssh-copy-id','ssh-agent',
+    'certbot','chroot',
+    # Process & system
+    'ps','pstree','pgrep','pkill','killall','nice','renice','nohup',
+    'watch','timeout','strace','ltrace','perf','ldd','nm','objdump',
+    'uptime','top','htop','btop','atop','iotop','iftop','glances','nethogs',
+    'vmstat','iostat','sar','mpstat','dstat','sysstat','nmon','bmon',
+    'free','who','w','last','lastlog','faillog','ac','users',
+    # Hardware & kernel
+    'lshw','lsusb','lspci','lscpu','lsblk','lsmod','lsdev',
+    'modprobe','modinfo','rmmod','insmod','depmod',
+    'dmidecode','hwinfo','inxi','sensors','acpi','acpitool',
+    'uname','arch','udevadm','dmesg',
+    # Disk & storage
+    'fdisk','gdisk','cfdisk','cgdisk','parted','gparted',
+    'mkfs','mkfs.ext4','mkfs.xfs','mkfs.btrfs','mkfs.vfat',
+    'fsck','e2fsck','xfs_repair','badblocks','tune2fs','resize2fs',
+    'blkid','findmnt','mount','umount','mountpoint',
+    'losetup','swapon','swapoff','mkswap',
+    'hdparm','smartctl','nvme','lvm','pvdisplay','vgdisplay','lvdisplay',
+    # Package managers
+    'apt','apt-get','apt-cache','dpkg','dpkg-query',
+    'snap','flatpak','appimage',
+    'dnf','yum','rpm','rpm2cpio',
+    'pacman','yay','paru','makepkg',
+    'zypper','rpm','emerge','portage',
+    'pip','pip3','pipx','conda','brew','nix','guix',
+    # System management
+    'systemctl','service','journalctl','timedatectl','localectl',
+    'hostnamectl','loginctl','machinectl','systemd-analyze',
+    'init','telinit','runlevel','chkconfig','update-rc.d',
+    'crontab','at','atq','atrm','batch',
+    'shutdown','reboot','poweroff','halt','suspend','hibernate',
+    # User management
+    'adduser','useradd','userdel','usermod','passwd','chpasswd',
+    'groupadd','groupdel','groupmod','gpasswd','newgrp',
+    'su','sudo','doas','visudo','vipw','vigr',
+    'chage','chfn','chsh','whoami','who','id','groups','getent',
+    # Permissions & ACL
+    'chmod','chown','chgrp','chattr','lsattr','getfacl','setfacl',
+    'umask','newuidmap','newgidmap',
+    # System info
+    'date','cal','hwclock','timedatectl','uptime','hostname',
+    'uname','lsb_release','os-release','bc','expr','factor',
+    'seq','shuf','yes','sleep','timeout',
+    # Crypto & hashing
+    'md5sum','sha1sum','sha256sum','sha512sum','sha224sum','sha384sum',
+    'sum','cksum','b2sum','base64','base32',
+    # Terminal & session
+    'clear','reset','tput','stty','script','scriptreplay',
+    'wall','write','mesg','talk','tty','w',
+    'tmux','screen','byobu','zellij',
+    # Scripting utilities
+    'bash','sh','zsh','fish','dash','ksh','tcsh',
+    'env','printenv','nohup','xargs','parallel','flock',
+    'logger','notify-send','zenity','dialog','whiptail',
+    # Editors (non-interactive listing)
+    'ed','ex','grep',
+    # Version control
+    'git','svn','hg','cvs','bzr',
+    # Containers & VMs
+    'docker','docker-compose','podman','buildah','skopeo',
+    'kubectl','helm','k3s','minikube','vagrant','virtualbox',
+    # Monitoring
+    'prometheus','grafana','netdata','zabbix',
+    # Web servers
+    'nginx','apache2','httpd','caddy','lighttpd',
+    # Databases
+    'mysql','mysqldump','mysqladmin','psql','pg_dump','sqlite3',
+    'redis-cli','mongosh','mongo',
+    # Misc
+    'bc','dc','units','cal','ncal','banner','figlet','lolcat',
+    'fortune','cowsay','sl','cmatrix',
+    'ffmpeg','imagemagick','convert','identify','exiftool',
+    'jq','yq','xmllint','csvtool',
+    'make','cmake','gcc','g++','clang','python3','python','node','npm',
+    'cargo','go','java','javac','mvn','gradle',
 ])
 
 def _looks_like_command(text):
@@ -1051,6 +1165,13 @@ def _looks_like_command(text):
 
     # Look up in PATH
     if shutil.which(effective):
+        return True, effective
+
+    # Known Linux command — even if not installed on this machine,
+    # treat it as a command so it runs (and fails gracefully) rather
+    # than being sent to AI. Covers tools on the user's machine that
+    # may be absent in the dev environment.
+    if effective in _KNOWN_LINUX_CMDS:
         return True, effective
 
     # Last resort: ask bash itself if it knows this command
