@@ -95,7 +95,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
     <!-- LEFT: Text -->
     <div>
       <div style="margin-bottom:20px">
-        <span class="pill">✨ Powered by Claude AI &nbsp;·&nbsp; Free Forever &nbsp;·&nbsp; Open Source</span>
+        <span class="pill">✨ Powered by Claude AI &nbsp;·&nbsp; Open Source &nbsp;·&nbsp; MIT License</span>
       </div>
       <h1 style="font-size:clamp(38px,5vw,62px);font-weight:900;line-height:1.1;margin-bottom:20px">
         <span class="grad">Linux made</span><br>
@@ -105,6 +105,15 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       <p style="font-size:17px;color:#475569;line-height:1.8;margin-bottom:32px;max-width:480px">
         TuxGenie is your AI-powered Linux assistant. Describe what you need in plain English — it fixes, configures, and manages your system for you. No experience needed.
       </p>
+      <!-- API Key notice -->
+      <div style="display:flex;align-items:flex-start;gap:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;margin-bottom:24px;text-align:left">
+        <span style="font-size:18px;flex-shrink:0">🔑</span>
+        <div style="font-size:13px;color:#92400e;line-height:1.6">
+          <strong>AI features require a free Anthropic API key.</strong> Get one at
+          <a href="https://console.anthropic.com" target="_blank" style="color:#d97706;font-weight:600">console.anthropic.com</a>.
+          Usage is billed by Anthropic (typically a few cents per session). Terminal commands run <strong>free</strong> — no AI used.
+        </div>
+      </div>
       <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:36px">
         <a href="#install" class="btn-p" style="font-size:15px">🐧 Install TuxGenie — Free</a>
         <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" class="btn-s" style="font-size:15px">View on GitHub →</a>
@@ -113,7 +122,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       <div style="display:flex;gap:28px">
         <div><span style="font-size:24px;font-weight:900" class="grad">29</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Built-in Tools</span></div>
         <div style="width:1px;background:#e2e8f0"></div>
-        <div><span style="font-size:24px;font-weight:900" class="grad">Free</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Forever</span></div>
+        <div><span style="font-size:24px;font-weight:900" class="grad">BYOK</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Your API Key</span></div>
         <div style="width:1px;background:#e2e8f0"></div>
         <div><span style="font-size:24px;font-weight:900" class="grad">Any</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Linux Distro</span></div>
       </div>
@@ -243,21 +252,21 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       <h2 class="sh2 grad">How it works</h2>
       <p style="color:#64748b;font-size:17px">No manuals. No Stack Overflow. Just describe your problem.</p>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:32px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:32px">
       <div class="shadow-card" style="text-align:center">
         <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#f97316,#fb923c);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">1</div>
         <h3 style="font-size:18px;font-weight:700;margin-bottom:10px;color:#0f172a">Install TuxGenie</h3>
-        <p style="color:#64748b;font-size:14px;line-height:1.75">One curl command. All 29 built-in tools are ready immediately on any Linux distro.</p>
+        <p style="color:#64748b;font-size:14px;line-height:1.75">One curl command. All 29 built-in tools land on any Linux distro immediately.</p>
       </div>
       <div class="shadow-card" style="text-align:center">
-        <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#16a34a,#22c55e);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">2</div>
+        <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#d97706,#f59e0b);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">2</div>
+        <h3 style="font-size:18px;font-weight:700;margin-bottom:10px;color:#0f172a">Add your API key</h3>
+        <p style="color:#64748b;font-size:14px;line-height:1.75">Get a free key at <a href="https://console.anthropic.com" target="_blank" style="color:#d97706;font-weight:600">console.anthropic.com</a>. TuxGenie connects directly — your data never touches our servers. <strong style="color:#0f172a">Pay-as-you-go</strong> via Anthropic (pennies per session).</p>
+      </div>
+      <div class="shadow-card" style="text-align:center">
+        <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#16a34a,#22c55e);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">3</div>
         <h3 style="font-size:18px;font-weight:700;margin-bottom:10px;color:#0f172a">Describe your problem</h3>
-        <p style="color:#64748b;font-size:14px;line-height:1.75">Type anything — <em>"my wifi stopped working"</em>, <em>"install chrome"</em>, or any shell command directly.</p>
-      </div>
-      <div class="shadow-card" style="text-align:center">
-        <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#2563eb,#3b82f6);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">3</div>
-        <h3 style="font-size:18px;font-weight:700;margin-bottom:10px;color:#0f172a">TuxGenie gets it done</h3>
-        <p style="color:#64748b;font-size:14px;line-height:1.75">Diagnoses, plans, and fixes. Commands run directly without AI when possible — fast and free.</p>
+        <p style="color:#64748b;font-size:14px;line-height:1.75">Type anything — <em>"my wifi stopped working"</em>, <em>"install chrome"</em>, or any shell command. <strong style="color:#0f172a">Terminal commands run free</strong> — AI is only called when it truly helps.</p>
       </div>
     </div>
   </div>
@@ -267,7 +276,19 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
 <section id="install" class="sec" style="background:#fff">
   <div style="max-width:780px;margin:0 auto;text-align:center">
     <h2 class="sh2 grad">Install on your distro</h2>
-    <p style="color:#64748b;font-size:17px;margin-bottom:36px">Pick your Linux distribution — get the exact install command for it.</p>
+    <p style="color:#64748b;font-size:17px;margin-bottom:28px">Pick your Linux distribution — get the exact install command for it.</p>
+
+    <!-- Cost transparency notice -->
+    <div style="display:flex;align-items:flex-start;gap:12px;background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:16px 20px;margin-bottom:32px;text-align:left">
+      <span style="font-size:22px;flex-shrink:0">💡</span>
+      <div style="font-size:14px;color:#166534;line-height:1.7">
+        <strong>TuxGenie is free and open source.</strong> The app itself costs nothing to install or use.<br>
+        <strong>AI features</strong> (diagnosis, fixes, script generation) use the <strong>Anthropic Claude API</strong> — you'll need a free API key from
+        <a href="https://console.anthropic.com" target="_blank" style="color:#15803d;font-weight:700;text-decoration:underline">console.anthropic.com</a>.
+        Anthropic charges for AI usage (Haiku model ~$0.25 per million tokens — a typical session costs a fraction of a cent).
+        <strong>Terminal commands bypass AI entirely and are always free.</strong>
+      </div>
+    </div>
 
     <!-- Distro picker -->
     <div id="dpicker" style="display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-bottom:36px"></div>
@@ -391,8 +412,8 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;text-align:left">
       <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px">
-        <div style="color:#4ade80;font-weight:700;margin-bottom:8px;font-size:15px">🔑 Your API Key</div>
-        <div style="color:#94a3b8;font-size:13px;line-height:1.7">You bring your own Anthropic API key. No middleman. Your data never touches our servers.</div>
+        <div style="color:#4ade80;font-weight:700;margin-bottom:8px;font-size:15px">🔑 Your API Key — Your Cost</div>
+        <div style="color:#94a3b8;font-size:13px;line-height:1.7">You bring your own <a href="https://console.anthropic.com" target="_blank" style="color:#86efac">Anthropic API key</a>. No middleman, no markup. AI usage is billed directly by Anthropic — typically a fraction of a cent per session. We make nothing from your usage.</div>
       </div>
       <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px">
         <div style="color:#fb923c;font-weight:700;margin-bottom:8px;font-size:15px">⚡ Smart &amp; Fast</div>
