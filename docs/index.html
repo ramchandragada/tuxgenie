@@ -86,6 +86,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
   .hero-grid{grid-template-columns:1fr!important;gap:36px}
   .hero-terminal-wrap{display:none}
   .hero-section{padding:48px 20px 52px!important}
+  .hero-deco{display:none}
 }
 @media(max-width:680px){
   #dpicker{grid-template-columns:repeat(3,1fr)!important}
@@ -148,9 +149,9 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
 
 <!-- HERO -->
 <section class="hero-bg hero-section" style="padding:72px 24px 80px;position:relative;overflow:hidden">
-  <!-- Decorative circles -->
-  <div style="position:absolute;width:400px;height:400px;border-radius:50%;background:linear-gradient(135deg,#fed7aa,#fef9c3);top:-100px;right:-80px;opacity:.5;pointer-events:none"></div>
-  <div style="position:absolute;width:300px;height:300px;border-radius:50%;background:linear-gradient(135deg,#bbf7d0,#bfdbfe);bottom:-80px;left:-60px;opacity:.5;pointer-events:none"></div>
+  <!-- Decorative circles (hidden on mobile to prevent overlap) -->
+  <div class="hero-deco" style="position:absolute;width:400px;height:400px;border-radius:50%;background:linear-gradient(135deg,#fed7aa,#fef9c3);top:-100px;right:-80px;opacity:.5;pointer-events:none"></div>
+  <div class="hero-deco" style="position:absolute;width:300px;height:300px;border-radius:50%;background:linear-gradient(135deg,#bbf7d0,#bfdbfe);bottom:-80px;left:-60px;opacity:.5;pointer-events:none"></div>
 
   <div style="max-width:1100px;margin:0 auto" class="hero-grid">
     <!-- LEFT: Text -->
