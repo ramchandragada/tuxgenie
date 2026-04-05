@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.12.0"
+__version__ = "5.13.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1931,8 +1931,19 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                         "<head>" in out_lower[:500]):
                         downloaded_html = True
 
+                # ── Exit-1 from probe/search commands is "nothing found", not an error ──
+                _PROBE_CMDS = ("grep", "find ", "which ", "type ", "snap list", "flatpak list",
+                               "dpkg -l", "dpkg-query", "apt-cache search", "apt-cache show",
+                               "snap info", "flatpak search", "locate ")
+                is_probe = any(cmd.strip().startswith(k) or k in cmd
+                               for k in _PROBE_CMDS)
+                exit1_is_ok = is_probe and rc == 1
+
                 if rc == 0 and not output_has_errors and not (expects_output and empty_output) and not downloaded_html:
                     ok("This step completed successfully.")
+                elif exit1_is_ok:
+                    # grep/which/type exit 1 = "not found" — that's a valid result
+                    ok("Nothing found (this is the expected result).")
                 elif downloaded_html:
                     warn("Downloaded an HTML page instead of a real file. The AI will fix this.")
                     step_failed = True
@@ -1959,9 +1970,9 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     yes_to_all = False
                     warn("Auto-mode paused — a step failed. Remaining steps need review.")
 
-            step_ok = (rc == 0 and not output_has_errors
+            step_ok = (exit1_is_ok or (rc == 0 and not output_has_errors
                        and not (expects_output and empty_output)
-                       and not downloaded_html)
+                       and not downloaded_html))
             entry = {"step":i,"command":cmd,"returncode":rc,
                      "stdout":stdout[:1500],"stderr":stderr[:500],
                      "success": step_ok}
@@ -1995,16 +2006,20 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     pass
             v_rc, v_stdout, v_stderr = run_cmd_live(verify_cmd, sudo_password=sudo_pw_v, timeout=30)
             v_combined = (v_stdout + "\n" + v_stderr).lower()
+            # "not found" / "not installed" are SUCCESS signals for removal tasks —
+            # don't count them as errors here; let v_rc decide pass/fail
             v_has_errors = any(p.lower() in v_combined for p in [
-                "error:", "not found", "not installed", "no such file",
-                "failed", "inactive", "dead",
+                "error:", "no such file", "failed", "inactive", "dead",
             ])
             # ── Stronger verification: empty output = not verified ──
             v_empty = not v_stdout.strip() and not v_stderr.strip()
             # Reject weak verify commands that use || echo or || true
             v_is_weak = ("|| echo" in verify_cmd or "|| true" in verify_cmd
                          or "|| :" in verify_cmd)
-            if v_rc == 0 and not v_has_errors and not v_empty and not v_is_weak:
+            # If all steps passed and verify exits 0 (even empty), accept it —
+            # empty output on exit 0 often means "nothing found" (removal success)
+            v_steps_all_ok = not any_step_failed
+            if v_rc == 0 and not v_has_errors and not v_is_weak and (not v_empty or v_steps_all_ok):
                 verified = True
                 print(f"\n  {GREEN}{BOLD}✓ VERIFIED — Task completed successfully!{R}")
                 if sc:
