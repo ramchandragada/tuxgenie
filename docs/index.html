@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. 28 built-in tools. Free forever. Open source.">
+<meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. 29 built-in tools. Free forever. Open source.">
 <meta property="og:title" content="TuxGenie — AI-Powered Linux Assistant">
 <meta property="og:description" content="Fix any Linux problem by just describing it in plain English.">
 <title>TuxGenie — AI-Powered Linux Assistant</title>
@@ -111,7 +111,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       </div>
       <!-- Mini stats -->
       <div style="display:flex;gap:28px">
-        <div><span style="font-size:24px;font-weight:900" class="grad">28</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Built-in Tools</span></div>
+        <div><span style="font-size:24px;font-weight:900" class="grad">29</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Built-in Tools</span></div>
         <div style="width:1px;background:#e2e8f0"></div>
         <div><span style="font-size:24px;font-weight:900" class="grad">Free</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Forever</span></div>
         <div style="width:1px;background:#e2e8f0"></div>
@@ -247,7 +247,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       <div class="shadow-card" style="text-align:center">
         <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#f97316,#fb923c);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">1</div>
         <h3 style="font-size:18px;font-weight:700;margin-bottom:10px;color:#0f172a">Install TuxGenie</h3>
-        <p style="color:#64748b;font-size:14px;line-height:1.75">One curl command. All 28 built-in tools are ready immediately on any Linux distro.</p>
+        <p style="color:#64748b;font-size:14px;line-height:1.75">One curl command. All 29 built-in tools are ready immediately on any Linux distro.</p>
       </div>
       <div class="shadow-card" style="text-align:center">
         <div style="width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#16a34a,#22c55e);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:900;color:#fff;margin:0 auto 18px">2</div>
@@ -265,38 +265,25 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
 
 <!-- INSTALL -->
 <section id="install" class="sec" style="background:#fff">
-  <div style="max-width:680px;margin:0 auto;text-align:center">
-    <h2 class="sh2 grad">Get started in seconds</h2>
-    <p style="color:#64748b;font-size:17px;margin-bottom:40px">One command. That's all it takes.</p>
-    <div class="ibox" style="margin-bottom:14px">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #e2e8f0;background:#f8fafc;border-radius:12px 12px 0 0">
-        <span style="color:#64748b;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em">Install (all distros)</span>
-        <button class="cbtn" onclick="copyCmd(this,'curl -fsSL https://tuxgenie.com/install.sh | bash')">📋 Copy</button>
-      </div>
-      <div class="mono" style="padding:18px 22px;text-align:left;font-size:14px">
-        <span style="color:#94a3b8">$</span>
-        <span style="color:#16a34a;font-weight:700;margin-left:8px">curl -fsSL https://tuxgenie.com/install.sh | bash</span>
-      </div>
-    </div>
-    <div class="ibox" style="margin-bottom:32px">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #e2e8f0;background:#f8fafc;border-radius:12px 12px 0 0">
-        <span style="color:#64748b;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em">Download .deb — Ubuntu / Debian</span>
-        <button class="cbtn" onclick="copyCmd(this,'wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest | grep browser_download_url | cut -d\'\"\'  -f4)\nsudo dpkg -i tuxgenie_*.deb')">📋 Copy</button>
-      </div>
-      <div class="mono" style="padding:18px 22px;text-align:left;font-size:13px;line-height:2">
-        <div><span style="color:#94a3b8">$</span> <span style="color:#0f172a">wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest | grep browser_download_url | cut -d'"' -f4)</span></div>
-        <div><span style="color:#94a3b8">$</span> <span style="color:#0f172a">sudo dpkg -i tuxgenie_*.deb</span></div>
-      </div>
-    </div>
-    <a href="https://github.com/ramchandragada/tuxgenie/releases/latest" target="_blank" class="btn-s" style="font-size:15px;margin-bottom:14px">⬇ Download Latest Release</a>
-    <p style="color:#94a3b8;font-size:13px;margin-top:14px">Requires Python 3.8+ · Works on Ubuntu, Debian, Fedora, Arch, Mint & more</p>
+  <div style="max-width:780px;margin:0 auto;text-align:center">
+    <h2 class="sh2 grad">Install on your distro</h2>
+    <p style="color:#64748b;font-size:17px;margin-bottom:36px">Pick your Linux distribution — get the exact install command for it.</p>
+
+    <!-- Distro picker -->
+    <div id="dpicker" style="display:flex;flex-wrap:wrap;justify-content:center;gap:10px;margin-bottom:36px"></div>
+
+    <!-- Install panel (JS-rendered) -->
+    <div id="ipanel"></div>
+
+    <a href="https://github.com/ramchandragada/tuxgenie/releases/latest" target="_blank" class="btn-s" style="font-size:14px;margin-top:28px;display:inline-flex">⬇ Download Latest Release</a>
+    <p style="color:#94a3b8;font-size:13px;margin-top:14px">Requires Python 3.8+ · Free forever</p>
   </div>
 </section>
 <!-- FEATURES -->
 <section id="features" class="sec" style="background:#f8fafc">
   <div style="max-width:1100px;margin:0 auto">
     <div style="text-align:center;margin-bottom:52px">
-      <h2 class="sh2 grad">28 built-in tools</h2>
+      <h2 class="sh2 grad">29 built-in tools</h2>
       <p style="color:#64748b;font-size:17px">Everything you need to manage, fix, and optimise your Linux system.</p>
     </div>
     <!-- FIX -->
@@ -308,7 +295,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:13px">
         <div class="card"><div style="font-size:26px;margin-bottom:8px">🔧</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Fix Any Issue</div><div style="color:#64748b;font-size:13px;line-height:1.6">Describe any Linux problem in plain English. TuxGenie diagnoses and fixes it step by step.</div></div>
         <div class="card"><div style="font-size:26px;margin-bottom:8px">📶</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Network Doctor</div><div style="color:#64748b;font-size:13px;line-height:1.6">Diagnose and fix WiFi, internet, DNS, and connectivity problems automatically.</div></div>
-        <div class="card"><div style="font-size:26px;margin-bottom:8px">🖥️</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Driver Check</div><div style="color:#64748b;font-size:13px;line-height:1.6">Detect and install missing GPU, WiFi, printer, and audio drivers instantly.</div></div>
+        <div class="card"><div style="font-size:26px;margin-bottom:8px">🖥️</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Driver Check</div><div style="color:#64748b;font-size:13px;line-height:1.6">Detect and install missing GPU, WiFi, printer, and audio drivers automatically.</div></div>
         <div class="card"><div style="font-size:26px;margin-bottom:8px">🔐</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Permission Doctor</div><div style="color:#64748b;font-size:13px;line-height:1.6">Diagnose and fix "Permission denied" errors with a clear explanation.</div></div>
         <div class="card"><div style="font-size:26px;margin-bottom:8px">🔊</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Sound Fix</div><div style="color:#64748b;font-size:13px;line-height:1.6">No audio, mic not working, HDMI sound issues — fixed in minutes.</div></div>
         <div class="card"><div style="font-size:26px;margin-bottom:8px">🖥</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Display Fix</div><div style="color:#64748b;font-size:13px;line-height:1.6">Wrong resolution, monitor not detected, multi-display problems solved.</div></div>
@@ -348,6 +335,7 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
         <div style="display:grid;gap:13px">
           <div class="card"><div style="font-size:26px;margin-bottom:8px">🛡️</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Security Audit</div><div style="color:#64748b;font-size:13px;line-height:1.6">Harden firewall, SSH, and open ports. Know exactly how exposed you are.</div></div>
           <div class="card"><div style="font-size:26px;margin-bottom:8px">↩️</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Session Rollback</div><div style="color:#64748b;font-size:13px;line-height:1.6">Undo anything TuxGenie did in a previous session instantly.</div></div>
+          <div class="card"><div style="font-size:26px;margin-bottom:8px">💾</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Config Backup</div><div style="color:#64748b;font-size:13px;line-height:1.6">Back up and restore critical system configuration files safely before making changes.</div></div>
         </div>
       </div>
     </div>
@@ -366,6 +354,8 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
         <div class="card"><div style="font-size:26px;margin-bottom:8px">🐙</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Git Helper</div><div style="color:#64748b;font-size:13px;line-height:1.6">Fix conflicts, undo commits, understand diffs in plain English.</div></div>
         <div class="card"><div style="font-size:26px;margin-bottom:8px">🔋</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Battery &amp; Power</div><div style="color:#64748b;font-size:13px;line-height:1.6">Improve battery life and fix overheating on laptops.</div></div>
         <div class="card"><div style="font-size:26px;margin-bottom:8px">🌍</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">App Finder</div><div style="color:#64748b;font-size:13px;line-height:1.6">"What replaces Photoshop on Linux?" — finds and installs the best alternative.</div></div>
+        <div class="card"><div style="font-size:26px;margin-bottom:8px">⚙️</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Service Manager</div><div style="color:#64748b;font-size:13px;line-height:1.6">Start, stop, enable, and disable system services. Understand what's running and why.</div></div>
+        <div class="card"><div style="font-size:26px;margin-bottom:8px">⏰</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Cron Assistant</div><div style="color:#64748b;font-size:13px;line-height:1.6">Create and manage scheduled tasks in plain English — no cron syntax required.</div></div>
         <div class="card" style="border-color:#bbf7d0;background:linear-gradient(135deg,#f0fdf4,#fff)"><div style="font-size:26px;margin-bottom:8px">💡</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Any Terminal Command</div><div style="color:#64748b;font-size:13px;line-height:1.6">Every command that works in a terminal runs directly — no AI delay, no token cost.</div></div>
       </div>
     </div>
@@ -433,6 +423,102 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
 </footer>
 
 <script>
+/* ── DISTRO SELECTOR ── */
+const distros=[
+  {id:'ubuntu',   name:'Ubuntu',       icon:'https://cdn.simpleicons.org/ubuntu/E95420',   family:'deb'},
+  {id:'debian',   name:'Debian',       icon:'https://cdn.simpleicons.org/debian/A81D33',   family:'deb'},
+  {id:'mint',     name:'Linux Mint',   icon:'https://cdn.simpleicons.org/linuxmint/87CF3E', family:'deb'},
+  {id:'popos',    name:'Pop!_OS',      icon:'https://cdn.simpleicons.org/popos/48B9C7',    family:'deb'},
+  {id:'kali',     name:'Kali Linux',   icon:'https://cdn.simpleicons.org/kalilinux/268BEE',family:'deb'},
+  {id:'rpi',      name:'Raspberry Pi', icon:'https://cdn.simpleicons.org/raspberrypi/A22846',family:'deb'},
+  {id:'fedora',   name:'Fedora',       icon:'https://cdn.simpleicons.org/fedora/51A2DA',   family:'rpm'},
+  {id:'centos',   name:'CentOS',       icon:'https://cdn.simpleicons.org/centos/262577',   family:'rpm'},
+  {id:'rocky',    name:'Rocky Linux',  icon:'https://cdn.simpleicons.org/rockylinux/10B981',family:'rpm'},
+  {id:'arch',     name:'Arch Linux',   icon:'https://cdn.simpleicons.org/archlinux/1793D1',family:'arch'},
+  {id:'manjaro',  name:'Manjaro',      icon:'https://cdn.simpleicons.org/manjaro/35BF5C',  family:'arch'},
+  {id:'opensuse', name:'openSUSE',     icon:'https://cdn.simpleicons.org/opensuse/73BA25', family:'suse'},
+];
+
+const curlCmd='curl -fsSL https://tuxgenie.com/install.sh | bash';
+const debManual='wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\\n  | grep browser_download_url | cut -d\'"\' -f4)\nsudo dpkg -i tuxgenie_*.deb';
+const pipCmd='pip3 install tuxgenie';
+
+function installHtml(d){
+  const isUniversal=`<div class="ibox" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #e2e8f0;background:#f8fafc;border-radius:12px 12px 0 0">
+      <span style="color:#64748b;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em">Quick install (recommended)</span>
+      <button class="cbtn" onclick="copyCmd(this,${JSON.stringify(curlCmd)})">📋 Copy</button>
+    </div>
+    <div class="mono" style="padding:18px 22px;text-align:left;font-size:14px">
+      <span style="color:#94a3b8">$</span>
+      <span style="color:#16a34a;font-weight:700;margin-left:8px">${curlCmd}</span>
+    </div>
+  </div>`;
+
+  if(d.family==='deb'){
+    return isUniversal+`<div style="margin:14px 0 6px;color:#94a3b8;font-size:13px;font-weight:600">— or install the .deb package manually —</div>
+    <div class="ibox">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #e2e8f0;background:#f8fafc;border-radius:12px 12px 0 0">
+        <span style="color:#64748b;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em">Download .deb package</span>
+        <button class="cbtn" onclick="copyCmd(this,${JSON.stringify(debManual)})">📋 Copy</button>
+      </div>
+      <div class="mono" style="padding:18px 22px;text-align:left;font-size:13px;line-height:2;white-space:pre">
+<span style="color:#94a3b8">$</span> wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\
+    | grep browser_download_url | cut -d'"' -f4)
+<span style="color:#94a3b8">$</span> sudo dpkg -i tuxgenie_*.deb</div>
+    </div>`;
+  }
+
+  const pkgNote={
+    rpm:`<div style="margin-top:8px;padding:12px 16px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;font-size:13px;color:#9a3412;text-align:left">
+      ℹ️ <strong>No .deb needed.</strong> The curl installer uses <code>pip3</code> automatically on Fedora / RHEL-based systems.
+    </div>`,
+    arch:`<div style="margin-top:8px;padding:12px 16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;font-size:13px;color:#1e40af;text-align:left">
+      ℹ️ <strong>Arch user?</strong> The curl installer uses <code>pip3</code> automatically. You can also install via AUR: <code>yay -S tuxgenie</code> (community package).
+    </div>`,
+    suse:`<div style="margin-top:8px;padding:12px 16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-size:13px;color:#166534;text-align:left">
+      ℹ️ <strong>openSUSE user?</strong> The curl installer uses <code>pip3</code> automatically. Make sure Python 3.8+ is installed.
+    </div>`,
+  }[d.family]||'';
+
+  return isUniversal+`<div style="margin:14px 0 6px;color:#94a3b8;font-size:13px;font-weight:600">— or install via pip3 —</div>
+    <div class="ibox">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 18px;border-bottom:1px solid #e2e8f0;background:#f8fafc;border-radius:12px 12px 0 0">
+        <span style="color:#64748b;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em">pip3 (Python package manager)</span>
+        <button class="cbtn" onclick="copyCmd(this,${JSON.stringify(pipCmd)})">📋 Copy</button>
+      </div>
+      <div class="mono" style="padding:18px 22px;text-align:left;font-size:14px">
+        <span style="color:#94a3b8">$</span>
+        <span style="color:#16a34a;font-weight:700;margin-left:8px">${pipCmd}</span>
+      </div>
+    </div>${pkgNote}`;
+}
+
+(function initPicker(){
+  const picker=document.getElementById('dpicker');
+  const panel=document.getElementById('ipanel');
+  let selected='ubuntu';
+  distros.forEach(d=>{
+    const btn=document.createElement('button');
+    btn.id='dp-'+d.id;
+    btn.style.cssText='display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 14px;border-radius:12px;border:2px solid #e2e8f0;background:#fff;cursor:pointer;transition:all .18s;min-width:70px';
+    btn.innerHTML=`<img src="${d.icon}" width="32" height="32" style="object-fit:contain" alt="${d.name}"><span style="font-size:11px;font-weight:600;color:#475569;white-space:nowrap">${d.name}</span>`;
+    btn.addEventListener('click',()=>select(d.id));
+    picker.appendChild(btn);
+  });
+  function select(id){
+    selected=id;
+    distros.forEach(d=>{
+      const b=document.getElementById('dp-'+d.id);
+      if(d.id===id){b.style.borderColor='#2563eb';b.style.background='#eff6ff';b.style.boxShadow='0 0 0 3px rgba(37,99,235,.15)';}
+      else{b.style.borderColor='#e2e8f0';b.style.background='#fff';b.style.boxShadow='';}
+    });
+    panel.innerHTML=installHtml(distros.find(d=>d.id===id));
+  }
+  select('ubuntu');
+})();
+
+/* ── TERMINAL ANIMATION ── */
 const lines=[
   {t:'p',v:'tuxgenie'},
   {t:'o',v:'🐧 TuxGenie v5.9.0 — Your Linux AI assistant',c:'#f97316'},
