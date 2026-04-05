@@ -107,3 +107,71 @@ jobs:
             dist/tuxgenie-${{ steps.ver.outputs.VERSION }}.tar.gz
           draft: false
           prerelease: false
+
+      # ── Auto-sync website version + tool count ──────────────────────────────
+      # Runs on every push to main. Patches docs/index.html with the current
+      # version from tuxgenie.py and the live tool count from the menu.
+      # Commits back to main only if anything actually changed.
+      - name: Sync website version and tool count
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'PYEOF'
+          import re, subprocess, sys
+
+          with open('tuxgenie.py') as f:
+              src = f.read()
+
+          # Read current version
+          ver = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', src).group(1)
+
+          # Count numbered menu tool items
+          tool_count = len(re.findall(r'_item\("', src))
+
+          with open('docs/index.html') as f:
+              html = f.read()
+
+          original = html
+
+          # 1. Replace ALL vX.Y.Z version strings (all belong to TuxGenie in this file)
+          html = re.sub(r'v\d+\.\d+\.\d+', f'v{ver}', html)
+
+          # 2. Replace tool count before "built-in tools" (case-insensitive variants)
+          html = re.sub(r'\b\d+(?= built-in tools)', str(tool_count), html)
+          html = re.sub(r'\b\d+(?= Built-in Tools)', str(tool_count), html)
+
+          # 3. Replace tool count in meta description
+          html = re.sub(
+              r'(\d+) built-in tools',
+              f'{tool_count} built-in tools',
+              html,
+              flags=re.IGNORECASE
+          )
+
+          # 4. Update hero stat number (the big "29" badge)
+          html = re.sub(
+              r'(font-size:24px;font-weight:900[^>]*>)\d+(<)',
+              rf'\g<1>{tool_count}\2',
+              html
+          )
+
+          if html == original:
+              print(f"Website already up to date (v{ver}, {tool_count} tools). Nothing to commit.")
+              sys.exit(0)
+
+          with open('docs/index.html', 'w') as f:
+              f.write(html)
+
+          print(f"Updated docs/index.html → v{ver}, {tool_count} tools")
+          PYEOF
+
+          # Commit only if something changed
+          if git diff --quiet docs/index.html; then
+            echo "No website changes to commit."
+          else
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add docs/index.html
+            git commit -m "chore: sync website to v${{ steps.ver.outputs.VERSION }} [skip ci]"
+            git push origin main
+          fi
