@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.13.0"
+__version__ = "5.14.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -821,6 +821,20 @@ Rules:
 - If already resolved, return steps:[] and resolved:true.
 - Keep descriptions SHORT but CLEAR. A beginner should understand every step.
 - When a step needs sudo, add to description: "(needs admin password)"
+
+CRITICAL — Apps that need their own repo (NOT in Ubuntu default apt):
+The following apps are NOT in Ubuntu's default apt repositories.
+Do NOT run 'apt-cache search' or 'apt install' for them without first adding their repo:
+  brave-browser       → add https://brave-browser-apt-release.s3.brave.com/ repo
+  opera-stable        → add https://deb.opera.com/opera-stable/ repo
+  vivaldi-stable      → add https://repo.vivaldi.com/archive/deb/ repo
+  google-chrome-stable → add https://dl.google.com/linux/chrome/deb/ repo
+  microsoft-edge-stable → add https://packages.microsoft.com/repos/edge repo
+  code (VS Code)      → add https://packages.microsoft.com/repos/code repo
+  slack-desktop       → download .deb from https://slack.com/downloads/linux
+  zoom                → download .deb from https://zoom.us/download
+  discord             → download .deb from https://discord.com/download
+For these, your FIRST steps must be: add GPG key → add repo → apt update → apt install.
 
 CRITICAL — Preventing failures:
 - NEVER fabricate or guess download URLs. If you don't know the exact URL,
@@ -1906,7 +1920,13 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     "connection refused", "E: ", "dpkg: error",
                     "is not installed", "no candidates",
                 ]
-                output_has_errors = any(p.lower() in combined_out for p in _FAIL_PATTERNS)
+                # ── Don't error-check echo payloads in fallback commands ──
+                # e.g. `which foo || echo 'foo is not installed'` — the echo is
+                # intentional confirmation output, not an actual error.
+                if "|| echo" in cmd and rc == 0:
+                    output_has_errors = False
+                else:
+                    output_has_errors = any(p.lower() in combined_out for p in _FAIL_PATTERNS)
 
                 # ── Empty output detection ──
                 # Commands that produce no output when output was expected
@@ -2220,6 +2240,18 @@ Additional instructions for PACKAGE WIZARD mode:
 - Provide install command, a one-line description, and any post-install setup steps.
 - If multiple options exist, pick the best one first and mention alternatives.
 - Currently installed packages (sample): {installed[:500]}
+
+IMPORTANT — these popular apps are NOT in Ubuntu's default apt repos and need their own repo added first:
+  brave-browser  → add https://brave-browser-apt-release.s3.brave.com/ repo + keyring first
+  opera-stable   → add https://deb.opera.com/opera-stable/ repo + keyring first
+  vivaldi-stable → add https://repo.vivaldi.com/archive/deb/ repo + keyring first
+  google-chrome-stable → add https://dl.google.com/linux/chrome/deb/ repo first
+  microsoft-edge-stable → add https://packages.microsoft.com/repos/edge repo first
+  code (VS Code) → add https://packages.microsoft.com/repos/code repo first
+  slack-desktop  → download .deb from https://slack.com/downloads/linux
+  zoom           → download .deb from https://zoom.us/download
+  discord        → download .deb from https://discord.com/download
+Do NOT try apt-cache search or apt install for these without adding their repo first.
 """ + _sys_ctx_block(bctx)
 
     fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
