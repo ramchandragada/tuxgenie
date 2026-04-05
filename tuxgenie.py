@@ -10,6 +10,7 @@
 
 TuxGenie v4.6 — Your wish is my command 🐧
 AI-powered Linux assistant · Powered by Claude · Free forever
+www.tuxgenie.com
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   DEDICATED TO LINUS TORVALDS
@@ -22,6 +23,7 @@ AI-powered Linux assistant · Powered by Claude · Free forever
 
   Built with ❤  by Aspera Technologies Pte Ltd
   Free to use · Free to modify · Free to share · Open Source forever
+  www.tuxgenie.com
   "We are committed to making the world a better place, one command
    at a time." — https://github.com/ramchandragada/tuxgenie
 """
@@ -34,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.8.0"
+__version__ = "5.9.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -104,7 +106,7 @@ def banner():
   {GREEN}{BOLD}✔{R}  {BOLD}Or pick a number from the menu{R}     {DIM}e.g. "2" for Health Check{R}
   {GREEN}{BOLD}✔{R}  {BOLD}Or run any terminal command directly{R}  {DIM}e.g. "ls -la"{R}
 {_line}
-  {DIM}Dedicated to Linus Torvalds · Built by Aspera Technologies · Open Source{R}
+  {BLUE}{BOLD}🌐 www.tuxgenie.com{R}  {DIM}· Dedicated to Linus Torvalds · Built by Aspera Technologies{R}
 {_line}
 """)
 
@@ -390,7 +392,8 @@ def _load_api_key(cfg):
     except Exception:
         pass
     # Ask user
-    print(f"\n  Get your API key at: {CYAN}https://console.anthropic.com{R}\n")
+    print(f"\n  Get your API key at: {CYAN}https://console.anthropic.com{R}")
+    print(f"  Learn more at:       {BLUE}{BOLD}www.tuxgenie.com{R}\n")
     try:
         key = input("  Paste Anthropic API key: ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -1400,7 +1403,7 @@ def _ask_rating():
         return
     if r in ("4","5"):
         print(f"  {GREEN}{BOLD}Thank you! That means a lot. ⭐{R}")
-        print(f"  {DIM}Share TuxGenie → https://github.com/{_GITHUB_REPO}{R}")
+        print(f"  {DIM}Share TuxGenie → {BLUE}{BOLD}www.tuxgenie.com{R}{DIM} · https://github.com/{_GITHUB_REPO}{R}")
     else:
         print(f"  {YELLOW}Sorry it wasn't more helpful — let's make it better.{R}")
         try:
@@ -2995,7 +2998,7 @@ def feat_self_update():
 
         if not deb_url:
             warn("No .deb found in the release — please update manually.")
-            info("Download: https://github.com/ramchandragada/tuxgenie/releases/latest")
+            info(f"Download: {BLUE}{BOLD}www.tuxgenie.com{R}  or  https://github.com/ramchandragada/tuxgenie/releases/latest")
             return
 
         try:
@@ -3009,7 +3012,7 @@ def feat_self_update():
 
     except urllib.error.URLError:
         warn("Could not reach the update server — check your internet connection.")
-        info("Manual download: https://github.com/ramchandragada/tuxgenie/releases/latest")
+        info(f"Download at: {BLUE}{BOLD}www.tuxgenie.com{R}")
     except Exception as e:
         warn(f"Update check failed: {e}")
 
@@ -3512,14 +3515,14 @@ def main():
             print(f"\n\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
                 print(f"  {DIM}{backend.session_cost_estimate()}{R}")
-            print(f"  {DIM}Thank you for using TuxGenie by Aspera Technologies.{R}\n")
+            print(f"  {DIM}Thank you for using TuxGenie · {BLUE}www.tuxgenie.com{R}{DIM} · Aspera Technologies{R}\n")
             break
 
         if not choice:
             continue
         if choice.lower() in EXIT_WORDS:
             print(f"\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
-            print(f"  {DIM}Thank you for using TuxGenie by Aspera Technologies.{R}\n")
+            print(f"  {DIM}Thank you for using TuxGenie · {BLUE}www.tuxgenie.com{R}{DIM} · Aspera Technologies{R}\n")
             break
         if choice.lower() in HELP_WORDS:
             show_help(); continue
