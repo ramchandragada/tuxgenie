@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.10.0"
+__version__ = "5.11.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -278,26 +278,35 @@ def _bootstrap_anthropic_sdk():
 
 class AnthropicBackend:
     def __init__(self, api_key, model="claude-haiku-4-5-20251001"):
+        self._no_key    = (api_key == _NO_KEY)
+        self.api_key    = "" if self._no_key else api_key
+        self.model      = model
+        self.base_model = model
+        self.auto_model = True
+        self.client     = None
+        self._session_input_tokens  = 0
+        self._session_output_tokens = 0
+        if not self._no_key:
+            self._init_client(api_key)
+
+    def _init_client(self, api_key):
+        """Bootstrap SDK and create Anthropic client."""
         global _anthropic
         if _anthropic is None:
             if not _bootstrap_anthropic_sdk():
                 print(f"\n  {RED}{BOLD}Could not install the anthropic SDK.{R}")
                 print(f"  TuxGenie will try to fix this automatically…\n")
-                # Last-ditch: try to install everything in one shot with full output
-                # so the user can at least SEE what's happening
                 print(f"  {CYAN}Running: sudo apt install -y python3-pip python3-venv{R}")
                 subprocess.run(["sudo", "apt-get", "install", "-y",
                                 "python3-pip", "python3-venv"])
                 print(f"\n  {CYAN}Running: pip3 install anthropic{R}")
                 subprocess.run([sys.executable, "-m", "pip", "install",
                                 "anthropic", "--break-system-packages"])
-                # Final check
                 try:
                     import anthropic as _anth
                     _anthropic = _anth
                 except ImportError:
                     print(f"\n  {RED}{BOLD}Still could not import anthropic.{R}")
-                    print(f"  This usually means your Python environment is broken.")
                     print(f"  Please run these commands and restart tuxgenie:\n")
                     print(f"    {CYAN}sudo apt install -y python3-pip python3-venv{R}")
                     print(f"    {CYAN}pip3 install anthropic --break-system-packages{R}\n")
@@ -306,12 +315,15 @@ class AnthropicBackend:
             if _anthropic is None:
                 import anthropic as _anth
                 _anthropic = _anth
-        self.model  = model
-        self.base_model = model  # user's chosen model (for settings)
-        self.auto_model = True   # enable smart model routing by default
-        self.client = _anthropic.Anthropic(api_key=api_key)
-        self._session_input_tokens  = 0
-        self._session_output_tokens = 0
+        self.client  = _anthropic.Anthropic(api_key=api_key)
+        self.api_key = api_key
+        self._no_key = False
+
+    def _set_key(self, key):
+        """Set a new API key, save to config, and re-init the client."""
+        self._init_client(key)
+        save_cfg({"api_key": key})
+        ok(f"API key saved! AI features are now enabled. Type a question or pick a menu number.")
 
     def label(self):
         return f"Anthropic · {self.model}"
@@ -334,6 +346,18 @@ class AnthropicBackend:
 
     def ask(self, system, messages, max_tokens=4096):
         """Streaming call — prints a live progress counter while receiving."""
+        if self._no_key:
+            print(f"\n  {YELLOW}{BOLD}🔑 AI features need an Anthropic API key.{R}")
+            print(f"  {DIM}Terminal commands work without a key — always free.{R}")
+            print(f"  Get your free key at: {CYAN}https://console.anthropic.com{R}\n")
+            try:
+                key = input("  Paste API key now (or press Enter to cancel): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return ""
+            if not key:
+                info(f"Cancelled. Type {BOLD}k{R} at the menu anytime to add your key.")
+                return ""
+            self._set_key(key)
         chunks = []
         char_count = 0
         with self.client.messages.stream(
@@ -368,6 +392,8 @@ class AnthropicBackend:
                 f"Est. cost: ${cost:.4f}")
 
 # ── Config / API key ─────────────────────────────────────────────────────────
+_NO_KEY = "__NO_KEY__"   # sentinel — user chose to skip key setup
+
 def _load_api_key(cfg):
     """Get API key from env, config, old installs, or prompt user."""
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
@@ -391,15 +417,26 @@ def _load_api_key(cfg):
             return k
     except Exception:
         pass
-    # Ask user
-    print(f"\n  Get your API key at: {CYAN}https://console.anthropic.com{R}")
-    print(f"  Learn more at:       {BLUE}{BOLD}www.tuxgenie.com{R}\n")
+    # Ask user — with option to skip and add later
+    _line = f"  {DIM}{'─'*54}{R}"
+    print(f"\n{_line}")
+    print(f"  {YELLOW}{BOLD}🔑 Anthropic API Key Setup{R}")
+    print(f"{_line}")
+    print(f"\n  TuxGenie needs an API key to use AI features")
+    print(f"  (diagnosis, fixes, script generation, etc.)\n")
+    print(f"  {GREEN}{BOLD}✔{R}  Terminal commands ALWAYS work — no key needed")
+    print(f"  {GREEN}{BOLD}✔{R}  250+ Linux commands run free, instantly\n")
+    print(f"  Get your free key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
+    print(f"  Costs ~ a few cents/session via Anthropic (we earn nothing)\n")
+    print(f"  {DIM}Press Enter to skip for now — type {BOLD}k{R}{DIM} anytime to add key later{R}\n")
     try:
-        key = input("  Paste Anthropic API key: ").strip()
+        key = input("  Paste API key (or press Enter to skip): ").strip()
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
     if not key:
-        print(C("No key provided.", RED)); sys.exit(1)
+        print(f"\n  {YELLOW}Continuing without API key.{R}")
+        print(f"  {DIM}Terminal commands work fine. Type {BOLD}k{R}{DIM} whenever you want to enable AI.{R}\n")
+        return _NO_KEY
     return key
 
 def load_backend():
@@ -407,7 +444,8 @@ def load_backend():
     cfg = load_cfg()
     key = _load_api_key(cfg)
     model = cfg.get("model", "claude-haiku-4-5-20251001")
-    save_cfg({"api_key": key})
+    if key != _NO_KEY:
+        save_cfg({"api_key": key})   # only persist real keys
     return AnthropicBackend(api_key=key, model=model)
 
 AVAILABLE_MODELS = [
@@ -415,6 +453,26 @@ AVAILABLE_MODELS = [
     ("claude-sonnet-4-6",   "Smarter — for complex debugging (auto-escalates when needed)"),
     ("claude-opus-4-6",     "Most capable — for the hardest problems (costs 20x more)"),
 ]
+
+def feat_set_api_key(backend):
+    """Set or update the Anthropic API key — command: k"""
+    hdr("Connect Anthropic API Key")
+    if not backend._no_key and backend.api_key:
+        masked = backend.api_key[:8] + "…" + backend.api_key[-4:]
+        info(f"Current key: {CYAN}{masked}{R}  (AI features are active)")
+    else:
+        print(f"\n  {YELLOW}No API key set — AI features are currently disabled.{R}")
+    print(f"\n  Get your free key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
+    print(f"  {DIM}Cost: ~$0.25 per million tokens via Anthropic (Haiku model)")
+    print(f"  A typical session costs a fraction of a cent. We earn nothing.{R}\n")
+    try:
+        key = input("  Paste API key (or press Enter to cancel): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not key:
+        warn("No key entered. Nothing changed.")
+        return
+    backend._set_key(key)
 
 def feat_settings(backend, bctx, slog):
     """Settings: view/change API key and model."""
@@ -3368,7 +3426,8 @@ def show_help():
   {GREEN}{BOLD}Commands:{R}
     {BLUE}{BOLD}help{R}     Show this help
     {BLUE}{BOLD}menu{R}     Show the feature menu
-    {BLUE}{BOLD}s{R}        Change API key
+    {BLUE}{BOLD}k{R}        Add / change API key (needed for AI features)
+    {BLUE}{BOLD}u{R}        Update TuxGenie to latest version
     {RED}{BOLD}q{R}        Quit TuxGenie
 """)
 
@@ -3507,6 +3566,13 @@ def main():
     first_run_check()
     quick_health_check()
     show_menu()
+    if backend._no_key:
+        _line = f"  {DIM}{'─'*54}{R}"
+        print(f"\n{_line}")
+        print(f"  {YELLOW}{BOLD}⚠  No API key — AI features are disabled{R}")
+        print(f"  {GREEN}✔  Terminal commands work fine without a key{R}")
+        print(f"  {DIM}Type {BOLD}k{R}{DIM} to add your Anthropic key anytime{R}")
+        print(f"{_line}")
 
     while True:
         try:
@@ -3530,6 +3596,8 @@ def main():
             show_menu(); continue
         if choice.lower() in ("u", "update"):
             feat_self_update(); continue
+        if choice.lower() in ("k", "key", "apikey", "addkey", "setkey", "connect"):
+            feat_set_api_key(backend); continue
         if choice.lower() in ("f", "feedback", "feature", "suggest"):
             feat_feedback(); continue
 
@@ -3540,14 +3608,14 @@ def main():
             _active_feature = choice
             fn(backend, bctx, session_log)
             save_session(session_log)
-            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}help{R} {DIM}/ {RED}{BOLD}q{R}")
+            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
         else:
             # Natural language → try direct passthrough first, then AI
             if not try_passthrough(choice, session_log):
                 sys_p = BASE_SYS + _sys_ctx_block(bctx)
                 fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
             save_session(session_log)
-            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}help{R} {DIM}/ {RED}{BOLD}q{R}")
+            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
 
     save_session(session_log)
 
