@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.18.0"
+__version__ = "5.19.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -180,11 +180,6 @@ _COMPLEX_KEYWORDS = [
 _HAIKU_MODEL  = "claude-haiku-4-5-20251001"
 _SONNET_MODEL = "claude-sonnet-4-6"
 
-def _classify_task(text: str) -> str:
-    """Return 'haiku' for all tasks (cheapest). Sonnet only on retry.
-    Haiku handles 90%+ of tuxgenie tasks perfectly — it generates
-    JSON with shell commands, which is its strongest skill."""
-    return "haiku"  # Always start with Haiku, escalate on failure
 
 def _try_pip_install():
     """Try to install the anthropic SDK using every known pip method.
@@ -338,8 +333,7 @@ class AnthropicBackend:
             if self.model != _SONNET_MODEL and self.base_model != "claude-opus-4-6":
                 self.model = _SONNET_MODEL
             return
-        complexity = _classify_task(user_text)
-        if complexity == "haiku" and self.base_model != "claude-opus-4-6":
+        if self.base_model != "claude-opus-4-6":
             self.model = _HAIKU_MODEL
         else:
             self.model = self.base_model
@@ -400,14 +394,6 @@ def _load_api_key(cfg):
     if key: return key
     key = cfg.get("api_key", "").strip()
     if key: return key
-    # Migrate from old tiers config
-    for t in ("tier1","tier2","tier3"):
-        tc = cfg.get("tiers",{}).get(t,{})
-        if tc.get("backend") == "anthropic" and tc.get("api_key","").strip():
-            return tc["api_key"].strip()
-    for field in ("tier1_api_key","tier2_api_key","tier3_api_key"):
-        k = cfg.get(field,"").strip()
-        if k: return k
     # Migrate from old ai-terminal install
     try:
         old = json.loads(open(os.path.expanduser("~/.config/ai-terminal/config.json")).read())
@@ -496,8 +482,7 @@ def feat_settings(backend, bctx, slog):
         except (EOFError, KeyboardInterrupt):
             return
         if key:
-            save_cfg({"api_key": key})
-            backend.client = _anthropic.Anthropic(api_key=key)
+            backend._set_key(key)
             ok("API key updated — active now.")
     elif ch == "2":
         print(f"\n  {BOLD}Choose a model:{R}")
@@ -1453,8 +1438,9 @@ def _open_github_issue(title, body, labels="bug"):
     import urllib.parse
     url = ("https://github.com/" + _GITHUB_REPO + "/issues/new?"
            + urllib.parse.urlencode({"title": title, "body": body, "labels": labels}))
-    subprocess.Popen(f"xdg-open {shlex.quote(url)} 2>/dev/null",
-                     shell=True, start_new_session=True)
+    subprocess.Popen(["xdg-open", url],
+                     start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def _sanitize_tb(tb_text):
     """Strip personal info from a traceback before showing/sending it."""
@@ -1716,42 +1702,6 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
     except Exception as e:
         return -1, '', str(e)
 
-def step_prompt(cmd, risk, yes_to_all):
-    hard_danger = is_dangerous(cmd)
-    if yes_to_all and not hard_danger and risk != "dangerous":
-        print(C("  ⚡ Running automatically…", CYAN))
-        return "run"
-    # Beginner-friendly safety explanation
-    safety = {
-        "safe":      (GREEN,  "SAFE — just looks at info, changes nothing"),
-        "moderate":  (YELLOW, "CAREFUL — makes a change, but it's reversible"),
-        "dangerous": (RED,    "RISKY — this could break things if wrong"),
-    }
-    col, explain = safety.get(risk.lower(), (DIM, ""))
-    print(f"\n  {col}{BOLD}  {explain}  {R}")
-    while True:
-        try:
-            print(f"\n    {C('y',GREEN,BOLD)} = yes, run it    {C('s',YELLOW,BOLD)} = skip this step    {C('q',RED,BOLD)} = stop everything")
-            if not hard_danger and risk != "dangerous":
-                print(f"    {C('a',CYAN,BOLD)} = run all safe steps automatically")
-            ch = input(f"\n  {BOLD}Your choice:{R} ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            return "abort"
-        if ch in ("y","yes"):
-            return "run"
-        if ch in ("a","all") and not hard_danger and risk != "dangerous":
-            return "run_all"
-        if ch in ("a","all"):
-            warn("This step needs explicit 'y' because it could be risky."); continue
-        if ch in ("n","no","skip","s"):
-            return "skip"
-        if ch in ("abort","q","exit","quit","stop"):
-            return "abort"
-        if len(ch) > 10:
-            warn("It looks like you pasted a command. Please use this prompt to approve/skip steps.")
-            print(C("  If you want to run your own commands, press q to quit this task first.", DIM))
-        else:
-            print(C("  Just type: y, s, or q", DIM))
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 5 — CORE FIX ENGINE  (shared by all features)
@@ -2964,7 +2914,7 @@ def feat_battery(backend, bctx, slog):
             "temps":         "sensors 2>/dev/null | grep -iE 'core|package|temp' | head -8",
             "power_supply":  "ls /sys/class/power_supply/ 2>/dev/null",
             "screen_bright": "cat /sys/class/backlight/*/brightness 2>/dev/null | head -3",
-            "wake_locks":    "cat /proc/wakelocks 2>/dev/null | head -10",
+            "wake_locks":    "cat /sys/kernel/debug/wakeup_sources 2>/dev/null | head -10",
             "suspend_mode":  "cat /sys/power/state 2>/dev/null",
         })}
     try:
