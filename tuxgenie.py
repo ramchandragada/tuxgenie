@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.15.0"
+__version__ = "5.16.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1768,24 +1768,53 @@ def _detect_media_type(data: bytes) -> str:
             return mt
     return "image/png"  # assume PNG as fallback
 
-def _clipboard_image() -> bytes | None:
-    """Read an image from the system clipboard. Returns raw bytes or None."""
-    cmds = [
-        ["wl-paste", "--type", "image/png"],           # Wayland
-        ["wl-paste", "--type", "image/jpeg"],
-        ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],  # X11
-        ["xclip", "-selection", "clipboard", "-t", "image/jpeg", "-o"],
-    ]
-    for cmd in cmds:
-        try:
-            r = subprocess.run(cmd, capture_output=True, timeout=5)
-            if r.returncode == 0 and len(r.stdout) > 64:
-                magic = r.stdout[:4]
-                if any(r.stdout[:len(m)] == m for m in _IMAGE_MAGIC):
-                    return r.stdout
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            continue
-    return None
+def _clipboard_image():
+    """
+    Read image from clipboard.
+    Returns (bytes, None) on success, or (None, reason_str) on failure.
+    reason_str is one of: 'no_tool_wayland', 'no_tool_x11', 'no_image', 'no_display'
+    """
+    is_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    is_x11     = bool(os.environ.get("DISPLAY"))
+
+    if not is_wayland and not is_x11:
+        return None, "no_display"
+
+    _FMTS = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/x-png"]
+
+    if is_wayland:
+        if not shutil.which("wl-paste"):
+            return None, "no_tool_wayland"
+        for fmt in _FMTS:
+            try:
+                r = subprocess.run(["wl-paste", "--type", fmt],
+                                   capture_output=True, timeout=5)
+                if r.returncode == 0 and len(r.stdout) > 64:
+                    if any(r.stdout[:len(m)] == m for m in _IMAGE_MAGIC):
+                        return r.stdout, None
+            except subprocess.TimeoutExpired:
+                continue
+        return None, "no_image"
+
+    # X11
+    if shutil.which("xclip"):
+        for fmt in ["image/png", "image/jpeg", "image/webp"]:
+            try:
+                r = subprocess.run(
+                    ["xclip", "-selection", "clipboard", "-t", fmt, "-o"],
+                    capture_output=True, timeout=5)
+                if r.returncode == 0 and len(r.stdout) > 64:
+                    if any(r.stdout[:len(m)] == m for m in _IMAGE_MAGIC):
+                        return r.stdout, None
+            except subprocess.TimeoutExpired:
+                continue
+        return None, "no_image"
+
+    if shutil.which("xsel"):
+        # xsel can read clipboard but not by mime type — unreliable for images
+        pass
+
+    return None, "no_tool_x11"
 
 def _take_screenshot() -> bytes | None:
     """Launch an interactive screenshot tool and return PNG bytes, or None."""
@@ -1822,16 +1851,38 @@ def _take_screenshot() -> bytes | None:
                 except: pass
     return None
 
+def _install_clipboard_tool():
+    """Offer to auto-install the right clipboard tool and return True if installed."""
+    is_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    pkg  = "wl-clipboard" if is_wayland else "xclip"
+    tool = "wl-paste"     if is_wayland else "xclip"
+    print(f"\n  {YELLOW}To paste from clipboard, {BOLD}{tool}{R}{YELLOW} is needed.{R}")
+    print(f"  Install it now?  ({DIM}sudo apt install {pkg}{R})")
+    try:
+        ans = input(f"  {C('y',GREEN,BOLD)} = yes install   {C('n',DIM)} = skip  > ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    if ans not in ("y", "yes"):
+        return False
+    rc, _, _ = run_cmd_live(f"sudo apt install -y {pkg}")
+    if rc == 0 and shutil.which(tool):
+        ok(f"{tool} installed! Try clipboard again.")
+        return True
+    warn(f"Install failed. Run manually:  sudo apt install {pkg}")
+    return False
+
 def _attach_image():
     """
     Prompt the user to attach an image. Returns (b64_str, media_type) or None.
     Three methods: clipboard (c), screenshot (s), or a file path.
+    When clipboard tools are missing, offers to install them then retries.
+    When clipboard has no image, explains why and offers alternatives.
     """
     print(f"\n  {CYAN}{BOLD}📷 Attach an image?{R}  {DIM}Screenshots help Claude diagnose faster{R}")
     print(f"  {C('c',CYAN,BOLD)} = clipboard  "
           f"  {C('s',CYAN,BOLD)} = take screenshot  "
           f"  {C('Enter',DIM)} = skip")
-    print(f"  {DIM}Or paste a file path, e.g.  ~/Pictures/error.png{R}")
+    print(f"  {DIM}Or paste a file path  e.g.  ~/Pictures/error.png{R}")
     try:
         choice = input(f"  {BOLD}>{R} ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -1843,20 +1894,56 @@ def _attach_image():
     img_bytes = None
     media_type = "image/png"
 
+    # ── Clipboard ──────────────────────────────────────────────────────────────
     if choice.lower() in ("c", "clip", "clipboard", "paste"):
-        img_bytes = _clipboard_image()
-        if img_bytes is None:
-            warn("No image found in clipboard.")
-            info("Tip: take a screenshot first (PrtSc), copy it, then try c again.")
+        data, reason = _clipboard_image()
+
+        if reason in ("no_tool_wayland", "no_tool_x11"):
+            installed = _install_clipboard_tool()
+            if installed:
+                data, reason = _clipboard_image()   # retry after install
+
+        if data is not None:
+            img_bytes = data
+        elif reason == "no_image":
+            warn("Clipboard has no image right now.")
+            print(f"  {DIM}1. Take a screenshot (PrtSc key or Snipping tool){R}")
+            print(f"  {DIM}2. Copy it to clipboard (Ctrl+C or 'Copy Image'){R}")
+            print(f"  {DIM}3. Come back and press  c  again{R}")
+            print(f"\n  Switch to screenshot mode instead?")
+            try:
+                ans = input(f"  {C('s',CYAN,BOLD)} = take screenshot   {C('p',CYAN,BOLD)} = enter file path   {C('Enter',DIM)} = skip  > ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return None
+            if ans in ("s", "screenshot"):
+                choice = "s"    # fall through to screenshot branch below
+            elif ans in ("p", "path", "file"):
+                choice = ""     # fall through to path branch below
+                try:
+                    choice = input(f"  File path > ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return None
+            else:
+                return None
+        elif reason == "no_display":
+            warn("No display server detected. Running headless?")
+            return None
+        else:
             return None
 
-    elif choice.lower() in ("s", "ss", "snap", "screenshot", "capture", "screen"):
+    # ── Screenshot ─────────────────────────────────────────────────────────────
+    if choice.lower() in ("s", "ss", "snap", "screenshot", "capture", "screen"):
         img_bytes = _take_screenshot()
         if img_bytes is None:
-            warn("No screenshot tool found. Try: sudo apt install gnome-screenshot")
+            warn("No screenshot tool found.")
+            print(f"  Install one:  {CYAN}sudo apt install gnome-screenshot{R}  or  {CYAN}sudo apt install scrot{R}")
+            print(f"  Or take a screenshot manually and use the file path option.")
             return None
 
-    else:
+    # ── File path ──────────────────────────────────────────────────────────────
+    if img_bytes is None and choice and choice.lower() not in (
+            "c", "clip", "clipboard", "paste",
+            "s", "ss", "snap", "screenshot", "capture", "screen"):
         path = os.path.expanduser(choice.strip("'\""))
         if not os.path.isfile(path):
             warn(f"File not found: {path}")
@@ -1869,17 +1956,16 @@ def _attach_image():
     if img_bytes is None:
         return None
 
-    # Validate it looks like an actual image
     media_type = _detect_media_type(img_bytes) or media_type
-
     size_kb = len(img_bytes) / 1024
+
     if size_kb > 5 * 1024:
         warn(f"Image is {size_kb:.0f} KB — too large (max 5 MB). Crop or compress it first.")
         return None
 
     ok(f"Image ready ({size_kb:.0f} KB) — Claude will analyse it with your message.")
     if size_kb > 800:
-        info("Large image: this will use more tokens than a smaller crop would.")
+        info("Large image: this uses more tokens. A cropped screenshot works better.")
 
     return base64.standard_b64encode(img_bytes).decode(), media_type
 
