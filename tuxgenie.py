@@ -29,14 +29,14 @@ www.tuxgenie.com
 """
 
 import os, sys, json, re, stat, tarfile, datetime, textwrap, time, shlex, argparse
-import subprocess, urllib.request, urllib.error, threading, shutil, base64, tempfile
+import subprocess, urllib.request, urllib.error, threading, shutil
 try:
     import termios, tty as _tty
     _HAS_TERMIOS = True
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.17.0"
+__version__ = "5.18.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1754,261 +1754,15 @@ def step_prompt(cmd, risk, yes_to_all):
             print(C("  Just type: y, s, or q", DIM))
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SECTION 5 — IMAGE ATTACHMENT  (screenshot / clipboard / file)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-_IMAGE_EXTS = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-               "gif": "image/gif", "webp": "image/webp"}
-_IMAGE_MAGIC = {b'\x89PNG': "image/png", b'\xff\xd8\xff': "image/jpeg",
-                b'GIF8': "image/gif", b'RIFF': "image/webp"}
-
-def _detect_media_type(data: bytes) -> str:
-    for magic, mt in _IMAGE_MAGIC.items():
-        if data[:len(magic)] == magic:
-            return mt
-    return "image/png"  # assume PNG as fallback
-
-def _clipboard_image():
-    """
-    Read image from clipboard.
-    Returns (bytes, None) on success, or (None, reason_str) on failure.
-    reason_str is one of: 'no_tool_wayland', 'no_tool_x11', 'no_image', 'no_display'
-    """
-    is_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
-    is_x11     = bool(os.environ.get("DISPLAY"))
-
-    if not is_wayland and not is_x11:
-        return None, "no_display"
-
-    _FMTS = ["image/png", "image/jpeg", "image/webp", "image/gif", "image/x-png"]
-
-    if is_wayland:
-        if not shutil.which("wl-paste"):
-            return None, "no_tool_wayland"
-        for fmt in _FMTS:
-            try:
-                r = subprocess.run(["wl-paste", "--type", fmt],
-                                   capture_output=True, timeout=5)
-                if r.returncode == 0 and len(r.stdout) > 64:
-                    if any(r.stdout[:len(m)] == m for m in _IMAGE_MAGIC):
-                        return r.stdout, None
-            except subprocess.TimeoutExpired:
-                continue
-        return None, "no_image"
-
-    # X11
-    if shutil.which("xclip"):
-        for fmt in ["image/png", "image/jpeg", "image/webp"]:
-            try:
-                r = subprocess.run(
-                    ["xclip", "-selection", "clipboard", "-t", fmt, "-o"],
-                    capture_output=True, timeout=5)
-                if r.returncode == 0 and len(r.stdout) > 64:
-                    if any(r.stdout[:len(m)] == m for m in _IMAGE_MAGIC):
-                        return r.stdout, None
-            except subprocess.TimeoutExpired:
-                continue
-        return None, "no_image"
-
-    if shutil.which("xsel"):
-        # xsel can read clipboard but not by mime type — unreliable for images
-        pass
-
-    return None, "no_tool_x11"
-
-def _take_screenshot() -> bytes | None:
-    """Launch an interactive screenshot tool and return PNG bytes, or None."""
-    tmp = tempfile.mktemp(suffix=".png")
-    # Tool list: prefer area-select, fall back to full-screen
-    tools = [
-        ["gnome-screenshot", "-a", "-f", tmp],   # GNOME — area select
-        ["scrot",  "-s",  tmp],                   # Scrot — area select
-        ["flameshot", "gui", "--raw"],             # Flameshot — stdout
-        ["spectacle", "-r", "-o", tmp],            # KDE — region
-        ["maim",  "-s",  tmp],                     # maim (common on i3/sway)
-        ["gnome-screenshot", "-f", tmp],           # GNOME — full screen
-        ["scrot", tmp],                            # Scrot — full screen
-    ]
-    info("Select the area to capture (drag to select, or full screen)…")
-    for cmd in tools:
-        use_stdout = "flameshot" in cmd[0]
-        try:
-            if use_stdout:
-                r = subprocess.run(cmd, capture_output=True, timeout=60)
-                if r.returncode == 0 and len(r.stdout) > 64:
-                    return r.stdout
-            else:
-                r = subprocess.run(cmd, timeout=60)
-                if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 64:
-                    with open(tmp, "rb") as f:
-                        data = f.read()
-                    return data
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            continue
-        finally:
-            if os.path.isfile(tmp):
-                try: os.unlink(tmp)
-                except: pass
-    return None
-
-def _install_clipboard_tool():
-    """Offer to auto-install the right clipboard tool and return True if installed."""
-    is_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
-    pkg  = "wl-clipboard" if is_wayland else "xclip"
-    tool = "wl-paste"     if is_wayland else "xclip"
-    print(f"\n  {YELLOW}To paste from clipboard, {BOLD}{tool}{R}{YELLOW} is needed.{R}")
-    print(f"  Install it now?  ({DIM}sudo apt install {pkg}{R})")
-    try:
-        ans = input(f"  {C('y',GREEN,BOLD)} = yes install   {C('n',DIM)} = skip  > ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return False
-    if ans not in ("y", "yes"):
-        return False
-    rc, _, _ = run_cmd_live(f"sudo apt install -y {pkg}")
-    if rc == 0 and shutil.which(tool):
-        ok(f"{tool} installed! Try clipboard again.")
-        return True
-    warn(f"Install failed. Run manually:  sudo apt install {pkg}")
-    return False
-
-def _attach_image():
-    """
-    Prompt the user to attach an image. Returns (b64_str, media_type) or None.
-    Three methods: clipboard (c), screenshot (s), or a file path.
-    When clipboard tools are missing, offers to install them then retries.
-    When clipboard has no image, explains why and offers alternatives.
-    """
-    print(f"\n  {CYAN}{BOLD}📷 Attach an image?{R}  {DIM}Screenshots help Claude diagnose faster{R}")
-    print(f"  {C('c',CYAN,BOLD)} = clipboard  "
-          f"  {C('s',CYAN,BOLD)} = take screenshot  "
-          f"  {C('Enter',DIM)} = skip")
-    print(f"  {DIM}Or paste a file path  e.g.  ~/Pictures/error.png{R}")
-    try:
-        choice = input(f"  {BOLD}>{R} ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return None
-
-    if not choice:
-        return None
-
-    img_bytes = None
-    media_type = "image/png"
-
-    # ── Clipboard ──────────────────────────────────────────────────────────────
-    if choice.lower() in ("c", "clip", "clipboard", "paste"):
-        data, reason = _clipboard_image()
-
-        if reason in ("no_tool_wayland", "no_tool_x11"):
-            installed = _install_clipboard_tool()
-            if installed:
-                data, reason = _clipboard_image()   # retry after install
-
-        if data is not None:
-            img_bytes = data
-        elif reason == "no_image":
-            warn("Clipboard has no image right now.")
-            print(f"  {DIM}1. Take a screenshot (PrtSc key or Snipping tool){R}")
-            print(f"  {DIM}2. Copy it to clipboard (Ctrl+C or 'Copy Image'){R}")
-            print(f"  {DIM}3. Come back and press  c  again{R}")
-            print(f"\n  Switch to screenshot mode instead?")
-            try:
-                ans = input(f"  {C('s',CYAN,BOLD)} = take screenshot   {C('p',CYAN,BOLD)} = enter file path   {C('Enter',DIM)} = skip  > ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                return None
-            if ans in ("s", "screenshot"):
-                choice = "s"    # fall through to screenshot branch below
-            elif ans in ("p", "path", "file"):
-                choice = ""     # fall through to path branch below
-                try:
-                    choice = input(f"  File path > ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    return None
-            else:
-                return None
-        elif reason == "no_display":
-            warn("No display server detected. Running headless?")
-            return None
-        else:
-            return None
-
-    # ── Screenshot ─────────────────────────────────────────────────────────────
-    if choice.lower() in ("s", "ss", "snap", "screenshot", "capture", "screen"):
-        img_bytes = _take_screenshot()
-        if img_bytes is None:
-            warn("No screenshot tool found.")
-            print(f"  Install one:  {CYAN}sudo apt install gnome-screenshot{R}  or  {CYAN}sudo apt install scrot{R}")
-            print(f"  Or take a screenshot manually and use the file path option.")
-            return None
-
-    # ── File path ──────────────────────────────────────────────────────────────
-    if img_bytes is None and choice and choice.lower() not in (
-            "c", "clip", "clipboard", "paste",
-            "s", "ss", "snap", "screenshot", "capture", "screen"):
-        path = os.path.expanduser(choice.strip("'\""))
-        if not os.path.isfile(path):
-            warn(f"File not found: {path}")
-            return None
-        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-        media_type = _IMAGE_EXTS.get(ext, "image/png")
-        with open(path, "rb") as f:
-            img_bytes = f.read()
-
-    if img_bytes is None:
-        return None
-
-    media_type = _detect_media_type(img_bytes) or media_type
-    size_kb = len(img_bytes) / 1024
-
-    if size_kb > 5 * 1024:
-        warn(f"Image is {size_kb:.0f} KB — too large (max 5 MB). Crop or compress it first.")
-        return None
-
-    ok(f"Image ready ({size_kb:.0f} KB) — Claude will analyse it with your message.")
-    if size_kb > 800:
-        info("Large image: this uses more tokens. A cropped screenshot works better.")
-
-    return base64.standard_b64encode(img_bytes).decode(), media_type
-
-def _build_user_msg(text: str, image=None) -> dict:
-    """
-    Build a user message dict for the Claude API.
-    With image: content is a list [image_block, text_block] (vision format).
-    Without:    content is just the text string.
-    """
-    if image is None:
-        return {"role": "user", "content": text}
-    b64, mt = image
-    return {
-        "role": "user",
-        "content": [
-            {"type": "image",
-             "source": {"type": "base64", "media_type": mt, "data": b64}},
-            {"type": "text", "text": text},
-        ]
-    }
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  SECTION 6 — CORE FIX ENGINE  (shared by all features)
+#  SECTION 5 — CORE FIX ENGINE  (shared by all features)
 # ═══════════════════════════════════════════════════════════════════════════════
 def _prune_messages(messages, max_keep=6):
     """Keep conversation history bounded to save tokens.
-    Keeps: first user message (the original task) + last max_keep messages.
-    On re-rounds, strips the image from the first message to avoid re-sending
-    large base64 data every round (the AI already saw it in round 1)."""
-    # Strip image from first message on re-rounds (saves tokens)
-    def _text_only(msg):
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            texts = [b["text"] for b in content if b.get("type") == "text"]
-            return {**msg, "content": " ".join(texts)}
-        return msg
-
+    Keeps: first user message (the original task) + last max_keep messages."""
     if len(messages) <= max_keep + 1:
-        # Still strip image on rounds > 1 (caller passes same messages each round)
-        if len(messages) > 1:
-            return [_text_only(messages[0])] + messages[1:]
         return messages
-    return [_text_only(messages[0])] + messages[-(max_keep):]
+    # Always keep the first message (original task description)
+    return [messages[0]] + messages[-(max_keep):]
 
 def fix_engine(backend, system, messages, session_log, max_rounds=10):
     """
@@ -2413,9 +2167,8 @@ def feat_fix(backend, bctx, slog):
     except (EOFError, KeyboardInterrupt):
         return
     if not issue: return
-    image = _attach_image()
     sys_p = BASE_SYS + _sys_ctx_block(bctx)
-    fix_engine(backend, sys_p, [_build_user_msg(issue, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":issue}], slog)
 
 # ── FEATURE 2: Health Dashboard ───────────────────────────────────────────────
 def feat_health(backend, bctx, slog):
@@ -2501,8 +2254,7 @@ IMPORTANT — these popular apps are NOT in Ubuntu's default apt repos and need 
 Do NOT try apt-cache search or apt install for these without adding their repo first.
 """ + _sys_ctx_block(bctx)
 
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(want, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
 
 # ── FEATURE 4: Network Doctor ─────────────────────────────────────────────────
 def feat_network(backend, bctx, slog):
@@ -2524,8 +2276,7 @@ Additional instructions for NETWORK DOCTOR mode:
 - For each issue found, provide a clear fix.
 - Explain WHY each step helps — this is educational.
 """ + _sys_ctx_block(ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 5: Security Audit ─────────────────────────────────────────────────
 def feat_security(backend, bctx, slog):
@@ -2805,8 +2556,7 @@ Additional instructions for DOCKER HELPER mode:
 - For docker-compose issues, check the compose file and environment.
 - Explain Docker networking concepts when relevant.
 """ + _sys_ctx_block(ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 16: Config Backup ─────────────────────────────────────────────────
 BACKUP_PATHS = [
@@ -2960,8 +2710,7 @@ Additional instructions for PROCESS INSPECTOR mode:
 - Suggest: nice/renice, kill signals (SIGTERM before SIGKILL).
 - For memory leaks: identify the process and suggest restart/update.
 """ + _sys_ctx_block(ps_ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 20: Session Rollback ─────────────────────────────────────────────
 def feat_rollback(backend, bctx, current_slog):
@@ -3073,8 +2822,7 @@ Additional instructions for GIT HELPER mode:
 - Never force-push to main/master without a very explicit warning.
 - Use 'git diff', 'git log', 'git status' as safe diagnostic first steps.
 """ + _sys_ctx_block(git_ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 24: Bluetooth Fix ────────────────────────────────────────────────
 def feat_bluetooth(backend, bctx, slog):
@@ -3107,8 +2855,7 @@ Additional instructions for BLUETOOTH FIX mode:
 - Translate terms: 'bluetooth service' = 'the program that manages bluetooth', 'rfkill' = 'a software switch that can turn off bluetooth'.
 - bluetoothctl is safe to use; guide user through the interactive steps clearly.
 """ + _sys_ctx_block(ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 25: Printer Setup ─────────────────────────────────────────────────
 def feat_printer(backend, bctx, slog):
@@ -3142,8 +2889,7 @@ Additional instructions for PRINTER SETUP mode:
 - Explain CUPS web UI (localhost:631) as 'a website on your own computer for managing printers'.
 - Keep the user confident — printer setup on Linux is famously tricky but we can do it step by step.
 """ + _sys_ctx_block(ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 26: Webcam Fix ────────────────────────────────────────────────────
 def feat_webcam(backend, bctx, slog):
@@ -3175,8 +2921,7 @@ Additional instructions for WEBCAM FIX mode:
 - Explain /dev/video0 as 'the address Linux gives your camera'.
 - For Zoom/Teams/Meet: often a browser permission issue first — guide through that before system changes.
 """ + _sys_ctx_block(ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 27: App Switcher — Linux equivalents ──────────────────────────────
 def feat_appswitch(backend, bctx, slog):
@@ -3240,8 +2985,7 @@ Additional instructions for BATTERY & POWER mode:
 - Explain CPU governor simply: 'performance = full speed always, powersave = slows down when idle to save battery'.
 - Always install TLP if not present on laptops — it's one of the best Linux battery improvements.
 """ + _sys_ctx_block(ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 22: Sound Fix ────────────────────────────────────────────────────
 def feat_sound(backend, bctx, slog):
@@ -3281,8 +3025,7 @@ Additional instructions for SOUND FIX mode:
 - Translate jargon: say "sound card" not "ALSA device", "audio service" not "PulseAudio daemon", "output device" not "sink".
 - Commands like pactl set-default-sink and amixer sset are safe and reversible.
 """ + _sys_ctx_block(ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 23: Display Fix ───────────────────────────────────────────────────
 def feat_display(backend, bctx, slog):
@@ -3320,8 +3063,7 @@ Additional instructions for DISPLAY FIX mode:
 - NEVER remove GPU drivers without a fallback plan — user could lose their display entirely.
 - Explain terms simply: "display driver" not "DRM/KMS", "screen refresh rate" not "Hz modeline".
 """ + _sys_ctx_block(ctx)
-    image = _attach_image()
-    fix_engine(backend, sys_p, [_build_user_msg(problem, image)], slog)
+    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE: Self-Update ──────────────────────────────────────────────────────
 _UPDATE_URL = "https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest"
@@ -3710,7 +3452,6 @@ def show_menu():
   {BGREEN}{BOLD}💡 TIP:{R} {BOLD}You don't need to pick a number!{R}
      Just type what you need, like:
      {BLUE}{BOLD}\"my wifi is not working\"{R}   {BLUE}{BOLD}\"install chrome\"{R}   {BLUE}{BOLD}\"why is it slow?\"{R}
-     Type {CYAN}{BOLD}img{R} to attach a screenshot to your question.
 """)
 
 EXIT_WORDS = {"exit","quit","q","bye","logout"}
@@ -3918,20 +3659,6 @@ def main():
             feat_set_api_key(backend); continue
         if choice.lower() in ("f", "feedback", "feature", "suggest"):
             feat_feedback(); continue
-        if choice.lower() in ("img", "image", "screenshot", "attach", "photo", "pic"):
-            # Standalone image: ask for description then attach
-            try:
-                txt = input(f"  {BOLD}Describe the issue (image will be attached):{R} ").strip()
-            except (EOFError, KeyboardInterrupt):
-                continue
-            if not txt:
-                continue
-            image = _attach_image()
-            sys_p = BASE_SYS + _sys_ctx_block(bctx)
-            fix_engine(backend, sys_p, [_build_user_msg(txt, image)], session_log)
-            save_session(session_log)
-            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
-            continue
 
         if choice in feature_map:
             fn = feature_map[choice]
@@ -3944,9 +3671,8 @@ def main():
         else:
             # Natural language → try direct passthrough first, then AI
             if not try_passthrough(choice, session_log):
-                image = _attach_image()
                 sys_p = BASE_SYS + _sys_ctx_block(bctx)
-                fix_engine(backend, sys_p, [_build_user_msg(choice, image)], session_log)
+                fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
             save_session(session_log)
             print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
 
