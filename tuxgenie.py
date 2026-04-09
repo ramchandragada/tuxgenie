@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.16.0"
+__version__ = "5.17.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3339,7 +3339,7 @@ def feat_self_update():
             data = json.loads(resp.read().decode())
 
         latest = data.get("tag_name", "").lstrip("v").strip()
-        notes  = (data.get("body") or "")[:400].strip()
+        notes  = _strip_md((data.get("body") or "")[:400].strip())
         deb_url = deb_name = None
         for asset in data.get("assets", []):
             if asset.get("name", "").endswith("_all.deb"):
@@ -3382,6 +3382,17 @@ def feat_self_update():
 
 # ── Startup update check ─────────────────────────────────────────────────────
 _UPDATE_CACHE = os.path.join(CFG_DIR, "update_check.json")
+
+def _strip_md(text: str) -> str:
+    """Remove common markdown so release notes display cleanly in a terminal."""
+    text = re.sub(r'```[a-z]*\n?', '', text)        # fenced code blocks
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)  # headings
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)    # bold
+    text = re.sub(r'\*(.+?)\*',   r'\1', text)       # italic
+    text = re.sub(r'`(.+?)`',     r'\1', text)        # inline code
+    text = re.sub(r'^\s*[-*]\s+', '· ', text, flags=re.MULTILINE)  # bullets
+    text = re.sub(r'\n{3,}', '\n\n', text)           # collapse blank lines
+    return text.strip()
 
 def _ver(v):
     """Parse version string '4.1.0' into tuple (4, 1, 0)."""
@@ -3484,7 +3495,7 @@ def startup_update_check():
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode())
             latest = data.get("tag_name", "").lstrip("v").strip()
-            notes  = (data.get("body") or "")[:300].strip()
+            notes  = _strip_md((data.get("body") or "")[:300].strip())
             deb_url = deb_name = None
             for asset in data.get("assets", []):
                 if asset.get("name", "").endswith("_all.deb"):
@@ -3699,6 +3710,7 @@ def show_menu():
   {BGREEN}{BOLD}💡 TIP:{R} {BOLD}You don't need to pick a number!{R}
      Just type what you need, like:
      {BLUE}{BOLD}\"my wifi is not working\"{R}   {BLUE}{BOLD}\"install chrome\"{R}   {BLUE}{BOLD}\"why is it slow?\"{R}
+     Type {CYAN}{BOLD}img{R} to attach a screenshot to your question.
 """)
 
 EXIT_WORDS = {"exit","quit","q","bye","logout"}
@@ -3906,6 +3918,20 @@ def main():
             feat_set_api_key(backend); continue
         if choice.lower() in ("f", "feedback", "feature", "suggest"):
             feat_feedback(); continue
+        if choice.lower() in ("img", "image", "screenshot", "attach", "photo", "pic"):
+            # Standalone image: ask for description then attach
+            try:
+                txt = input(f"  {BOLD}Describe the issue (image will be attached):{R} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                continue
+            if not txt:
+                continue
+            image = _attach_image()
+            sys_p = BASE_SYS + _sys_ctx_block(bctx)
+            fix_engine(backend, sys_p, [_build_user_msg(txt, image)], session_log)
+            save_session(session_log)
+            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
+            continue
 
         if choice in feature_map:
             fn = feature_map[choice]
