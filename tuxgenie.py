@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.19.0"
+__version__ = "5.20.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -141,6 +141,7 @@ def print_output(rc, stdout, stderr):
 # ═══════════════════════════════════════════════════════════════════════════════
 CFG_DIR      = os.path.expanduser("~/.config/tuxgenie")
 CFG_FILE     = os.path.join(CFG_DIR, "config.json")
+HISTORY_FILE = os.path.join(CFG_DIR, "history.json")
 DATA_DIR     = os.path.expanduser("~/.local/share/tuxgenie")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 BACKUPS_DIR  = os.path.join(DATA_DIR, "backups")
@@ -3308,6 +3309,47 @@ def save_session(slog: list):
     with open(out,"w") as f:
         json.dump({"timestamp":ts,"commands":slog}, f, indent=2)
 
+def _history_append(task: str, feature: str):
+    """Append one interaction to the persistent history log (capped at 50)."""
+    try:
+        try:
+            entries = json.loads(open(HISTORY_FILE).read())
+        except Exception:
+            entries = []
+        entries.append({
+            "ts":      datetime.datetime.now().strftime("%b %d  %H:%M"),
+            "task":    task.strip()[:80],
+            "feature": feature,
+        })
+        entries = entries[-50:]
+        with open(HISTORY_FILE, "w") as f:
+            json.dump(entries, f)
+    except Exception:
+        pass
+
+def show_history():
+    """Display the last 10 interactions."""
+    try:
+        entries = json.loads(open(HISTORY_FILE).read())
+    except Exception:
+        entries = []
+
+    print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  📋 Recent History  {R}")
+    if not entries:
+        print(f"\n  {DIM}No history yet — use TuxGenie to fix something first!{R}\n")
+        return
+
+    recent = list(reversed(entries[-10:]))
+    print()
+    for i, e in enumerate(recent, 1):
+        ts      = e.get("ts", "")
+        task    = e.get("task", "")
+        feature = e.get("feature", "")
+        num_s   = f"{i}.".ljust(4)
+        feat_s  = f"  {DIM}[{feature}]{R}" if feature else ""
+        print(f"  {BLUE}{BOLD}{num_s}{R}  {DIM}{ts}{R}  {BOLD}{task}{R}{feat_s}")
+    print()
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 9 — MENU + MAIN REPL
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3397,7 +3439,7 @@ def show_menu():
     _item("28", "Battery & Power",     "Battery draining fast? Laptop overheating?")
 
     print(f"""
-  {BG_DARK}{BWHITE}  {C('[s]',GOLD,BOLD)} Settings   {C('[u]',BCYAN,BOLD)} Update   {C('[f]',PINK,BOLD)} Suggest Feature   {C('[q]',BRED,BOLD)} Quit  {R}
+  {BG_DARK}{BWHITE}  {C('[s]',GOLD,BOLD)} Settings   {C('[u]',BCYAN,BOLD)} Update   {C('[h]',BMAGENTA,BOLD)} History   {C('[f]',PINK,BOLD)} Suggest Feature   {C('[q]',BRED,BOLD)} Quit  {R}
 
   {BGREEN}{BOLD}💡 TIP:{R} {BOLD}You don't need to pick a number!{R}
      Just type what you need, like:
@@ -3405,7 +3447,7 @@ def show_menu():
 """)
 
 EXIT_WORDS = {"exit","quit","q","bye","logout"}
-HELP_WORDS = {"help","h","?","how","what"}
+HELP_WORDS = {"help","?","how","what"}
 
 def show_help():
     """Quick help for absolute beginners."""
@@ -3435,6 +3477,7 @@ def show_help():
   {GREEN}{BOLD}Commands:{R}
     {BLUE}{BOLD}help{R}     Show this help
     {BLUE}{BOLD}menu{R}     Show the feature menu
+    {BMAGENTA}{BOLD}h{R}        Show recent history (last 10 tasks)
     {BLUE}{BOLD}k{R}        Add / change API key (needed for AI features)
     {BLUE}{BOLD}u{R}        Update TuxGenie to latest version
     {RED}{BOLD}q{R}        Quit TuxGenie
@@ -3548,8 +3591,10 @@ def main():
     print(f"  {CYAN}{BOLD}Your system:{R}  {BOLD}{bctx['os']}{R}  {DIM}· {bctx['kernel']} · {bctx['arch']}{R}")
 
     session_log: list = []
-    feature_map = {num: fn   for num, _, name, _, fn in MENU_ITEMS}
-    keyword_map = {kw:  fn   for _, kw, name, _, fn  in MENU_ITEMS}
+    feature_map      = {num: fn   for num, _, name, _, fn in MENU_ITEMS}
+    keyword_map      = {kw:  fn   for _, kw, name, _, fn  in MENU_ITEMS}
+    feature_name_map = {num: name for num, _, name, _, _  in MENU_ITEMS}
+    feature_kw_map   = {num: kw   for num, kw, _, _, _    in MENU_ITEMS}
 
     # ── One-shot mode: tuxgenie "describe problem" ────────────────────────────
     if args.issue:
@@ -3601,6 +3646,8 @@ def main():
             break
         if choice.lower() in HELP_WORDS:
             show_help(); continue
+        if choice.lower() in ("h", "history", "hist"):
+            show_history(); continue
         if choice.lower() == "menu":
             show_menu(); continue
         if choice.lower() in ("u", "update"):
@@ -3617,13 +3664,16 @@ def main():
             _active_feature = choice
             fn(backend, bctx, session_log)
             save_session(session_log)
+            _history_append(feature_name_map.get(choice, choice), feature_kw_map.get(choice, choice))
             print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
         else:
             # Natural language → try direct passthrough first, then AI
-            if not try_passthrough(choice, session_log):
+            passed = try_passthrough(choice, session_log)
+            if not passed:
                 sys_p = BASE_SYS + _sys_ctx_block(bctx)
                 fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
             save_session(session_log)
+            _history_append(choice, "terminal" if passed else "fix")
             print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
 
     save_session(session_log)
