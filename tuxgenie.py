@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.20.0"
+__version__ = "5.21.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -793,8 +793,14 @@ Schema:
                       NEVER use '|| echo' or '|| true' — the command MUST fail
                       if the task is NOT actually done.>",
   "success_check": "<how the user can tell the issue is fixed, in plain words>",
+  "needs_synthesis": false,
   "resolved": false
 }
+
+- Set needs_synthesis to TRUE for INFO-GATHERING tasks (checking RAM, hardware, disk usage,
+  processes, logs, battery, etc.) — tasks where the goal is to ANSWER A QUESTION using
+  gathered data. The engine will call you again with the actual outputs to give a direct answer.
+- Set needs_synthesis to FALSE for ACTION tasks (install, remove, fix, configure, restart).
 
 Rules:
 - ALWAYS start with safe, read-only checks before making any changes.
@@ -1715,6 +1721,45 @@ def _prune_messages(messages, max_keep=6):
     # Always keep the first message (original task description)
     return [messages[0]] + messages[-(max_keep):]
 
+def _synthesize_findings(backend, question: str, step_outputs: list):
+    """
+    After info-gathering steps complete, call Haiku with the actual output
+    to give the user a direct plain-English answer to their question.
+    """
+    parts = []
+    for s in step_outputs:
+        cmd = s.get("command", "")
+        out = (s.get("stdout", "") or "").strip()
+        if cmd and out:
+            parts.append(f"$ {cmd}\n{out[:600]}")
+    if not parts:
+        return
+    data_block = "\n\n".join(parts)
+    synth_system = (
+        "You are TuxGenie. The user asked a question and we ran commands to gather data. "
+        "Using ONLY the actual command outputs below, give a direct, specific, plain-English answer. "
+        "Be concrete — use the real numbers and details from the output. "
+        "Do NOT say 'run these commands', 'look it up online', or give generic advice. "
+        "If the data clearly answers the question, say so. "
+        "3-5 sentences max. No markdown. No JSON."
+    )
+    synth_msg = [{"role": "user", "content": (
+        f"User's question: {question}\n\n"
+        f"Data gathered from the system:\n{data_block}\n\n"
+        "Answer the user's question directly using this data."
+    )}]
+    try:
+        answer = ask_ai(backend, synth_system, synth_msg, max_tokens=400)
+        answer = answer.strip()
+        if answer:
+            print(f"\n  {GREEN}{BOLD}Here's what we found:{R}\n")
+            for line in textwrap.wrap(answer, width=70):
+                print(f"  {line}")
+            print()
+    except Exception:
+        pass
+
+
 def fix_engine(backend, system, messages, session_log, max_rounds=10):
     """
     Runs the AI→display→execute→iterate loop.
@@ -1993,7 +2038,9 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
             if v_rc == 0 and not v_has_errors and not v_is_weak and (not v_empty or v_steps_all_ok):
                 verified = True
                 print(f"\n  {GREEN}{BOLD}✓ VERIFIED — Task completed successfully!{R}")
-                if sc:
+                if plan.get("needs_synthesis"):
+                    _synthesize_findings(backend, user_text, step_outputs)
+                elif sc:
                     info(sc)
                 print(f"  {DIM}Long live Linux! 🐧{R}")
                 _ask_rating()
@@ -2014,6 +2061,11 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 })
         elif not any_step_failed:
             # No verify_command but all steps passed — ask user as fallback
+            if plan.get("needs_synthesis"):
+                _synthesize_findings(backend, user_text, step_outputs)
+                print(f"  {DIM}Long live Linux! 🐧{R}")
+                _ask_rating()
+                return
             if sc:
                 print(f"\n  {CYAN}{BOLD}How to check if it worked:{R} {sc}")
             try:
