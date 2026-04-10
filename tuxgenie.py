@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.22.0"
+__version__ = "5.23.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -279,6 +279,7 @@ class AnthropicBackend:
         self.model      = model
         self.base_model = model
         self.auto_model = True
+        self.expert_mode = False   # compact output — skip beginner explanations
         self.client     = None
         self._session_input_tokens  = 0
         self._session_output_tokens = 0
@@ -433,7 +434,9 @@ def load_backend():
     model = cfg.get("model", "claude-haiku-4-5-20251001")
     if key != _NO_KEY:
         save_cfg({"api_key": key})   # only persist real keys
-    return AnthropicBackend(api_key=key, model=model)
+    b = AnthropicBackend(api_key=key, model=model)
+    b.expert_mode = bool(cfg.get("expert_mode", False))
+    return b
 
 AVAILABLE_MODELS = [
     ("claude-haiku-4-5-20251001", "Fast & cheapest — handles 90% of tasks perfectly (recommended)"),
@@ -465,13 +468,16 @@ def feat_settings(backend, bctx, slog):
     """Settings: view/change API key and model."""
     hdr("Settings")
     info(f"Backend: {backend.label()}")
-    auto_tag = C(" (auto-routing ON)", GREEN) if backend.auto_model else ""
+    auto_tag    = C(" ON", GREEN)  if backend.auto_model  else C(" OFF", YELLOW)
+    expert_tag  = C(" ON", GREEN)  if backend.expert_mode else C(" OFF", DIM)
     print(f"  {DIM}Smart model routing:{R}{auto_tag}")
+    print(f"  {DIM}Expert mode (compact output):{R}{expert_tag}")
     if backend._session_input_tokens > 0:
         print(f"  {DIM}{backend.session_cost_estimate()}{R}")
     print(f"\n  {C('[1]',CYAN)} Change API key")
     print(f"  {C('[2]',CYAN)} Change model")
     print(f"  {C('[3]',CYAN)} Toggle smart model routing (auto Haiku/Sonnet)")
+    print(f"  {C('[4]',CYAN)} Toggle expert mode  {DIM}(compact output — skip beginner explanations){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -512,6 +518,13 @@ def feat_settings(backend, bctx, slog):
             ok("Smart model routing ON — Haiku for simple tasks, Sonnet for complex ones (saves ~80% on simple tasks).")
         else:
             ok(f"Smart model routing OFF — always using {backend.base_model}.")
+    elif ch == "4":
+        backend.expert_mode = not backend.expert_mode
+        save_cfg({"expert_mode": backend.expert_mode})
+        if backend.expert_mode:
+            ok("Expert mode ON — compact output, no beginner explanations.")
+        else:
+            ok("Expert mode OFF — full output with friendly explanations.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 3 — SYSTEM CONTEXT COLLECTORS
@@ -1290,11 +1303,12 @@ def _classify_cmd_risk(cmd, effective_word):
 
     return 'moderate'
 
-def try_passthrough(user_input, session_log):
+def try_passthrough(user_input, session_log, backend=None, bctx=None):
     """
     If user_input looks like a shell command, run it directly without
     calling Claude. Works for ANY command in PATH — not just a fixed list.
     Returns True if handled, False to fall back to AI (natural language).
+    On failure, offers AI explanation if backend is available.
     """
     cmd = user_input.strip()
     is_cmd, effective_word = _looks_like_command(cmd)
@@ -1373,7 +1387,30 @@ def try_passthrough(user_input, session_log):
 
     print(f"  {CYAN}▶ Running…{R}")
     rc, stdout, stderr = run_cmd_live(exec_cmd, sudo_password=sudo_pw)
-    ok("Done.") if rc == 0 else warn(f"Exited with code {rc}.")
+
+    if rc == 0:
+        ok("Done.")
+    else:
+        warn(f"Exited with code {rc}.")
+        # ── AI explanation offer ──────────────────────────────────────────
+        if backend and not backend._no_key:
+            combined = (stdout + "\n" + stderr).strip()
+            if combined:
+                print(f"\n  {DIM}{'─'*50}{R}")
+                for line in combined.splitlines()[:6]:
+                    print(f"  {DIM}{line}{R}")
+            try:
+                ans = input(f"\n  {YELLOW}{BOLD}Want AI to explain this error and fix it?{R} [y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ans = "n"
+            if ans in ("y", "yes"):
+                ctx = (f"I ran this command:\n  {cmd}\n\n"
+                       f"It failed with exit code {rc}.\n\nOutput:\n{combined[:1200]}\n\n"
+                       "Explain what went wrong in plain English and fix it.")
+                sys_p = BASE_SYS + (_sys_ctx_block(bctx) if bctx else "")
+                fix_engine(backend, sys_p, [{"role": "user", "content": ctx}], session_log)
+                session_log.append({"command": cmd, "rc": rc, "source": "passthrough"})
+                return True
 
     session_log.append({"command": cmd, "rc": rc, "source": "passthrough"})
     return True
@@ -1862,7 +1899,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
             print(C(raw[:400], DIM)); return
 
         analysis = plan.get("analysis","")
-        if analysis:
+        if analysis and not backend.expert_mode:
             print(f"\n{BOLD}Analysis:{R} {analysis}")
 
         if plan.get("resolved", False):
@@ -1900,13 +1937,17 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                    "dangerous":C(" RISKY ",   RED,    BOLD),
                   }.get(risk, C(f" {risk.upper()} ", DIM))
 
-            print(f"\n{'─'*60}")
-            print(f"  {BOLD}Step {i}/{len(steps)}{R}  {rb}  {bar} {CYAN}{BOLD}{pct}%{R}")
-            print(f"  {desc}")
-            if meaning:
-                print(f"  {DIM}→ {meaning}{R}")
-            if cmd:
-                print(f"  {DIM}$ {cmd}{R}")
+            if backend.expert_mode:
+                if cmd:
+                    print(f"\n  {DIM}[{i}/{len(steps)}]{R}  {DIM}$ {cmd}{R}")
+            else:
+                print(f"\n{'─'*60}")
+                print(f"  {BOLD}Step {i}/{len(steps)}{R}  {rb}  {bar} {CYAN}{BOLD}{pct}%{R}")
+                print(f"  {desc}")
+                if meaning:
+                    print(f"  {DIM}→ {meaning}{R}")
+                if cmd:
+                    print(f"  {DIM}$ {cmd}{R}")
 
             if not cmd:
                 info("(informational — nothing to run)"); continue
@@ -1997,10 +2038,12 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 exit1_is_ok = is_probe and rc == 1
 
                 if rc == 0 and not output_has_errors and not (expects_output and empty_output) and not downloaded_html:
-                    ok("This step completed successfully.")
+                    if not backend.expert_mode:
+                        ok("This step completed successfully.")
                 elif exit1_is_ok:
                     # grep/which/type exit 1 = "not found" — that's a valid result
-                    ok("Nothing found (this is the expected result).")
+                    if not backend.expert_mode:
+                        ok("Nothing found (this is the expected result).")
                 elif downloaded_html:
                     warn("Downloaded an HTML page instead of a real file. The AI will fix this.")
                     step_failed = True
@@ -2053,8 +2096,9 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         verified = False
 
         if verify_cmd:
-            print(f"\n{'─'*60}")
-            print(f"  {CYAN}{BOLD}Verifying task completion…{R}")
+            if not backend.expert_mode:
+                print(f"\n{'─'*60}")
+            print(f"  {CYAN}{BOLD}Verifying…{R}" if backend.expert_mode else f"  {CYAN}{BOLD}Verifying task completion…{R}")
             sudo_pw_v = None
             if verify_cmd.strip().startswith("sudo"):
                 try:
@@ -3781,7 +3825,7 @@ def main():
 
     # ── One-shot mode: tuxgenie "describe problem" ────────────────────────────
     if args.issue:
-        if not try_passthrough(args.issue, session_log):
+        if not try_passthrough(args.issue, session_log, backend, bctx):
             sys_p = BASE_SYS + _sys_ctx_block(bctx)
             fix_engine(backend, sys_p, [{"role": "user", "content": args.issue}], session_log)
         save_session(session_log)
@@ -3813,7 +3857,8 @@ def main():
 
     while True:
         try:
-            choice = input(f"\n  {BGREEN}{BOLD}❯{R} ").strip()
+            _xm = f" {DIM}[expert]{R}" if backend.expert_mode else ""
+            choice = input(f"\n  {BGREEN}{BOLD}❯{R}{_xm} ").strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
@@ -3851,7 +3896,7 @@ def main():
             print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
         else:
             # Natural language → try direct passthrough first, then AI
-            passed = try_passthrough(choice, session_log)
+            passed = try_passthrough(choice, session_log, backend, bctx)
             if not passed:
                 sys_p = BASE_SYS + _sys_ctx_block(bctx)
                 fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
