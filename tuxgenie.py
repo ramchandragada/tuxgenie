@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.21.0"
+__version__ = "5.22.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1723,8 +1723,8 @@ def _prune_messages(messages, max_keep=6):
 
 def _synthesize_findings(backend, question: str, step_outputs: list):
     """
-    After info-gathering steps complete, call Haiku with the actual output
-    to give the user a direct plain-English answer to their question.
+    After steps complete, call Haiku with the actual outputs to generate
+    either a direct answer (info tasks) or a Warp-style action summary.
     """
     parts = []
     for s in step_outputs:
@@ -1732,29 +1732,70 @@ def _synthesize_findings(backend, question: str, step_outputs: list):
         out = (s.get("stdout", "") or "").strip()
         if cmd and out:
             parts.append(f"$ {cmd}\n{out[:600]}")
+        elif cmd:
+            parts.append(f"$ {cmd}\n(ran successfully, no output)")
     if not parts:
         return
     data_block = "\n\n".join(parts)
-    synth_system = (
-        "You are TuxGenie. The user asked a question and we ran commands to gather data. "
-        "Using ONLY the actual command outputs below, give a direct, specific, plain-English answer. "
-        "Be concrete — use the real numbers and details from the output. "
-        "Do NOT say 'run these commands', 'look it up online', or give generic advice. "
-        "If the data clearly answers the question, say so. "
-        "3-5 sentences max. No markdown. No JSON."
-    )
-    synth_msg = [{"role": "user", "content": (
-        f"User's question: {question}\n\n"
-        f"Data gathered from the system:\n{data_block}\n\n"
-        "Answer the user's question directly using this data."
-    )}]
+
+    # Detect if this was an ACTION task (modifying system) vs INFO task (reading)
+    all_cmds = " ".join(s.get("command", "") for s in step_outputs)
+    _action_markers = ("apt ", "apt-get", "systemctl ", "sysctl -w", "dpkg ", "snap ",
+                       "pip ", "tee /", "sed -i", "update-", " install", " remove",
+                       "chmod ", "chown ", "rm ", "mv ", "cp /", "echo >", ">> /")
+    is_action = any(m in all_cmds for m in _action_markers)
+
+    if is_action:
+        synth_system = (
+            "You are TuxGenie. Commands were just run on the user's Linux system. "
+            "Write a clear completion summary in plain text using these EXACT section labels "
+            "(one per line, keep each section to 2-4 bullet points max):\n\n"
+            "✓ Changes made:\n"
+            "  • [what changed — include before/after values where the outputs show them]\n\n"
+            "⚡ Still to watch:\n"
+            "  • [what is still limited, slow, or could be improved based on the data]\n\n"
+            "→ Next steps:\n"
+            "  • [2-3 concrete things the user should do now]\n\n"
+            "Be specific — use real numbers from the outputs. No JSON. No markdown headers. "
+            "Under 12 lines total."
+        )
+        synth_content = (
+            f"Task performed: {question}\n\n"
+            f"Commands run and their outputs:\n{data_block}\n\n"
+            "Write the completion summary."
+        )
+        header = f"\n  {GREEN}{BOLD}What happened:{R}\n"
+    else:
+        synth_system = (
+            "You are TuxGenie. The user asked a question and commands were run to gather data. "
+            "Give a direct, specific plain-English answer using ONLY the real data from the outputs. "
+            "Be concrete — use the actual numbers and values. "
+            "Do NOT say 'run these commands', 'look it up online', or give generic advice. "
+            "3-6 sentences. No JSON. No markdown."
+        )
+        synth_content = (
+            f"User's question: {question}\n\n"
+            f"Data gathered from the system:\n{data_block}\n\n"
+            "Answer the user's question directly using this data."
+        )
+        header = f"\n  {GREEN}{BOLD}Here's what we found:{R}\n"
+
     try:
-        answer = ask_ai(backend, synth_system, synth_msg, max_tokens=400)
+        answer = ask_ai(backend, synth_system,
+                        [{"role": "user", "content": synth_content}], max_tokens=500)
         answer = answer.strip()
         if answer:
-            print(f"\n  {GREEN}{BOLD}Here's what we found:{R}\n")
-            for line in textwrap.wrap(answer, width=70):
-                print(f"  {line}")
+            print(header)
+            for line in answer.splitlines():
+                line = line.strip()
+                if not line:
+                    print()
+                    continue
+                if len(line) > 72:
+                    for wrapped in textwrap.wrap(line, width=72):
+                        print(f"  {wrapped}")
+                else:
+                    print(f"  {line}")
             print()
     except Exception:
         pass
@@ -3402,6 +3443,94 @@ def show_history():
         print(f"  {BLUE}{BOLD}{num_s}{R}  {DIM}{ts}{R}  {BOLD}{task}{R}{feat_s}")
     print()
 
+def feat_performance(backend, bctx, slog):
+    """
+    Agentic Performance Boost — collects all diagnostic data upfront (no AI),
+    feeds it to Claude in one shot, applies all safe fixes, then generates
+    a Warp-style before/after summary.
+    """
+    hdr("Performance Boost — Full System Audit")
+    print(f"\n  {CYAN}{BOLD}Phase 1/3  Scanning your system…{R}  {DIM}(~5 seconds){R}\n")
+
+    # ── Collect all diagnostics upfront (parallel, no AI needed) ──────────────
+    _probes = [
+        ("memory",      "free -h"),
+        ("meminfo",     "grep -E 'MemTotal|MemFree|MemAvailable|SwapTotal|SwapFree|Buffers:|^Cached:' /proc/meminfo"),
+        ("top_mem",     "ps aux --sort=-%mem --no-headers | head -12"),
+        ("top_cpu",     "ps aux --sort=-%cpu --no-headers | head -8"),
+        ("load",        "uptime"),
+        ("swappiness",  "sysctl vm.swappiness"),
+        ("cpu_gov",     "cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c || echo 'no cpufreq'"),
+        ("on_ac",       "cat /sys/class/power_supply/AC/online 2>/dev/null || echo 'desktop'"),
+        ("boot_time",   "systemd-analyze 2>/dev/null | head -2"),
+        ("boot_blame",  "systemd-analyze blame 2>/dev/null | head -15"),
+        ("disk",        "df -h | grep -v 'tmpfs\\|udev\\|loop'"),
+        ("failed_svc",  "systemctl list-units --state=failed --no-pager 2>/dev/null | head -10"),
+        ("enabled_svc", "systemctl list-unit-files --state=enabled --no-pager 2>/dev/null | grep '\\.service' | grep -v '@'"),
+        ("snap",        "snap list 2>/dev/null"),
+        ("apt_cache",   "du -sh /var/cache/apt/archives/ 2>/dev/null"),
+        ("journal",     "journalctl --disk-usage 2>/dev/null"),
+        ("zram",        "swapon --show 2>/dev/null"),
+        ("iowait",      "vmstat 1 2 2>/dev/null | tail -1"),
+    ]
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(run_cmd_live, cmd, None, 8): key for key, cmd in _probes}
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                _, stdout, stderr = fut.result()
+                results[key] = (stdout.strip() or stderr.strip() or "(no output)")
+            except Exception:
+                results[key] = "(error)"
+
+    ok("System scan complete")
+
+    # ── Display quick baseline summary ────────────────────────────────────────
+    _mem_line = results.get("memory", "").splitlines()
+    _mem_row  = next((l for l in _mem_line if l.startswith("Mem:")), "")
+    _swap_row = next((l for l in _mem_line if l.startswith("Swap:")), "")
+    _load     = results.get("load", "").split("load average:")[-1].strip()
+    _swap_val = results.get("swappiness", "").split("=")[-1].strip()
+    _boot_line = next((l for l in results.get("boot_time","").splitlines() if "graphical" in l or "reached" in l), "")
+
+    print(f"\n  {BOLD}Baseline:{R}")
+    if _mem_row:  print(f"  {DIM}RAM  {R}  {_mem_row.split()[1:6]}")
+    if _swap_row: print(f"  {DIM}Swap {R}  {_swap_row.split()[1:5]}")
+    if _load:     print(f"  {DIM}Load {R}  {_load}")
+    if _swap_val: print(f"  {DIM}Swappiness {R}  {_swap_val}")
+    if _boot_line:print(f"  {DIM}Boot {R}  {_boot_line.strip()}")
+
+    # ── Phase 2: Feed everything to Claude ────────────────────────────────────
+    print(f"\n  {CYAN}{BOLD}Phase 2/3  AI analysing bottlenecks…{R}")
+    data_block = "\n\n".join(f"[{k}]\n{v}" for k, v in results.items())
+
+    perf_prompt = f"""Make my Linux system as fast as possible.
+
+Here is a COMPLETE live diagnostic scan collected right now:
+
+{data_block}
+
+Analyse every section above. Identify ALL bottlenecks. Apply every safe, reversible fix.
+
+FIXES TO APPLY (only those actually needed based on the data):
+- vm.swappiness → 10 if currently >20 AND swap is being used (persist via /etc/sysctl.d/)
+- Add zram compressed swap if: swap is heavily used AND no zram exists already (use zram-config or zramctl)
+- CPU governor → performance if currently powersave/ondemand AND on_ac=1 (desktop/plugged in)
+- Disable NetworkManager-wait-online.service if it's in boot blame taking >3s
+- Disable other slow boot services (only non-critical ones — NOT ssh, ufw, cron, NetworkManager itself)
+- apt autoremove + apt clean if apt_cache is large or orphaned packages exist
+- journalctl --vacuum-time=7d if journal size is >200MB
+- Drop page/dentry/inode caches if memory pressure is high: echo 3 > /proc/sys/vm/drop_caches
+
+DO NOT suggest: upgrading RAM, replacing apps, reinstalling the OS.
+Set needs_synthesis: true so a full before/after summary is generated."""
+
+    fix_engine(backend, BASE_SYS + _sys_ctx_block(bctx),
+               [{"role": "user", "content": perf_prompt}], slog)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 9 — MENU + MAIN REPL
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3434,6 +3563,7 @@ MENU_ITEMS = [
     ("26", "webcam",    "Webcam Fix",         "Camera not detected, black screen",       feat_webcam),
     ("27", "appswitch", "App Finder",         "Find Linux equivalents of Windows apps",  feat_appswitch),
     ("28", "battery",   "Battery & Power",    "Improve battery life, fix overheating",   feat_battery),
+    ("29", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes", feat_performance),
     ("s",  "settings",  "Settings",           "Configure API key and model",             feat_settings),
     ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                   feat_feedback),
 ]
@@ -3480,6 +3610,7 @@ def show_menu():
     _item("20", "Undo Changes",        "Oops? Roll back what TuxGenie did")
 
     _cat(BG_DARK, "⚡", "POWER TOOLS", "For when you're feeling adventurous")
+    _item("29", "Performance Boost",   "🚀 Full audit + apply ALL safe speed fixes")
     _item("6",  "Free Up Disk Space",  "Running out of storage?")
     _item("8",  "Manage Services",     "Speed up startup, fix service failures")
     _item("11", "Generate a Script",   '"Back up my files nightly" → bash script')
