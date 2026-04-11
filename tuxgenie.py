@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.32.0"
+__version__ = "5.33.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -373,8 +373,6 @@ class AnthropicBackend:
             self._set_key(key)
         chunks = []
         char_count = 0
-        sys.stdout.write('\n')   # anchor progress on a clean new line
-        sys.stdout.flush()
         with self.client.messages.stream(
             model=self.model, max_tokens=max_tokens,
             system=system, messages=messages
@@ -382,15 +380,13 @@ class AnthropicBackend:
             for text in stream.text_stream:
                 chunks.append(text)
                 char_count += len(text)
-                sys.stdout.write(f"\r  {CYAN}⚡ Receiving… {char_count} chars{R}   ")
-                sys.stdout.flush()
+                print(f"\r  {CYAN}⚡ Receiving… {char_count} chars{R}   ", end="", flush=True)
         # Track token usage from the stream's final message
         final = stream.get_final_message()
         if final and final.usage:
             self._session_input_tokens  += final.usage.input_tokens
             self._session_output_tokens += final.usage.output_tokens
-        sys.stdout.write(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}\n")
-        sys.stdout.flush()
+        print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
         return "".join(chunks)
 
     def session_cost_estimate(self) -> str:
@@ -1700,14 +1696,7 @@ def get_or_cache_sudo_password():
     raise KeyboardInterrupt
 
 def _restore_terminal():
-    """Reset terminal state after a subprocess may have corrupted it.
-    Exits alternate-screen mode and restores sane tty settings."""
-    try:
-        # Exit alternate screen if we're stuck in it (e.g. after apt/debconf)
-        sys.stdout.write('\033[?1049l')
-        sys.stdout.flush()
-    except Exception:
-        pass
+    """Restore sane tty settings after a subprocess may have altered them."""
     try:
         subprocess.run(['stty', 'sane'], capture_output=True)
     except Exception:
