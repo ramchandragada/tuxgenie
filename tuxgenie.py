@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.31.0"
+__version__ = "5.32.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1875,6 +1875,7 @@ def _synthesize_findings(backend, question: str, step_outputs: list):
             "→ Next steps:\n"
             "  • [2-3 concrete things the user should do now]\n\n"
             "Be specific — use real numbers from the outputs. No JSON. No markdown headers. "
+            "Use ONLY these bullet characters: • ✓ ⚡ → — never use ❯. "
             "Under 12 lines total."
         )
         synth_content = (
@@ -1889,7 +1890,7 @@ def _synthesize_findings(backend, question: str, step_outputs: list):
             "Give a direct, specific plain-English answer using ONLY the real data from the outputs. "
             "Be concrete — use the actual numbers and values. "
             "Do NOT say 'run these commands', 'look it up online', or give generic advice. "
-            "3-6 sentences. No JSON. No markdown."
+            "3-6 sentences. No JSON. No markdown. Never use the ❯ character."
         )
         synth_content = (
             f"User's question: {question}\n\n"
@@ -1901,7 +1902,9 @@ def _synthesize_findings(backend, question: str, step_outputs: list):
     try:
         answer = ask_ai(backend, synth_system,
                         [{"role": "user", "content": synth_content}], max_tokens=500)
-        answer = answer.strip()
+        # Sanitize AI output: replace ❯ (TuxGenie's own prompt char) with →
+        # so the model can't accidentally inject our input prompt into displayed text
+        answer = answer.strip().replace('❯', '→')
         if answer:
             print(header)
             for line in answer.splitlines():
