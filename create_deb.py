@@ -215,7 +215,7 @@ Section: utils
 Priority: optional
 Architecture: {ARCH}
 Installed-Size: {INSTALLED_KB}
-Depends: python3 (>= 3.8), python3-pip | python3-venv
+Depends: python3 (>= 3.8)
 Recommends: python3-pip
 Conflicts: ai-terminal, tuxgenie (<< {VERSION})
 Replaces: ai-terminal, tuxgenie (<< {VERSION})
