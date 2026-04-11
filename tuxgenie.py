@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.27.0"
+__version__ = "5.28.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1694,6 +1694,21 @@ def get_or_cache_sudo_password():
             return _SESSION_SUDO_PW
     raise KeyboardInterrupt
 
+def _restore_terminal():
+    """Reset terminal state after a subprocess may have corrupted it.
+    Exits alternate-screen mode and restores sane tty settings."""
+    try:
+        # Exit alternate screen if we're stuck in it (e.g. after apt/debconf)
+        sys.stdout.write('\033[?1049l')
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
+        subprocess.run(['stty', 'sane'], capture_output=True)
+    except Exception:
+        pass
+
+
 def run_cmd_live(cmd, sudo_password=None, timeout=120):
     """Run a command and stream its output line-by-line in real time.
     Returns (returncode, stdout_str, stderr_str)."""
@@ -1725,6 +1740,18 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
         "ERROR:base/",
     )
 
+    # Escape sequences that change terminal state — strip before printing
+    # (e.g. enter/exit alternate screen, show/hide cursor, set title)
+    _TERM_STATE_ESC = re.compile(
+        r'\x1b\[\?[0-9;]*[hl]'   # mode set/reset: ?1049h (alt screen), ?25l (cursor)
+        r'|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'  # OSC sequences (set title, etc.)
+        r'|\x1b[()][A-B0-2]'     # charset designations
+    )
+
+    def _safe_line(line):
+        """Strip terminal-state escape sequences from a line of command output."""
+        return _TERM_STATE_ESC.sub('', line)
+
     def _reader(stream, buf, color):
         try:
             for raw in stream:
@@ -1741,8 +1768,9 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
                 # Suppress known noise / internal app errors
                 if any(n in line for n in _NOISE):
                     continue
-                if line.strip():
-                    print(f"  {color}{line}{R}", flush=True)
+                safe = _safe_line(line)
+                if safe.strip():
+                    print(f"  {color}{safe}{R}", flush=True)
         except Exception:
             pass
         finally:
@@ -3809,6 +3837,7 @@ def first_run_check():
                         break
                 print(f"  {CYAN}▶ Running…{R}")
                 rc, _, _ = run_cmd_live(cmd, sudo_password=sudo_pw)
+                _restore_terminal()
                 if rc == 0:
                     ok(desc)
                 else:
@@ -3891,6 +3920,7 @@ def main():
         print(f"{_line}")
 
     while True:
+        _restore_terminal()   # ensure terminal is sane after any command ran
         try:
             _xm = f" {DIM}[expert]{R}" if backend.expert_mode else ""
             choice = input(f"\n  {BGREEN}{BOLD}❯{R}{_xm} ").strip()
