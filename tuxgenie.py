@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.28.0"
+__version__ = "5.29.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1803,9 +1803,22 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
+            proc.wait()
+        except KeyboardInterrupt:
+            # Ctrl+C — kill the child process but don't exit TuxGenie
+            proc.kill()
+            proc.wait()
+            t_out.join(2); t_err.join(2)
+            _restore_terminal()
+            print(f"\n  {YELLOW}Command cancelled.{R}")
+            return -1, '\n'.join(stdout_lines), 'Cancelled by user'
         t_out.join(5); t_err.join(5)
 
         return proc.returncode, '\n'.join(stdout_lines), '\n'.join(stderr_lines)
+    except KeyboardInterrupt:
+        _restore_terminal()
+        print(f"\n  {YELLOW}Cancelled.{R}")
+        return -1, '', 'Cancelled by user'
     except Exception as e:
         return -1, '', str(e)
 
@@ -3950,24 +3963,28 @@ def main():
         if choice.lower() in ("f", "feedback", "feature", "suggest"):
             feat_feedback(); continue
 
-        if choice in feature_map:
-            fn = feature_map[choice]
-            if fn is None:
-                continue
-            _active_feature = choice
-            fn(backend, bctx, session_log)
-            save_session(session_log)
-            _history_append(feature_name_map.get(choice, choice), feature_kw_map.get(choice, choice))
-            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
-        else:
-            # Natural language → try direct passthrough first, then AI
-            passed = try_passthrough(choice, session_log, backend, bctx)
-            if not passed:
-                sys_p = BASE_SYS + _sys_ctx_block(bctx)
-                fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
-            save_session(session_log)
-            _history_append(choice, "terminal" if passed else "fix")
-            print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
+        try:
+            if choice in feature_map:
+                fn = feature_map[choice]
+                if fn is None:
+                    continue
+                _active_feature = choice
+                fn(backend, bctx, session_log)
+                save_session(session_log)
+                _history_append(feature_name_map.get(choice, choice), feature_kw_map.get(choice, choice))
+            else:
+                # Natural language → try direct passthrough first, then AI
+                passed = try_passthrough(choice, session_log, backend, bctx)
+                if not passed:
+                    sys_p = BASE_SYS + _sys_ctx_block(bctx)
+                    fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
+                save_session(session_log)
+                _history_append(choice, "terminal" if passed else "fix")
+        except KeyboardInterrupt:
+            _restore_terminal()
+            print(f"\n  {YELLOW}Cancelled — back to menu.{R}")
+            continue
+        print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
 
     save_session(session_log)
 
