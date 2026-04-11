@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.23.0"
+__version__ = "5.24.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -462,6 +462,16 @@ def feat_set_api_key(backend):
     if not key:
         warn("No key entered. Nothing changed.")
         return
+    if not key.startswith("sk-ant-") or len(key) < 20:
+        warn("That doesn't look like a valid Anthropic API key.")
+        info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
+        try:
+            confirm = input("  Save it anyway? [y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            confirm = "n"
+        if confirm not in ("y", "yes"):
+            warn("Key not saved.")
+            return
     backend._set_key(key)
 
 def feat_settings(backend, bctx, slog):
@@ -489,6 +499,14 @@ def feat_settings(backend, bctx, slog):
         except (EOFError, KeyboardInterrupt):
             return
         if key:
+            if not key.startswith("sk-ant-") or len(key) < 20:
+                warn("That doesn't look like a valid Anthropic key (should start with sk-ant-…).")
+                try:
+                    confirm = input("  Save anyway? [y/n]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    confirm = "n"
+                if confirm not in ("y", "yes"):
+                    warn("Key not saved."); return
             backend._set_key(key)
             ok("API key updated — active now.")
     elif ch == "2":
@@ -3692,14 +3710,13 @@ def show_help():
       {BLUE}{BOLD}how much disk space do I have{R}
       {BLUE}{BOLD}update everything{R}
 
-  {GREEN}{BOLD}Or pick a number:{R}  Type a number from the menu (1-28)
+  {GREEN}{BOLD}Or pick a number:{R}  Type a number from the menu (1-29)
 
   {GREEN}{BOLD}Safety:{R}
-    Before running any command, TuxGenie will:
-    {GREEN}{BOLD}✓{R} Explain what it does in plain English
-    {GREEN}{BOLD}✓{R} Show if it's safe, careful, or risky
-    {GREEN}{BOLD}✓{R} Ask for your permission first
-    {GREEN}{BOLD}✓{R} You can always say {BOLD}s{R} to skip or {BOLD}q{R} to stop
+    {GREEN}{BOLD}✓{R} Every command is shown before it runs
+    {GREEN}{BOLD}✓{R} Each step shows its risk level (safe / working / risky)
+    {GREEN}{BOLD}✓{R} Dangerous commands are always blocked
+    {GREEN}{BOLD}✓{R} Press {BOLD}Ctrl-C{R} anytime to stop
 
   {GREEN}{BOLD}Commands:{R}
     {BLUE}{BOLD}help{R}     Show this help
@@ -3723,15 +3740,16 @@ def first_run_check():
 
   TuxGenie is like having a Linux expert sitting next to you.
   Tell it what you need in plain English — it figures out the
-  commands and runs them {BOLD}only after you say yes{R}.
+  commands, explains what each one does, and runs them for you.
 
   {CYAN}{BOLD}Quick example:{R}
     You type:  {CYAN}\"my wifi is not connecting\"{R}
     TuxGenie:  Finds the problem, explains it, and fixes it
 
   {YELLOW}{BOLD}🔑 You're always in control:{R}
-    Every command is shown to you first. You decide what runs.
-    If something looks wrong, just type {BOLD}s{R} to skip it.
+    Every command is shown before it runs.
+    Dangerous operations are always blocked.
+    Press {BOLD}Ctrl-C{R} anytime to stop.
 
   {DIM}Type {BOLD}help{R}{DIM} anytime to see tips.{R}
 """)
