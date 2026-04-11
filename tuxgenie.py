@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.29.0"
+__version__ = "5.30.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3933,7 +3933,6 @@ def main():
         print(f"{_line}")
 
     while True:
-        _restore_terminal()   # ensure terminal is sane after any command ran
         try:
             _xm = f" {DIM}[expert]{R}" if backend.expert_mode else ""
             choice = input(f"\n  {BGREEN}{BOLD}❯{R}{_xm} ").strip()
@@ -3980,6 +3979,7 @@ def main():
                     fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
                 save_session(session_log)
                 _history_append(choice, "terminal" if passed else "fix")
+            _restore_terminal()   # clean up terminal state after commands ran
         except KeyboardInterrupt:
             _restore_terminal()
             print(f"\n  {YELLOW}Cancelled — back to menu.{R}")
