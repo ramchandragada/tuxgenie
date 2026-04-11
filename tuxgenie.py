@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.26.0"
+__version__ = "5.27.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -184,10 +184,12 @@ _SONNET_MODEL = "claude-sonnet-4-6"
 
 def _try_pip_install():
     """Try to install the anthropic SDK using every known pip method.
-    Returns True on success."""
+    Returns True if pip exits 0 (package installed to disk)."""
     attempts = [
+        [sys.executable, "-m", "pip", "install", "anthropic", "--quiet", "--user"],
         [sys.executable, "-m", "pip", "install", "anthropic", "--quiet", "--upgrade"],
         [sys.executable, "-m", "pip", "install", "anthropic", "--quiet", "--upgrade", "--break-system-packages"],
+        ["pip3", "install", "anthropic", "--quiet", "--user"],
         ["pip3", "install", "anthropic", "--quiet", "--upgrade"],
         ["pip3", "install", "anthropic", "--quiet", "--upgrade", "--break-system-packages"],
     ]
@@ -199,30 +201,43 @@ def _try_pip_install():
             continue
     return False
 
-def _bootstrap_anthropic_sdk():
-    """Install the anthropic SDK using every strategy available.
-    Tries: existing pip → apt install pip → ensurepip → venv fallback.
-    Returns True if the SDK is importable afterward."""
+def _can_import_anthropic():
+    """Check if anthropic is importable, refreshing the import cache first."""
     import importlib
-
-    # Quick check: maybe it's already installed
+    importlib.invalidate_caches()
+    # Also ensure ~/.local/lib/.../site-packages is on sys.path (--user installs)
+    try:
+        import site
+        user_site = site.getusersitepackages()
+        if user_site not in sys.path:
+            sys.path.insert(0, user_site)
+    except Exception:
+        pass
     try:
         importlib.import_module("anthropic")
         return True
     except ImportError:
-        pass
+        return False
+
+def _bootstrap_anthropic_sdk():
+    """Install the anthropic SDK using every strategy available.
+    Tries: existing pip → --user install → apt install pip → ensurepip → venv fallback.
+    Returns True if the SDK is importable afterward."""
+    # Quick check: maybe it's already installed
+    if _can_import_anthropic():
+        return True
 
     print(f"  {CYAN}Installing anthropic SDK…{R}")
 
-    # Strategy 1: pip already available
-    if _try_pip_install():
+    # Strategy 1: pip already available (tries --user first, then system-wide)
+    if _try_pip_install() and _can_import_anthropic():
         return True
 
     # Strategy 2: install python3-pip via apt, then retry
     print(f"  {DIM}pip not found — installing python3-pip…{R}")
     subprocess.run(["sudo", "apt-get", "install", "-y", "python3-pip"],
                    capture_output=True)
-    if _try_pip_install():
+    if _try_pip_install() and _can_import_anthropic():
         return True
 
     # Strategy 3: ensurepip (Python's built-in pip bootstrapper, works offline)
@@ -230,7 +245,7 @@ def _bootstrap_anthropic_sdk():
     try:
         subprocess.run([sys.executable, "-m", "ensurepip", "--upgrade"],
                        capture_output=True, timeout=60)
-        if _try_pip_install():
+        if _try_pip_install() and _can_import_anthropic():
             return True
     except Exception:
         pass
@@ -238,6 +253,7 @@ def _bootstrap_anthropic_sdk():
     # Strategy 4: create a temporary venv (has its own pip), install there,
     # then add the venv's site-packages to sys.path so we can import
     print(f"  {DIM}Trying venv fallback…{R}")
+    import importlib
     venv_dir = os.path.join(os.path.expanduser("~"), ".local", "share",
                             "tuxgenie", ".bootstrap-venv")
     try:
@@ -262,6 +278,7 @@ def _bootstrap_anthropic_sdk():
             venv_site = result.stdout.strip()
             if venv_site and os.path.isdir(venv_site):
                 sys.path.insert(0, venv_site)
+                importlib.invalidate_caches()
                 try:
                     importlib.import_module("anthropic")
                     return True
