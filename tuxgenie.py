@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.30.0"
+__version__ = "5.31.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -373,6 +373,8 @@ class AnthropicBackend:
             self._set_key(key)
         chunks = []
         char_count = 0
+        sys.stdout.write('\n')   # anchor progress on a clean new line
+        sys.stdout.flush()
         with self.client.messages.stream(
             model=self.model, max_tokens=max_tokens,
             system=system, messages=messages
@@ -380,13 +382,15 @@ class AnthropicBackend:
             for text in stream.text_stream:
                 chunks.append(text)
                 char_count += len(text)
-                print(f"\r  {CYAN}⚡ Receiving… {char_count} chars{R}", end="", flush=True)
+                sys.stdout.write(f"\r  {CYAN}⚡ Receiving… {char_count} chars{R}   ")
+                sys.stdout.flush()
         # Track token usage from the stream's final message
         final = stream.get_final_message()
         if final and final.usage:
             self._session_input_tokens  += final.usage.input_tokens
             self._session_output_tokens += final.usage.output_tokens
-        print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
+        sys.stdout.write(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}\n")
+        sys.stdout.flush()
         return "".join(chunks)
 
     def session_cost_estimate(self) -> str:
@@ -578,7 +582,8 @@ class Spinner:
     def __exit__(self, *_):
         self._stop.set()
         self._t.join(timeout=3)   # never hang forever
-        print(f"\r  {' ' * (len(self._msg)+10)}\r", end="", flush=True)
+        sys.stdout.write(f'\r  {" " * (len(self._msg)+10)}\n')
+        sys.stdout.flush()
     def _spin(self):
         i = 0
         while not self._stop.wait(0.08):
