@@ -357,9 +357,10 @@ Name=TuxGenie
 GenericName=AI Linux Assistant
 Comment=AI-powered Linux assistant using Claude - fix any Linux problem in plain English
 Icon=tuxgenie
-Exec=bash -c "tuxgenie; read -p 'Press Enter to close...'"
+TryExec=tuxgenie
+Exec=tuxgenie
 Terminal=true
-Categories=System;TerminalEmulator;Utility;
+Categories=System;Administration;Utility;
 Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
 StartupNotify=false
 """
