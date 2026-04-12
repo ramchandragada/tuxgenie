@@ -31,7 +31,7 @@ if command -v dpkg &>/dev/null && [ -n "$DEB_URL" ]; then
     TMP=$(mktemp /tmp/tuxgenie_XXXXXX.deb)
     curl -fsSL "$DEB_URL" -o "$TMP"
     echo -e "${CYAN}→ Installing (needs sudo)...${R}"
-    sudo dpkg -i "$TMP"
+    sudo dpkg -i "$TMP" || { echo -e "${YELLOW}→ Fixing dependencies...${R}"; sudo apt-get install -f -y; }
     rm -f "$TMP"
     echo -e "\n${GREEN}${BOLD}✔ TuxGenie $VERSION installed!${R}"
     echo -e "\n  Run with: ${CYAN}${BOLD}tuxgenie${R}\n"

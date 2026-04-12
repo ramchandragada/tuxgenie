@@ -538,7 +538,7 @@ const distros=[
 ];
 
 const curlCmd='curl -fsSL https://tuxgenie.com/install.sh | bash';
-const debManual='wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\\n  | grep browser_download_url | cut -d\'"\' -f4)\nsudo dpkg -i tuxgenie_*.deb';
+const debManual='wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\\n  | grep "browser_download_url.*\\.deb" | cut -d\'"\' -f4)\nsudo dpkg -i tuxgenie_*.deb';
 const pipCmd='pip3 install tuxgenie';
 
 function installHtml(d){
@@ -565,7 +565,7 @@ function installHtml(d){
       <div class="ibox-scroll">
         <div class="mono" style="padding:16px 20px;text-align:left;font-size:13px;line-height:1.9;white-space:pre">
 <span style="color:#94a3b8">$</span> wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\
-    | grep browser_download_url | cut -d'"' -f4)
+    | grep "browser_download_url.*\.deb" | cut -d'"' -f4)
 <span style="color:#94a3b8">$</span> sudo dpkg -i tuxgenie_*.deb</div>
       </div>
     </div>`;

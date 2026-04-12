@@ -177,11 +177,21 @@ def _generate_tuxgenie_icon(size):
 
 # ── Package metadata ──────────────────────────────────────────────────────────
 PACKAGE = "tuxgenie"
-VERSION = os.environ.get("TUXGENIE_VERSION", "4.6.0")
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def _read_version_from_source():
+    """Read __version__ from tuxgenie.py so local builds stay in sync."""
+    import re
+    try:
+        with open(os.path.join(SCRIPT_DIR, "tuxgenie.py")) as f:
+            m = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', f.read())
+        return m.group(1) if m else "0.0.0"
+    except FileNotFoundError:
+        return "0.0.0"
+
+VERSION = os.environ.get("TUXGENIE_VERSION") or _read_version_from_source()
 ARCH    = "all"
 DEB_OUT = f"{PACKAGE}_{VERSION}_{ARCH}.deb"
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ── Read the main Python script ───────────────────────────────────────────────
 src = os.path.join(SCRIPT_DIR, "tuxgenie.py")
