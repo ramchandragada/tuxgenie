@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.34.0"
+__version__ = "5.35.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -180,6 +180,7 @@ _COMPLEX_KEYWORDS = [
 ]
 _HAIKU_MODEL  = "claude-haiku-4-5-20251001"
 _SONNET_MODEL = "claude-sonnet-4-6"
+_OPUS_MODEL   = "claude-opus-4-6"
 
 
 def _try_pip_install():
@@ -944,6 +945,219 @@ CRITICAL — Empty output awareness:
 
 - RETURN ONLY VALID JSON.
 """
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  AGENTIC ENGINE — True tool-use architecture (superior to Warp and all others)
+#  Claude calls run_command one step at a time, sees real results, and genuinely
+#  diagnoses instead of blindly generating a batch plan upfront.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+AGENTIC_TOOLS = [
+    {
+        "name": "run_command",
+        "description": "Run a shell command on the user's Linux system. Use this to diagnose and fix problems step by step. Each call should be purposeful — react to what you find.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Exact shell command to run"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Plain English explanation of what this command does and why — must be understandable by a complete beginner"
+                },
+                "risk": {
+                    "type": "string",
+                    "enum": ["safe", "moderate", "dangerous"],
+                    "description": "safe=read-only, moderate=changes config/state, dangerous=destructive/irreversible"
+                },
+                "requires_root": {
+                    "type": "boolean",
+                    "description": "True if this command needs sudo/root access"
+                }
+            },
+            "required": ["command", "description", "risk"]
+        }
+    },
+    {
+        "name": "read_file",
+        "description": "Read the contents of a file on the user's system (logs, config files, etc.)",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path or ~ path to the file"
+                }
+            },
+            "required": ["path"]
+        }
+    }
+]
+
+AGENTIC_SYS = """You are TuxGenie, an AI assistant that fixes Linux problems for complete beginners.
+
+You have two tools: run_command (run shell commands) and read_file (read files).
+
+HOW TO WORK:
+- Think step by step. DIAGNOSE before you FIX.
+- Start with safe, read-only commands to understand the problem.
+- Each command informs the next — react to what you find, don't plan all steps upfront.
+- After fixing, run a command that PROVES the fix worked.
+- Be honest if you cannot fix something.
+
+COMMUNICATION:
+- Explain everything in plain English. No jargon without explanation.
+- The description field of every tool call must be beginner-readable:
+  BAD:  "Flush the DNS resolver cache"
+  GOOD: "Clear your computer's memory of website addresses so it looks them up fresh"
+- After finishing, give a short plain-English summary of what happened and what was fixed.
+
+SAFETY:
+- Never run destructive commands (rm -rf /, dd if=, mkfs, fdisk, wipefs, shred, chmod 777 /)
+- Mark anything that changes system state as moderate or dangerous risk
+- Set requires_root: true for anything needing sudo
+
+The user is likely a complete Linux beginner. Treat every explanation like you're
+helping a friend who has never opened a terminal before.
+"""
+
+
+def _display_tool_call(cmd, description, risk, requires_root, step_num):
+    """Show the user what Claude wants to do before running it."""
+    risk_colour = {"safe": GREEN, "moderate": YELLOW, "dangerous": RED}.get(risk, CYAN)
+    sudo_badge  = f"  {RED}{BOLD}[SUDO NEEDED]{R}" if requires_root else ""
+    print(f"\n  {'─'*60}")
+    print(f"  {CYAN}{BOLD}Step {step_num}{R}  {risk_colour}{BOLD}{risk.upper()}{R}{sudo_badge}")
+    print(f"  {description}")
+    print(f"  {DIM}$ {cmd}{R}")
+    if risk == "dangerous":
+        print(f"\n  {BG_RED}{BOLD}  ⚠  DESTRUCTIVE — review carefully  {R}")
+
+
+def _handle_tool_call(block, sudo_pw, step_counter):
+    """Execute a single tool call from the agentic engine."""
+    name = block.name
+    inp  = block.input
+
+    if name == "run_command":
+        cmd           = inp["command"]
+        description   = inp.get("description", "")
+        risk          = inp.get("risk", "safe")
+        requires_root = inp.get("requires_root", False)
+
+        _display_tool_call(cmd, description, risk, requires_root, step_counter[0])
+        step_counter[0] += 1
+
+        if is_dangerous(cmd):
+            print(f"  {RED}✗  Blocked by TuxGenie safety filter.{R}")
+            return "BLOCKED by TuxGenie safety filter — command matches a dangerous pattern."
+
+        run_cmd_str = cmd
+        if requires_root and sudo_pw:
+            run_cmd_str = f"echo {shlex.quote(sudo_pw)} | sudo -S sh -c {shlex.quote(cmd)}"
+        elif requires_root:
+            run_cmd_str = f"sudo {cmd}"
+
+        print(f"  {DIM}▶ Running…{R}")
+        rc, stdout, stderr = run_cmd(run_cmd_str, timeout=60)
+        output = (stdout or "") + (stderr or "")
+        output = output.strip() or "(no output)"
+
+        # Show result (capped for display)
+        for line in output[:800].splitlines():
+            print(f"  {DIM}{line}{R}")
+        if rc == 0:
+            print(f"  {GREEN}✔  Done{R}")
+        else:
+            print(f"  {YELLOW}⚠  Exit code {rc}{R}")
+
+        return output[:3000]   # cap what goes back to Claude
+
+    elif name == "read_file":
+        path = os.path.expanduser(inp["path"])
+        try:
+            with open(path) as f:
+                content = f.read(8000)
+            print(f"  {DIM}📄 Read {path}{R}")
+            return content
+        except Exception as e:
+            return f"Could not read file: {e}"
+
+    return f"Unknown tool: {name}"
+
+
+def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: int = 20):
+    """
+    True agentic fix engine using Claude's native tool_use API.
+    Claude calls run_command one step at a time, sees real output, and
+    diagnoses/fixes based on actual results — no upfront batch planning.
+    Powered by Opus for maximum reasoning quality.
+    """
+    system   = AGENTIC_SYS + _sys_ctx_block(ctx)
+    messages = [{"role": "user", "content": task}]
+    sudo_pw  = None
+    step_counter = [1]
+
+    print(f"\n  {CYAN}{BOLD}⚡ AI: Anthropic · {_OPUS_MODEL}{R}")
+
+    for turn in range(max_turns):
+        print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
+        try:
+            response = backend.client.messages.create(
+                model      = _OPUS_MODEL,
+                max_tokens = 4096,
+                system     = system,
+                tools      = AGENTIC_TOOLS,
+                messages   = messages
+            )
+        except Exception as e:
+            print(" " * 40, end="\r")
+            print(f"  {RED}API error: {e}{R}")
+            return
+
+        print(" " * 40, end="\r", flush=True)
+
+        # Claude finished — show its final message
+        if response.stop_reason == "end_turn":
+            for block in response.content:
+                if hasattr(block, "text") and block.text.strip():
+                    print(f"\n  {GREEN}{BOLD}✓  Done{R}")
+                    print()
+                    for line in block.text.strip().splitlines():
+                        print(f"  {line}")
+            return
+
+        # Claude wants to use tools
+        if response.stop_reason == "tool_use":
+            messages.append({"role": "assistant", "content": response.content})
+
+            # Fetch sudo once if any tool call needs root
+            if sudo_pw is None:
+                for block in response.content:
+                    if getattr(block, "type", None) == "tool_use":
+                        if block.input.get("requires_root"):
+                            sudo_pw = get_or_cache_sudo_password()
+                            break
+
+            tool_results = []
+            for block in response.content:
+                if getattr(block, "type", None) == "tool_use":
+                    result = _handle_tool_call(block, sudo_pw, step_counter)
+                    session_log.append({"command": block.input.get("command", ""), "source": "agentic"})
+                    tool_results.append({
+                        "type":        "tool_result",
+                        "tool_use_id": block.id,
+                        "content":     result
+                    })
+
+            messages.append({"role": "user", "content": tool_results})
+            continue
+
+    print(f"\n  {YELLOW}Reached {max_turns} steps without completing. "
+          f"The problem may need manual investigation.{R}")
+
 
 DANGER_RE = [
     r"rm\s+-[rf]{1,2}\s+/\s*$",    # rm -rf / (root only)
@@ -2347,8 +2561,7 @@ def feat_fix(backend, bctx, slog):
     except (EOFError, KeyboardInterrupt):
         return
     if not issue: return
-    sys_p = BASE_SYS + _sys_ctx_block(bctx)
-    fix_engine(backend, sys_p, [{"role":"user","content":issue}], slog)
+    agentic_engine(backend, issue, bctx, slog)
 
 # ── FEATURE 2: Health Dashboard ───────────────────────────────────────────────
 def feat_health(backend, bctx, slog):
@@ -3919,8 +4132,7 @@ def main():
     # ── One-shot mode: tuxgenie "describe problem" ────────────────────────────
     if args.issue:
         if not try_passthrough(args.issue, session_log, backend, bctx):
-            sys_p = BASE_SYS + _sys_ctx_block(bctx)
-            fix_engine(backend, sys_p, [{"role": "user", "content": args.issue}], session_log)
+            agentic_engine(backend, args.issue, bctx, session_log)
         save_session(session_log)
         return
 
@@ -3988,11 +4200,10 @@ def main():
                 save_session(session_log)
                 _history_append(feature_name_map.get(choice, choice), feature_kw_map.get(choice, choice))
             else:
-                # Natural language → try direct passthrough first, then AI
+                # Natural language → try direct passthrough first, then agentic AI
                 passed = try_passthrough(choice, session_log, backend, bctx)
                 if not passed:
-                    sys_p = BASE_SYS + _sys_ctx_block(bctx)
-                    fix_engine(backend, sys_p, [{"role": "user", "content": choice}], session_log)
+                    agentic_engine(backend, choice, bctx, session_log)
                 save_session(session_log)
                 _history_append(choice, "terminal" if passed else "fix")
             _restore_terminal()   # clean up terminal state after commands ran
