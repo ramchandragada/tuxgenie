@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.33.0"
+__version__ = "5.34.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -915,6 +915,25 @@ CRITICAL — Knowing when to stop:
   attempts = the app likely has no Linux version. Stop and tell the user.
 - Set resolved:true when you've given the user an honest, final answer —
   even if that answer is "not available for Linux."
+
+CRITICAL — Removing / uninstalling apps:
+- For ANY remove/uninstall request, your FIRST and ONLY step in round 1 must
+  be a single broad search that finds HOW the app is installed:
+    find ~ /opt /usr/local /usr/bin -iname '*<appname>*' 2>/dev/null; \
+    dpkg -l 2>/dev/null | grep -i <appname>; \
+    snap list 2>/dev/null | grep -i <appname>; \
+    flatpak list 2>/dev/null | grep -i <appname>; \
+    which <appname> 2>/dev/null
+- Read the output of that search and ONLY use the removal method that matches
+  what was actually found:
+    • Found an AppImage in ~/Downloads or ~/.local/bin → delete the file +
+      its .desktop shortcut
+    • Found in dpkg output → apt purge
+    • Found in snap list → snap remove
+    • Found in flatpak list → flatpak uninstall
+    • Found in /opt or ~/.local → rm the directory + .desktop shortcut
+- Do NOT blindly try apt, then snap, then flatpak one-by-one when the first
+  broad search already tells you exactly how it was installed.
 
 CRITICAL — Empty output awareness:
 - If a command returns exit code 0 but EMPTY output when output was expected
