@@ -1002,13 +1002,16 @@ You have two tools: run_command (run shell commands) and read_file (read files).
 
 HOW TO WORK:
 - Think step by step. DIAGNOSE before you FIX.
-- Start with safe, read-only commands to understand the problem.
-- Each command informs the next — react to what you find, don't plan all steps upfront.
-- After fixing, run a command that PROVES the fix worked.
+- Start with safe, read-only commands to understand the actual state of the system.
+- Each command result informs what you do next — react to what you find, never plan
+  all steps upfront.
+- After fixing, run a command that PROVES the fix worked (e.g. ping for network,
+  dpkg -s for install, systemctl is-active for services).
 - Be honest if you cannot fix something.
 
 COMMUNICATION:
-- Explain everything in plain English. No jargon without explanation.
+- The user is a complete Linux beginner — they may not know what sudo, apt, systemctl,
+  or any command means. Explain like you're helping a friend who has never opened a terminal.
 - The description field of every tool call must be beginner-readable:
   BAD:  "Flush the DNS resolver cache"
   GOOD: "Clear your computer's memory of website addresses so it looks them up fresh"
@@ -1016,11 +1019,35 @@ COMMUNICATION:
 
 SAFETY:
 - Never run destructive commands (rm -rf /, dd if=, mkfs, fdisk, wipefs, shred, chmod 777 /)
-- Mark anything that changes system state as moderate or dangerous risk
-- Set requires_root: true for anything needing sudo
+- Mark anything that changes system state as moderate or dangerous risk.
+- Set requires_root: true for anything needing sudo.
+- One action per tool call — small, understandable chunks.
 
-The user is likely a complete Linux beginner. Treat every explanation like you're
-helping a friend who has never opened a terminal before.
+REMOVING / UNINSTALLING APPS:
+- FIRST step: run a single broad search to find HOW the app is installed:
+    find ~ /opt /usr/local /usr/bin -iname '*<appname>*' 2>/dev/null; \\
+    dpkg -l 2>/dev/null | grep -i <appname>; \\
+    snap list 2>/dev/null | grep -i <appname>; \\
+    flatpak list 2>/dev/null | grep -i <appname>; \\
+    which <appname> 2>/dev/null
+- Then ONLY use the removal method that matches what was found.
+- Do NOT blindly try apt, then snap, then flatpak one-by-one.
+
+INSTALLING APPS:
+- ALWAYS verify a package name exists before trying to install it (apt-cache show,
+  snap info, flatpak search).
+- NEVER fabricate or guess download URLs. If you can't find the exact URL, say so.
+- After downloading a file, verify its type with 'file <downloaded_file>'.
+- If after checking apt, snap, flatpak, and the official website there is NO Linux
+  package, say so honestly. Suggest alternatives (web app, Wine, similar Linux apps).
+
+EMPTY OUTPUT:
+- If a command returns exit code 0 but empty output when output was expected
+  (grep found nothing, curl returned nothing), treat that as "not found", not success.
+
+KNOWING WHEN TO STOP:
+- If 2 different approaches failed for the same goal, stop and tell the user honestly
+  what happened and what their options are. Do NOT endlessly retry.
 """
 
 
@@ -1037,7 +1064,8 @@ def _display_tool_call(cmd, description, risk, requires_root, step_num):
 
 
 def _handle_tool_call(block, sudo_pw, step_counter):
-    """Execute a single tool call from the agentic engine."""
+    """Execute a single tool call from the agentic engine.
+    Uses run_cmd_live for real-time streaming output and proper sudo handling."""
     name = block.name
     inp  = block.input
 
@@ -1054,41 +1082,46 @@ def _handle_tool_call(block, sudo_pw, step_counter):
             print(f"  {RED}✗  Blocked by TuxGenie safety filter.{R}")
             return "BLOCKED by TuxGenie safety filter — command matches a dangerous pattern."
 
-        run_cmd_str = cmd
-        if requires_root and sudo_pw:
-            run_cmd_str = f"echo {shlex.quote(sudo_pw)} | sudo -S sh -c {shlex.quote(cmd)}"
-        elif requires_root:
-            run_cmd_str = f"sudo {cmd}"
+        # Use run_cmd_live for real-time output streaming + proper sudo handling
+        actual_cmd = cmd
+        if requires_root and not cmd.strip().startswith("sudo"):
+            actual_cmd = f"sudo {cmd}"
 
         print(f"  {DIM}▶ Running…{R}")
-        rc, stdout, stderr = run_cmd(run_cmd_str, timeout=60)
+        rc, stdout, stderr = run_cmd_live(
+            actual_cmd,
+            sudo_password=sudo_pw if requires_root else None,
+            timeout=120
+        )
         output = (stdout or "") + (stderr or "")
         output = output.strip() or "(no output)"
 
-        # Show result (capped for display)
-        for line in output[:800].splitlines():
-            print(f"  {DIM}{line}{R}")
         if rc == 0:
             print(f"  {GREEN}✔  Done{R}")
+        elif rc == -1 and "Cancelled" in (stderr or ""):
+            print(f"  {YELLOW}⚠  Cancelled by user{R}")
         else:
             print(f"  {YELLOW}⚠  Exit code {rc}{R}")
 
-        return output[:3000]   # cap what goes back to Claude
+        return output[:4000]   # cap what goes back to Claude
 
     elif name == "read_file":
         path = os.path.expanduser(inp["path"])
         try:
             with open(path) as f:
                 content = f.read(8000)
-            print(f"  {DIM}📄 Read {path}{R}")
+            print(f"\n  {'─'*60}")
+            print(f"  {CYAN}{BOLD}Read file{R}  {DIM}{path}{R}")
             return content
         except Exception as e:
+            print(f"\n  {'─'*60}")
+            print(f"  {YELLOW}Could not read {path}: {e}{R}")
             return f"Could not read file: {e}"
 
     return f"Unknown tool: {name}"
 
 
-def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: int = 20):
+def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: int = 25):
     """
     True agentic fix engine using Claude's native tool_use API.
     Claude calls run_command one step at a time, sees real output, and
@@ -1102,61 +1135,77 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
 
     print(f"\n  {CYAN}{BOLD}⚡ AI: Anthropic · {_OPUS_MODEL}{R}")
 
-    for turn in range(max_turns):
-        print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
-        try:
-            response = backend.client.messages.create(
-                model      = _OPUS_MODEL,
-                max_tokens = 4096,
-                system     = system,
-                tools      = AGENTIC_TOOLS,
-                messages   = messages
-            )
-        except Exception as e:
-            print(" " * 40, end="\r")
-            print(f"  {RED}API error: {e}{R}")
-            return
+    try:
+        for turn in range(max_turns):
+            print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
+            try:
+                response = backend.client.messages.create(
+                    model      = _OPUS_MODEL,
+                    max_tokens = 4096,
+                    system     = system,
+                    tools      = AGENTIC_TOOLS,
+                    messages   = messages
+                )
+            except KeyboardInterrupt:
+                print(f"\n  {YELLOW}Cancelled.{R}")
+                return
+            except Exception as e:
+                print(" " * 40, end="\r")
+                print(f"  {RED}API error: {e}{R}")
+                return
 
-        print(" " * 40, end="\r", flush=True)
+            print(" " * 40, end="\r", flush=True)
 
-        # Claude finished — show its final message
-        if response.stop_reason == "end_turn":
+            # Show any text Claude produced (explanations between tool calls)
             for block in response.content:
                 if hasattr(block, "text") and block.text.strip():
-                    print(f"\n  {GREEN}{BOLD}✓  Done{R}")
                     print()
                     for line in block.text.strip().splitlines():
                         print(f"  {line}")
-            return
 
-        # Claude wants to use tools
-        if response.stop_reason == "tool_use":
-            messages.append({"role": "assistant", "content": response.content})
+            # Claude finished — no more tool calls
+            if response.stop_reason == "end_turn":
+                print(f"\n  {GREEN}{BOLD}✓  Done{R}")
+                _ask_rating()
+                return
 
-            # Fetch sudo once if any tool call needs root
-            if sudo_pw is None:
+            # Claude wants to use tools
+            if response.stop_reason == "tool_use":
+                messages.append({"role": "assistant", "content": response.content})
+
+                # Fetch sudo once if any tool call in this turn needs root
+                if sudo_pw is None:
+                    for block in response.content:
+                        if getattr(block, "type", None) == "tool_use":
+                            if block.input.get("requires_root"):
+                                try:
+                                    sudo_pw = get_or_cache_sudo_password()
+                                except KeyboardInterrupt:
+                                    print(f"\n  {YELLOW}Cancelled.{R}")
+                                    return
+                                break
+
+                tool_results = []
                 for block in response.content:
                     if getattr(block, "type", None) == "tool_use":
-                        if block.input.get("requires_root"):
-                            sudo_pw = get_or_cache_sudo_password()
-                            break
+                        result = _handle_tool_call(block, sudo_pw, step_counter)
+                        session_log.append({"command": block.input.get("command", ""), "source": "agentic"})
+                        tool_results.append({
+                            "type":        "tool_result",
+                            "tool_use_id": block.id,
+                            "content":     result
+                        })
 
-            tool_results = []
-            for block in response.content:
-                if getattr(block, "type", None) == "tool_use":
-                    result = _handle_tool_call(block, sudo_pw, step_counter)
-                    session_log.append({"command": block.input.get("command", ""), "source": "agentic"})
-                    tool_results.append({
-                        "type":        "tool_result",
-                        "tool_use_id": block.id,
-                        "content":     result
-                    })
+                messages.append({"role": "user", "content": tool_results})
+                continue
 
-            messages.append({"role": "user", "content": tool_results})
-            continue
+        print(f"\n  {YELLOW}Reached {max_turns} steps without completing. "
+              f"The problem may need manual investigation.{R}")
 
-    print(f"\n  {YELLOW}Reached {max_turns} steps without completing. "
-          f"The problem may need manual investigation.{R}")
+    except KeyboardInterrupt:
+        print(f"\n  {YELLOW}Cancelled by user.{R}")
+    finally:
+        _restore_terminal()
 
 
 DANGER_RE = [
