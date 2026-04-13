@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.36.0"
+__version__ = "5.35.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -291,7 +291,7 @@ def _bootstrap_anthropic_sdk():
     return False
 
 class AnthropicBackend:
-    def __init__(self, api_key, model="claude-opus-4-6"):
+    def __init__(self, api_key, model="claude-haiku-4-5-20251001"):
         self._no_key    = (api_key == _NO_KEY)
         self.api_key    = "" if self._no_key else api_key
         self.model      = model
@@ -344,8 +344,19 @@ class AnthropicBackend:
         return f"Anthropic · {self.model}"
 
     def select_model_for_task(self, user_text: str, round_num: int = 1):
-        """Always use Opus — the most capable model."""
-        self.model = _OPUS_MODEL
+        """Auto-select the cheapest model that can handle the task.
+        Round 1 simple tasks → Haiku. Retries or complex → Sonnet."""
+        if not self.auto_model:
+            return  # user manually picked a model, respect it
+        if round_num > 1:
+            # If first attempt failed, escalate to Sonnet
+            if self.model != _SONNET_MODEL and self.base_model != "claude-opus-4-6":
+                self.model = _SONNET_MODEL
+            return
+        if self.base_model != "claude-opus-4-6":
+            self.model = _HAIKU_MODEL
+        else:
+            self.model = self.base_model
 
     def ask(self, system, messages, max_tokens=4096):
         """Streaming call — prints a live progress counter while receiving."""
@@ -438,7 +449,7 @@ def load_backend():
     """Load config and return a single AnthropicBackend."""
     cfg = load_cfg()
     key = _load_api_key(cfg)
-    model = cfg.get("model", "claude-opus-4-6")
+    model = cfg.get("model", "claude-haiku-4-5-20251001")
     if key != _NO_KEY:
         save_cfg({"api_key": key})   # only persist real keys
     b = AnthropicBackend(api_key=key, model=model)
