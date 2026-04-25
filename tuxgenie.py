@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.38.0"
+__version__ = "5.39.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -141,7 +141,9 @@ def print_output(rc, stdout, stderr):
 # ═══════════════════════════════════════════════════════════════════════════════
 CFG_DIR      = os.path.expanduser("~/.config/tuxgenie")
 CFG_FILE     = os.path.join(CFG_DIR, "config.json")
-HISTORY_FILE = os.path.join(CFG_DIR, "history.json")
+HISTORY_FILE = os.path.join(CFG_DIR, "history.json")  # user prompts
+ACTIONS_FILE = os.path.join(CFG_DIR, "actions.json")  # commands run by AI
+FINGERPRINT_FILE = os.path.join(CFG_DIR, "fingerprint.json")  # cached system info
 DATA_DIR     = os.path.expanduser("~/.local/share/tuxgenie")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 BACKUPS_DIR  = os.path.join(DATA_DIR, "backups")
@@ -541,14 +543,20 @@ def feat_settings(backend, bctx, slog):
     info(f"Backend: {backend.label()}")
     auto_tag    = C(" ON", GREEN)  if backend.auto_model  else C(" OFF", YELLOW)
     expert_tag  = C(" ON", GREEN)  if backend.expert_mode else C(" OFF", DIM)
+    cfg         = load_cfg()
+    history_on  = not cfg.get("disable_history", False)
+    history_tag = C(" ON", GREEN) if history_on else C(" OFF", YELLOW)
     print(f"  {DIM}Smart model routing:{R}{auto_tag}")
     print(f"  {DIM}Expert mode (compact output):{R}{expert_tag}")
+    print(f"  {DIM}Cross-session memory:{R}{history_tag}")
     if backend._session_input_tokens > 0:
         print(f"  {DIM}{backend.session_cost_estimate()}{R}")
     print(f"\n  {C('[1]',CYAN)} Change API key")
     print(f"  {C('[2]',CYAN)} Change model")
     print(f"  {C('[3]',CYAN)} Toggle smart model routing (auto Haiku/Sonnet)")
     print(f"  {C('[4]',CYAN)} Toggle expert mode  {DIM}(compact output — skip beginner explanations){R}")
+    print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
+    print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -604,6 +612,31 @@ def feat_settings(backend, bctx, slog):
             ok("Expert mode ON — compact output, no beginner explanations.")
         else:
             ok("Expert mode OFF — full output with friendly explanations.")
+    elif ch == "5":
+        new_state = not load_cfg().get("disable_history", False)
+        save_cfg({"disable_history": new_state})
+        if new_state:
+            ok("Cross-session memory OFF — no commands or system info will be saved.")
+            info("Already-stored data is kept until you wipe it (option 6).")
+        else:
+            ok("Cross-session memory ON — TuxGenie will remember past commands and system info.")
+    elif ch == "6":
+        try:
+            confirm = input(f"\n  {YELLOW}Wipe stored action log and system fingerprint? [y/n]:{R} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if confirm in ("y", "yes"):
+            _action_log_clear()
+            try:
+                if os.path.exists(FINGERPRINT_FILE):
+                    os.remove(FINGERPRINT_FILE)
+                if os.path.exists(HISTORY_FILE):
+                    os.remove(HISTORY_FILE)
+            except Exception:
+                pass
+            ok("Stored memory wiped.")
+        else:
+            info("Cancelled — nothing was wiped.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 3 — SYSTEM CONTEXT COLLECTORS
@@ -648,6 +681,62 @@ def _parallel_ctx(cmds_dict: dict, timeout=6) -> dict:
         for f in as_completed(futures):
             result[futures[f]] = f.result()
     return result
+
+def _load_fingerprint() -> dict:
+    """Return the cached system fingerprint (or empty dict if none / disabled)."""
+    if load_cfg().get("disable_history"):
+        return {}
+    try:
+        return json.loads(open(FINGERPRINT_FILE).read())
+    except Exception:
+        return {}
+
+
+def _save_fingerprint(fp: dict):
+    if load_cfg().get("disable_history"):
+        return
+    try:
+        with open(FINGERPRINT_FILE, "w") as f:
+            json.dump(fp, f, indent=2)
+        os.chmod(FINGERPRINT_FILE, stat.S_IRUSR | stat.S_IWUSR)
+    except Exception:
+        pass
+
+
+def collect_fingerprint(force: bool = False) -> dict:
+    """Collect a deeper picture of the system: hardware, GPU, audio, network,
+    and the apps the user has installed. Cached for 24h to avoid running
+    the probes every launch — refresh by deleting FINGERPRINT_FILE or
+    passing force=True. All probes are read-only and timeout-bounded."""
+    if not force:
+        existing = _load_fingerprint()
+        if existing:
+            ts = existing.get("_collected_at", 0)
+            if time.time() - ts < 86400:  # 24h
+                return existing
+    cmds = {
+        "ram":          "free -h | awk 'NR==2{print $2 \" total / \" $3 \" used\"}'",
+        "swap":         "free -h | awk 'NR==3{print $2 \" total / \" $3 \" used\"}'",
+        "cpu":          "lscpu 2>/dev/null | grep -E 'Model name|^CPU\\(s\\)' | head -2 | tr '\\n' ' | '",
+        "disk":         "df -h / 2>/dev/null | awk 'NR==2{print $2 \" total / \" $3 \" used (\" $5 \" full)\"}'",
+        "gpu":          "lspci 2>/dev/null | grep -iE 'vga|3d|display' | head -3",
+        "audio":        "lspci 2>/dev/null | grep -i audio | head -2",
+        "network":      "ip -brief addr show 2>/dev/null | grep -v ' lo ' | head -5",
+        "default_route":"ip route 2>/dev/null | awk '/default/{print $3, \"via\", $5; exit}'",
+        # Top installed apps — keep it small so the system prompt doesn't bloat
+        "apt_apps":     "dpkg-query -W -f='${Package}\\n' 2>/dev/null | head -30 | tr '\\n' ' '",
+        "snap_apps":    "snap list 2>/dev/null | awk 'NR>1{print $1}' | head -20 | tr '\\n' ' '",
+        "flatpak_apps": "flatpak list --app --columns=application 2>/dev/null | head -20 | tr '\\n' ' '",
+        "kernel":       "uname -r",
+        "boot_time":    "uptime -s 2>/dev/null",
+        "session_type": "echo $XDG_SESSION_TYPE",
+    }
+    fp = _parallel_ctx(cmds)
+    fp = {k: v for k, v in fp.items() if v and v.strip()}
+    fp["_collected_at"] = int(time.time())
+    _save_fingerprint(fp)
+    return fp
+
 
 def base_ctx() -> dict:
     pretty = ""
@@ -1145,6 +1234,9 @@ def _handle_tool_call(block, sudo_pw, step_counter):
             print(f"  {YELLOW}⚠  Cancelled by user{R}")
         else:
             print(f"  {YELLOW}⚠  Exit code {rc}{R}")
+
+        # Persist for cross-session memory (no output, no secrets — just cmd + rc)
+        _action_log_append(cmd, rc, "agentic")
 
         return output[:4000]   # cap what goes back to Claude
 
@@ -2683,6 +2775,14 @@ def _sys_ctx_block(extra: dict) -> str:
     pm = extra.get("pkg_mgr", "")
     if pm and pm != "apt":
         ctx += f"\n\nDISTRO NOTE: This system uses '{pm}' as the package manager. Use '{pm}' commands (NOT apt) for all package operations.\n"
+    # Cross-session memory: what the user has done before, and what's installed.
+    # These blocks live INSIDE the cached system prompt, so they cost nothing
+    # on cache hits but give the model real continuity across tasks/sessions.
+    fp = _load_fingerprint()
+    if fp:
+        ctx += "\n\nINSTALLED ENVIRONMENT (collected once per session):\n" + json.dumps(fp, indent=2)
+    ctx += _recent_tasks_block()
+    ctx += _recent_actions_block()
     return ctx
 
 # ── FEATURE 1: Fix Issue (general) ───────────────────────────────────────────
@@ -3885,6 +3985,8 @@ def save_session(slog: list):
 
 def _history_append(task: str, feature: str):
     """Append one interaction to the persistent history log (capped at 50)."""
+    if load_cfg().get("disable_history"):
+        return
     try:
         try:
             entries = json.loads(open(HISTORY_FILE).read())
@@ -3900,6 +4002,83 @@ def _history_append(task: str, feature: str):
             json.dump(entries, f)
     except Exception:
         pass
+
+
+def _action_log_append(command: str, exit_code: int, source: str = "agentic"):
+    """Append a single command execution to the persistent action log.
+    Logs ONLY: timestamp, command (truncated), exit code, source.
+    Never logs command output or file contents — privacy first.
+    Capped at 200 entries; honours the disable_history config flag."""
+    if load_cfg().get("disable_history"):
+        return
+    if not command or not command.strip():
+        return
+    try:
+        try:
+            entries = json.loads(open(ACTIONS_FILE).read())
+        except Exception:
+            entries = []
+        entries.append({
+            "ts":   datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "cmd":  command.strip()[:200],
+            "rc":   int(exit_code) if exit_code is not None else None,
+            "src":  source,
+        })
+        entries = entries[-200:]
+        with open(ACTIONS_FILE, "w") as f:
+            json.dump(entries, f)
+        os.chmod(ACTIONS_FILE, stat.S_IRUSR | stat.S_IWUSR)
+    except Exception:
+        pass
+
+
+def _action_log_recent(n: int = 15):
+    """Return up to n most-recent action entries (newest last)."""
+    try:
+        entries = json.loads(open(ACTIONS_FILE).read())
+        return entries[-n:]
+    except Exception:
+        return []
+
+
+def _action_log_clear():
+    """Wipe the persistent action log."""
+    try:
+        if os.path.exists(ACTIONS_FILE):
+            os.remove(ACTIONS_FILE)
+    except Exception:
+        pass
+
+
+def _recent_actions_block(n: int = 15) -> str:
+    """Render the last n actions as a system-prompt block.
+    Returns empty string if nothing to show — caller can append blindly."""
+    actions = _action_log_recent(n)
+    if not actions:
+        return ""
+    lines = []
+    for a in actions:
+        ts  = a.get("ts", "")
+        cmd = a.get("cmd", "")
+        rc  = a.get("rc", "?")
+        marker = "✓" if rc == 0 else ("✗" if rc not in (0, None) else "•")
+        lines.append(f"  {ts}  {marker} {cmd}")
+    return ("\n\nRECENT ACTIONS (commands previously run on this system, "
+            "newest last — use to avoid repeating work or to remember "
+            "state from earlier sessions):\n" + "\n".join(lines))
+
+
+def _recent_tasks_block(n: int = 8) -> str:
+    """Render the last n user-prompt tasks as a system-prompt block."""
+    try:
+        entries = json.loads(open(HISTORY_FILE).read())[-n:]
+    except Exception:
+        return ""
+    if not entries:
+        return ""
+    lines = [f"  {e.get('ts','')}  {e.get('task','')}" for e in entries]
+    return ("\n\nRECENT TASKS (what the user has previously asked TuxGenie "
+            "to do — use this for continuity):\n" + "\n".join(lines))
 
 def show_history():
     """Display the last 10 interactions."""
@@ -4252,6 +4431,13 @@ def main():
 
     with Spinner("Collecting system info…"):
         bctx = base_ctx()
+        # Refresh the deeper fingerprint (installed apps, GPU, etc.) in the
+        # background — cached for 24h so most launches are no-ops. Failures
+        # never block startup; the agentic engine just runs without it.
+        try:
+            threading.Thread(target=collect_fingerprint, daemon=True).start()
+        except Exception:
+            pass
     ok("System info collected")
     print(f"  {CYAN}{BOLD}Your system:{R}  {BOLD}{bctx['os']}{R}  {DIM}· {bctx['kernel']} · {bctx['arch']}{R}")
 
