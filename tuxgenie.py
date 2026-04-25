@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.39.0"
+__version__ = "5.40.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4192,6 +4192,141 @@ Set needs_synthesis: true so a full before/after summary is generated."""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  SECTION 8b — QUICK APP CATALOG (1-30 shortcuts)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Each entry: (id, name, category, install prompt, short description).
+# The prompt is fed to the agentic engine — Claude figures out apt vs snap vs
+# flatpak vs vendor repo based on the user's distro & system context.
+# Keep prompts short and unambiguous; let the model resolve the install method.
+APP_CATALOG = [
+    # Browsers
+    {"id": 1,  "name": "Brave Browser",       "cat": "Browsers",      "prompt": "Install Brave Browser",                               "desc": "Privacy-focused Chromium browser"},
+    {"id": 2,  "name": "Google Chrome",       "cat": "Browsers",      "prompt": "Install Google Chrome (stable)",                       "desc": "Google's web browser"},
+    {"id": 3,  "name": "Mozilla Firefox",     "cat": "Browsers",      "prompt": "Install the latest Mozilla Firefox",                  "desc": "Open-source web browser"},
+    {"id": 4,  "name": "Vivaldi",             "cat": "Browsers",      "prompt": "Install Vivaldi browser",                              "desc": "Highly customisable Chromium browser"},
+    # Communication
+    {"id": 5,  "name": "Slack",               "cat": "Communication", "prompt": "Install the Slack desktop app",                       "desc": "Team chat and collaboration"},
+    {"id": 6,  "name": "Discord",             "cat": "Communication", "prompt": "Install Discord desktop",                              "desc": "Voice and text chat"},
+    {"id": 7,  "name": "Telegram Desktop",    "cat": "Communication", "prompt": "Install Telegram Desktop",                             "desc": "Encrypted messenger"},
+    {"id": 8,  "name": "Zoom",                "cat": "Communication", "prompt": "Install Zoom video conferencing",                     "desc": "Video meetings"},
+    {"id": 9,  "name": "Microsoft Teams",     "cat": "Communication", "prompt": "Install Microsoft Teams for Linux",                   "desc": "Microsoft's team chat"},
+    # Office
+    {"id": 10, "name": "LibreOffice",         "cat": "Office",        "prompt": "Install the latest LibreOffice (full suite)",         "desc": "Free office suite"},
+    {"id": 11, "name": "OnlyOffice",          "cat": "Office",        "prompt": "Install OnlyOffice Desktop Editors",                  "desc": "MS Office-compatible suite"},
+    {"id": 12, "name": "WPS Office",          "cat": "Office",        "prompt": "Install WPS Office",                                   "desc": "Strong .docx compatibility"},
+    # Media & Graphics
+    {"id": 13, "name": "VLC Media Player",    "cat": "Media",         "prompt": "Install VLC media player",                            "desc": "Plays virtually any video/audio"},
+    {"id": 14, "name": "MPV",                 "cat": "Media",         "prompt": "Install MPV media player",                            "desc": "Lightweight scriptable video player"},
+    {"id": 15, "name": "Spotify",             "cat": "Media",         "prompt": "Install the Spotify desktop client",                  "desc": "Music streaming"},
+    {"id": 16, "name": "OBS Studio",          "cat": "Media",         "prompt": "Install OBS Studio",                                   "desc": "Recording and live streaming"},
+    {"id": 17, "name": "Audacity",            "cat": "Media",         "prompt": "Install Audacity",                                     "desc": "Audio editor and recorder"},
+    {"id": 18, "name": "GIMP",                "cat": "Media",         "prompt": "Install GIMP",                                         "desc": "Image editor (Photoshop alternative)"},
+    # Remote desktop
+    {"id": 19, "name": "AnyDesk",             "cat": "Remote Access", "prompt": "Install AnyDesk remote desktop client",               "desc": "Remote desktop access"},
+    {"id": 20, "name": "TeamViewer",          "cat": "Remote Access", "prompt": "Install TeamViewer",                                   "desc": "Remote desktop and support"},
+    {"id": 21, "name": "RustDesk",            "cat": "Remote Access", "prompt": "Install RustDesk",                                     "desc": "Open-source remote desktop"},
+    # Developer
+    {"id": 22, "name": "Visual Studio Code",  "cat": "Developer",     "prompt": "Install Visual Studio Code (VS Code)",                "desc": "Microsoft's code editor"},
+    {"id": 23, "name": "Sublime Text",        "cat": "Developer",     "prompt": "Install Sublime Text",                                 "desc": "Fast, minimal code editor"},
+    {"id": 24, "name": "Docker",              "cat": "Developer",     "prompt": "Install Docker Engine and the docker-compose plugin", "desc": "Containers for development"},
+    {"id": 25, "name": "Node.js (LTS)",       "cat": "Developer",     "prompt": "Install Node.js LTS via the official NodeSource repo","desc": "JavaScript runtime"},
+    {"id": 26, "name": "Postman",             "cat": "Developer",     "prompt": "Install Postman API client",                           "desc": "HTTP API testing tool"},
+    # Utilities
+    {"id": 27, "name": "Steam",               "cat": "Utilities",     "prompt": "Install the Steam game client",                       "desc": "Gaming platform"},
+    {"id": 28, "name": "btop / htop",         "cat": "Utilities",     "prompt": "Install btop and htop system monitors",               "desc": "Pretty system monitors"},
+    {"id": 29, "name": "neofetch",            "cat": "Utilities",     "prompt": "Install neofetch",                                     "desc": "System info on terminal launch"},
+    {"id": 30, "name": "Dev Essentials Pack", "cat": "Utilities",     "prompt": "Install build-essential, curl, wget, git, unzip, htop, tree", "desc": "Common dev tools in one shot"},
+]
+
+
+def _parse_app_selection(sel: str):
+    """Parse '1', '1,5,14', '1-5', or '1,5-7,10' into [1, 5, 6, 7, 10].
+    Returns a sorted unique list of valid catalog ids (1-30)."""
+    ids = set()
+    for chunk in sel.replace(" ", "").split(","):
+        if not chunk:
+            continue
+        if "-" in chunk:
+            try:
+                start_s, end_s = chunk.split("-", 1)
+                start, end = int(start_s), int(end_s)
+                if start > end:
+                    start, end = end, start
+                for n in range(start, end + 1):
+                    if 1 <= n <= len(APP_CATALOG):
+                        ids.add(n)
+            except ValueError:
+                continue
+        else:
+            try:
+                n = int(chunk)
+                if 1 <= n <= len(APP_CATALOG):
+                    ids.add(n)
+            except ValueError:
+                continue
+    return sorted(ids)
+
+
+def feat_install_apps(backend, bctx, slog):
+    """Quick app installer — flat 1-30 catalog of common Linux apps.
+    Each shortcut maps to a natural-language install prompt; the agentic
+    engine figures out the right method (apt / snap / flatpak / vendor repo)
+    for the user's distro and confirms before running anything."""
+    hdr("Install Apps — Quick Catalog")
+    print(f"\n  {DIM}Pick one or more apps. TuxGenie picks the right install method{R}")
+    print(f"  {DIM}for your distro and shows every command before running it.{R}")
+
+    last_cat = None
+    for app in APP_CATALOG:
+        if app["cat"] != last_cat:
+            print(f"\n  {BOLD}{CYAN}{app['cat'].upper()}{R}")
+            last_cat = app["cat"]
+        num = f"[{app['id']:>2}]"
+        name = f"{BOLD}{app['name']}{R}".ljust(38 + len(BOLD) + len(R))
+        print(f"   {C(num, GREEN)}  {name}  {DIM}{app['desc']}{R}")
+
+    print(f"\n  {DIM}Examples:  '1'   '1,5,14'   '1-5'   '1,5-7,10'   'q' to cancel{R}")
+    try:
+        sel = input(f"\n  {BOLD}Pick app(s) [1-{len(APP_CATALOG)}]:{R} ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not sel or sel in ("q", "quit", "exit", "back"):
+        return
+
+    ids = _parse_app_selection(sel)
+    if not ids:
+        warn(f"Couldn't parse '{sel}'. Try a number, list, or range — e.g. '1' or '1,5,14' or '1-5'.")
+        return
+
+    apps = [a for a in APP_CATALOG if a["id"] in ids]
+    print(f"\n  {BOLD}You're about to install {len(apps)} app(s):{R}")
+    for app in apps:
+        print(f"   {GREEN}•{R} {BOLD}{app['name']}{R}  {DIM}({app['cat']}){R}")
+    try:
+        confirm = input(f"\n  {BOLD}Proceed?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if confirm not in ("y", "yes", ""):
+        info("Cancelled — nothing was installed.")
+        return
+
+    # Install each via the agentic engine. The system context already includes
+    # what's installed, so Claude will skip apps that are already there.
+    for i, app in enumerate(apps, 1):
+        section(f"[{i}/{len(apps)}] Installing {app['name']}")
+        try:
+            agentic_engine(backend, app["prompt"], bctx, slog)
+        except KeyboardInterrupt:
+            warn("Cancelled. Skipping remaining apps.")
+            return
+        _history_append(f"Install {app['name']}", "install_apps")
+
+    if len(apps) > 1:
+        print(f"\n  {GREEN}{BOLD}✓ Finished installing {len(apps)} app(s).{R}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 9 — MENU + MAIN REPL
 # ═══════════════════════════════════════════════════════════════════════════════
 MENU_ITEMS = [
@@ -4224,6 +4359,7 @@ MENU_ITEMS = [
     ("27", "appswitch", "App Finder",         "Find Linux equivalents of Windows apps",  feat_appswitch),
     ("28", "battery",   "Battery & Power",    "Improve battery life, fix overheating",   feat_battery),
     ("29", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes", feat_performance),
+    ("30", "apps",      "Install Apps",       "Quick catalog of 30 popular Linux apps",  feat_install_apps),
     ("s",  "settings",  "Settings",           "Configure API key and model",             feat_settings),
     ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                   feat_feedback),
 ]
