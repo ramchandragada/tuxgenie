@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.43.0"
+__version__ = "5.43.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4534,8 +4534,6 @@ def show_menu():
     _item("10", "Permissions",         "'Permission denied' errors")
 
     _cat(BG_ORANGE, "📦", "INSTALL & UPDATE", "Get software and stay up to date")
-    _item("77", "Install Apps",        "🎁 Pick from 30 popular apps (Brave, VLC, AnyDesk, Slack…)")
-    _item("99", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
     _item("11", "Install Software",    '"I need a video editor" → installed')
     _item("12", "Check for Updates",   "Keep your system safe and current")
     _item("13", "Find Linux App",      '"What replaces Photoshop / Word / iTunes?"')
@@ -4563,6 +4561,10 @@ def show_menu():
     _item("27", "Docker Help",         "Container troubleshooting & cleanup")
     _item("28", "SSH Setup",           "Remote access to another computer")
     _item("29", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
+
+    _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
+    _item("77", "Install Apps",        "🎁 Pick from 30 popular apps (Brave, VLC, AnyDesk, Slack…)")
+    _item("99", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
 
     print(f"""
   {BG_DARK}{BWHITE}  {C('[s]',GOLD,BOLD)} Settings   {C('[u]',BCYAN,BOLD)} Update   {C('[h]',BMAGENTA,BOLD)} History   {C('[f]',PINK,BOLD)} Suggest Feature   {C('[q]',BRED,BOLD)} Quit  {R}
