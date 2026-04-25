@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.40.0"
+__version__ = "5.40.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4397,6 +4397,7 @@ def show_menu():
     _item("19", "Running Programs",    "What's using CPU / memory?")
 
     _cat(BG_ORANGE, "📦", "INSTALL & UPDATE", "Get software and stay up to date")
+    _item("30", "Install Apps",        "🎁 Pick from 30 popular apps (Brave, VLC, AnyDesk, Slack…)")
     _item("3",  "Install Software",    '"I need a video editor" → installed')
     _item("10", "Check for Updates",   "Keep your system safe and current")
 
