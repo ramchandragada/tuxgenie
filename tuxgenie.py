@@ -8,7 +8,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-TuxGenie v4.6 — Your wish is my command 🐧
+TuxGenie v4.7 — Your wish is my command 🐧
 AI-powered Linux assistant · Powered by Claude · Free forever
 www.tuxgenie.com
 
@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.35.0"
+__version__ = "5.37.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -180,7 +180,7 @@ _COMPLEX_KEYWORDS = [
 ]
 _HAIKU_MODEL  = "claude-haiku-4-5-20251001"
 _SONNET_MODEL = "claude-sonnet-4-6"
-_OPUS_MODEL   = "claude-opus-4-6"
+_OPUS_MODEL   = "claude-opus-4-7"
 
 
 def _try_pip_install():
@@ -350,10 +350,10 @@ class AnthropicBackend:
             return  # user manually picked a model, respect it
         if round_num > 1:
             # If first attempt failed, escalate to Sonnet
-            if self.model != _SONNET_MODEL and self.base_model != "claude-opus-4-6":
+            if self.model != _SONNET_MODEL and self.base_model != _OPUS_MODEL:
                 self.model = _SONNET_MODEL
             return
-        if self.base_model != "claude-opus-4-6":
+        if self.base_model != _OPUS_MODEL:
             self.model = _HAIKU_MODEL
         else:
             self.model = self.base_model
@@ -392,9 +392,9 @@ class AnthropicBackend:
 
     def session_cost_estimate(self) -> str:
         """Return estimated session cost based on tracked tokens."""
-        # Pricing per million tokens (approximate, as of 2025)
+        # Pricing per million tokens (approximate, as of 2026)
         model_prices = {
-            "claude-opus-4-6":          (15.0, 75.0),   # input, output per 1M tokens
+            "claude-opus-4-7":          (5.0, 25.0),    # input, output per 1M tokens
             "claude-sonnet-4-6":        (3.0, 15.0),
             "claude-haiku-4-5-20251001":(0.80, 4.0),
         }
@@ -459,7 +459,7 @@ def load_backend():
 AVAILABLE_MODELS = [
     ("claude-haiku-4-5-20251001", "Fast & cheapest — handles 90% of tasks perfectly (recommended)"),
     ("claude-sonnet-4-6",   "Smarter — for complex debugging (auto-escalates when needed)"),
-    ("claude-opus-4-6",     "Most capable — for the hardest problems (costs 20x more)"),
+    ("claude-opus-4-7",     "Most capable — for the hardest problems (costs ~6x more)"),
 ]
 
 def feat_set_api_key(backend):
