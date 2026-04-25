@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.40.1"
+__version__ = "5.41.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2160,6 +2160,81 @@ def _restore_terminal():
         pass
 
 
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_APT_PCT_RE = re.compile(r'Progress:\s*\[\s*(\d+)%\s*\]')
+
+
+class _LiveProgress:
+    """One-line live status: spinner + elapsed time + parsed apt % + last action.
+    Sits below streaming output and refreshes ~3x/sec so the user never wonders
+    if a long install has hung. Output lines slide in above it.
+    Falls back to a no-op when stdout is not a tty (CI, redirected logs)."""
+
+    def __init__(self):
+        self.start = time.time()
+        self.lock = threading.Lock()
+        self.done = threading.Event()
+        self.last_action = ""
+        self.apt_pct = None
+        self._frames = 0
+        self.visible = False
+        self.is_tty = bool(getattr(sys.stdout, "isatty", lambda: False)())
+
+    def _format(self):
+        elapsed = int(time.time() - self.start)
+        t = f"{elapsed}s" if elapsed < 60 else f"{elapsed//60}m{elapsed%60:02d}s"
+        spin = _SPINNER_FRAMES[self._frames % len(_SPINNER_FRAMES)]
+        self._frames += 1
+        parts = [f"{spin} {t}"]
+        if self.apt_pct is not None:
+            parts.append(f"{self.apt_pct}%")
+        if self.last_action:
+            parts.append(self.last_action[:60])
+        return f"  {DIM}{' · '.join(parts)}{R}"
+
+    def _draw(self):
+        if not self.is_tty:
+            return
+        sys.stdout.write("\r\x1b[K" + self._format())
+        sys.stdout.flush()
+        self.visible = True
+
+    def _erase(self):
+        if not self.is_tty:
+            return
+        if self.visible:
+            sys.stdout.write("\r\x1b[K")
+            sys.stdout.flush()
+            self.visible = False
+
+    def loop(self):
+        """Run in a daemon thread until .done is set."""
+        while not self.done.wait(0.3):
+            with self.lock:
+                self._draw()
+        with self.lock:
+            self._erase()
+
+    def print_line(self, text):
+        """Print a normal output line, sliding it in above the live status."""
+        with self.lock:
+            self._erase()
+            print(text, flush=True)
+
+    def feed(self, raw_line):
+        """Update progress hints from a raw output line."""
+        m = _APT_PCT_RE.search(raw_line)
+        if m:
+            try:
+                self.apt_pct = int(m.group(1))
+            except ValueError:
+                pass
+            return
+        l = raw_line.strip()
+        if l and len(l) > 3:
+            self.last_action = l[:70]
+
+
 def run_cmd_live(cmd, sudo_password=None, timeout=120):
     """Run a command and stream its output line-by-line in real time.
     Returns (returncode, stdout_str, stderr_str)."""
@@ -2203,6 +2278,8 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
         """Strip terminal-state escape sequences from a line of command output."""
         return _TERM_STATE_ESC.sub('', line)
 
+    progress = _LiveProgress()
+
     def _reader(stream, buf, color):
         try:
             for raw in stream:
@@ -2221,7 +2298,8 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
                     continue
                 safe = _safe_line(line)
                 if safe.strip():
-                    print(f"  {color}{safe}{R}", flush=True)
+                    progress.feed(safe)
+                    progress.print_line(f"  {color}{safe}{R}")
         except Exception:
             pass
         finally:
@@ -2248,7 +2326,8 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
 
         t_out = threading.Thread(target=_reader, args=(proc.stdout, stdout_lines, DIM),        daemon=True)
         t_err = threading.Thread(target=_reader, args=(proc.stderr, stderr_lines, YELLOW+DIM), daemon=True)
-        t_out.start(); t_err.start()
+        t_prog = threading.Thread(target=progress.loop, daemon=True)
+        t_out.start(); t_err.start(); t_prog.start()
 
         try:
             proc.wait(timeout=timeout)
@@ -2259,18 +2338,22 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
             # Ctrl+C — kill the child process but don't exit TuxGenie
             proc.kill()
             proc.wait()
+            progress.done.set(); t_prog.join(1)
             t_out.join(2); t_err.join(2)
             _restore_terminal()
             print(f"\n  {YELLOW}Command cancelled.{R}")
             return -1, '\n'.join(stdout_lines), 'Cancelled by user'
+        progress.done.set(); t_prog.join(1)
         t_out.join(5); t_err.join(5)
 
         return proc.returncode, '\n'.join(stdout_lines), '\n'.join(stderr_lines)
     except KeyboardInterrupt:
+        progress.done.set()
         _restore_terminal()
         print(f"\n  {YELLOW}Cancelled.{R}")
         return -1, '', 'Cancelled by user'
     except Exception as e:
+        progress.done.set()
         return -1, '', str(e)
 
 
