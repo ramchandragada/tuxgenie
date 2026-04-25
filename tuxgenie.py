@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.41.0"
+__version__ = "5.42.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4323,9 +4323,12 @@ APP_CATALOG = [
 ]
 
 
-def _parse_app_selection(sel: str):
+def _parse_app_selection(sel: str, max_id: int = None):
     """Parse '1', '1,5,14', '1-5', or '1,5-7,10' into [1, 5, 6, 7, 10].
-    Returns a sorted unique list of valid catalog ids (1-30)."""
+    Returns a sorted unique list of valid catalog ids (1..max_id).
+    Defaults to len(APP_CATALOG) for backwards compatibility."""
+    if max_id is None:
+        max_id = len(APP_CATALOG)
     ids = set()
     for chunk in sel.replace(" ", "").split(","):
         if not chunk:
@@ -4337,55 +4340,53 @@ def _parse_app_selection(sel: str):
                 if start > end:
                     start, end = end, start
                 for n in range(start, end + 1):
-                    if 1 <= n <= len(APP_CATALOG):
+                    if 1 <= n <= max_id:
                         ids.add(n)
             except ValueError:
                 continue
         else:
             try:
                 n = int(chunk)
-                if 1 <= n <= len(APP_CATALOG):
+                if 1 <= n <= max_id:
                     ids.add(n)
             except ValueError:
                 continue
     return sorted(ids)
 
 
-def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — flat 1-30 catalog of common Linux apps.
-    Each shortcut maps to a natural-language install prompt; the agentic
-    engine figures out the right method (apt / snap / flatpak / vendor repo)
-    for the user's distro and confirms before running anything."""
-    hdr("Install Apps — Quick Catalog")
-    print(f"\n  {DIM}Pick one or more apps. TuxGenie picks the right install method{R}")
-    print(f"  {DIM}for your distro and shows every command before running it.{R}")
+def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_label, history_tag):
+    """Shared multi-select picker used by both Install Apps ([30]) and AI Tools
+    ([40]). Renders the catalog grouped by category, accepts numbers/ranges,
+    confirms, then runs each prompt through the agentic engine."""
+    hdr(title)
+    print(f"\n  {DIM}{intro}{R}")
 
     last_cat = None
-    for app in APP_CATALOG:
-        if app["cat"] != last_cat:
-            print(f"\n  {BOLD}{CYAN}{app['cat'].upper()}{R}")
-            last_cat = app["cat"]
-        num = f"[{app['id']:>2}]"
-        name = f"{BOLD}{app['name']}{R}".ljust(38 + len(BOLD) + len(R))
-        print(f"   {C(num, GREEN)}  {name}  {DIM}{app['desc']}{R}")
+    for entry in catalog:
+        if entry["cat"] != last_cat:
+            print(f"\n  {BOLD}{CYAN}{entry['cat'].upper()}{R}")
+            last_cat = entry["cat"]
+        num = f"[{entry['id']:>2}]"
+        name = f"{BOLD}{entry['name']}{R}".ljust(38 + len(BOLD) + len(R))
+        print(f"   {C(num, GREEN)}  {name}  {DIM}{entry['desc']}{R}")
 
-    print(f"\n  {DIM}Examples:  '1'   '1,5,14'   '1-5'   '1,5-7,10'   'q' to cancel{R}")
+    print(f"\n  {DIM}Examples:  '1'   '1,3,5'   '1-5'   '1,3-5,8'   'q' to cancel{R}")
     try:
-        sel = input(f"\n  {BOLD}Pick app(s) [1-{len(APP_CATALOG)}]:{R} ").strip().lower()
+        sel = input(f"\n  {BOLD}Pick {item_label} [1-{len(catalog)}]:{R} ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         return
     if not sel or sel in ("q", "quit", "exit", "back"):
         return
 
-    ids = _parse_app_selection(sel)
+    ids = _parse_app_selection(sel, max_id=len(catalog))
     if not ids:
         warn(f"Couldn't parse '{sel}'. Try a number, list, or range — e.g. '1' or '1,5,14' or '1-5'.")
         return
 
-    apps = [a for a in APP_CATALOG if a["id"] in ids]
-    print(f"\n  {BOLD}You're about to install {len(apps)} app(s):{R}")
-    for app in apps:
-        print(f"   {GREEN}•{R} {BOLD}{app['name']}{R}  {DIM}({app['cat']}){R}")
+    chosen = [e for e in catalog if e["id"] in ids]
+    print(f"\n  {BOLD}You're about to install {len(chosen)} {item_label}:{R}")
+    for entry in chosen:
+        print(f"   {GREEN}•{R} {BOLD}{entry['name']}{R}  {DIM}({entry['cat']}){R}")
     try:
         confirm = input(f"\n  {BOLD}Proceed?{R} [y/n]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -4394,19 +4395,68 @@ def feat_install_apps(backend, bctx, slog):
         info("Cancelled — nothing was installed.")
         return
 
-    # Install each via the agentic engine. The system context already includes
-    # what's installed, so Claude will skip apps that are already there.
-    for i, app in enumerate(apps, 1):
-        section(f"[{i}/{len(apps)}] Installing {app['name']}")
+    for i, entry in enumerate(chosen, 1):
+        section(f"[{i}/{len(chosen)}] Installing {entry['name']}")
         try:
-            agentic_engine(backend, app["prompt"], bctx, slog)
+            agentic_engine(backend, entry["prompt"], bctx, slog)
         except KeyboardInterrupt:
-            warn("Cancelled. Skipping remaining apps.")
+            warn(f"Cancelled. Skipping remaining {item_label}.")
             return
-        _history_append(f"Install {app['name']}", "install_apps")
+        _history_append(f"Install {entry['name']}", history_tag)
 
-    if len(apps) > 1:
-        print(f"\n  {GREEN}{BOLD}✓ Finished installing {len(apps)} app(s).{R}")
+    if len(chosen) > 1:
+        print(f"\n  {GREEN}{BOLD}✓ Finished installing {len(chosen)} {item_label}.{R}")
+
+
+def feat_install_apps(backend, bctx, slog):
+    """Quick app installer — flat 1-30 catalog of common Linux apps.
+    Each shortcut maps to a natural-language install prompt; the agentic
+    engine figures out the right method (apt / snap / flatpak / vendor repo)
+    for the user's distro and confirms before running anything."""
+    _run_catalog_picker(
+        backend, bctx, slog,
+        catalog=APP_CATALOG,
+        title="Install Apps — Quick Catalog",
+        intro="Pick one or more apps. TuxGenie picks the right install method "
+              "for your distro and shows every command before running it.",
+        item_label="app(s)",
+        history_tag="install_apps",
+    )
+
+
+AI_CATALOG = [
+    # Local LLMs — run AI offline, no API key needed
+    {"id": 1,  "name": "Ollama",                "cat": "Local LLMs",      "prompt": "Install Ollama on this Linux system using the official installer from https://ollama.com/install.sh. After install, verify the ollama service is running and report the local API URL.",                                          "desc": "Run local LLMs offline (Llama, Mistral, Qwen)"},
+    {"id": 2,  "name": "Jan",                   "cat": "Local LLMs",      "prompt": "Install Jan AI desktop app for Linux from the official GitHub releases (jan.ai). Prefer the .deb on Debian/Ubuntu or the AppImage otherwise; create a desktop entry if AppImage.",                                                  "desc": "Open-source ChatGPT alternative"},
+    {"id": 3,  "name": "LM Studio",             "cat": "Local LLMs",      "prompt": "Install LM Studio for Linux: download the official AppImage from lmstudio.ai, place it under ~/Applications, make it executable, and create a .desktop entry so it appears in the launcher.",                                       "desc": "GUI to download and run any GGUF model"},
+    # AI Web UIs
+    {"id": 4,  "name": "Open WebUI",            "cat": "AI Web UIs",      "prompt": "Install Open WebUI (a ChatGPT-style web UI for Ollama) using the official Docker container: docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main. Tell the user to open http://localhost:3000 once running.", "desc": "ChatGPT-style browser UI for local models"},
+    # Coding AI
+    {"id": 5,  "name": "Claude Code",           "cat": "Coding AI",       "prompt": "Install Anthropic's Claude Code CLI globally via npm (npm install -g @anthropic-ai/claude-code). Make sure Node.js LTS is installed first. Tell the user to set the ANTHROPIC_API_KEY env var afterwards.",                            "desc": "Anthropic's terminal coding agent"},
+    {"id": 6,  "name": "Aider",                 "cat": "Coding AI",       "prompt": "Install aider-chat (the AI pair-programmer for the terminal). Prefer pipx (pipx install aider-chat) so it lives in its own venv. Make sure pipx and Python 3 are installed first.",                                                  "desc": "AI pair-programmer in your terminal"},
+    {"id": 7,  "name": "Continue.dev",          "cat": "Coding AI",       "prompt": "Install the Continue.dev open-source AI extension for VS Code: code --install-extension Continue.continue. Make sure VS Code is installed first; if not, install it first.",                                                       "desc": "Open-source AI extension for VS Code"},
+    # Voice & Speech
+    {"id": 8,  "name": "Whisper",               "cat": "Voice & Speech",  "prompt": "Install OpenAI Whisper for offline speech-to-text via pipx (pipx install openai-whisper) and ensure ffmpeg is also installed via apt.",                                                                                                "desc": "Offline speech-to-text"},
+    # Cloud AI Apps
+    {"id": 9,  "name": "ChatGPT Desktop",       "cat": "Cloud AI Apps",   "prompt": "Install a ChatGPT desktop client for Linux. If no official OpenAI .deb exists yet for this distro, install the well-maintained community 'chatgpt' Snap (sudo snap install chatgpt-desktop) or a Flatpak as a clearly-labelled alternative — explain to the user it is community-maintained.", "desc": "Desktop client for OpenAI ChatGPT"},
+    # Starter Pack
+    {"id": 10, "name": "Local AI Starter Pack", "cat": "Starter Packs",   "prompt": "Set up a complete local AI stack on this machine in three steps: 1) Install Ollama via the official installer (https://ollama.com/install.sh). 2) Pull the llama3.2:3b model (small, fast, fits on most laptops). 3) Install Open WebUI via the official Docker container on port 3000. At the end, tell the user the local URL to open and how to start chatting.", "desc": "Ollama + Open WebUI + llama3.2:3b — zero to local AI"},
+]
+
+
+def feat_install_ai_tools(backend, bctx, slog):
+    """Quick AI-tools installer — categorised list of popular AI apps.
+    Same UX as Install Apps: numbers, ranges, multi-select, confirm.
+    Each entry is a natural-language install prompt for the agentic engine."""
+    _run_catalog_picker(
+        backend, bctx, slog,
+        catalog=AI_CATALOG,
+        title="AI Tools — Quick Catalog",
+        intro="Pick one or more AI tools. Privacy-first ordering — local "
+              "LLMs and offline tools first, cloud apps last.",
+        item_label="AI tool(s)",
+        history_tag="install_ai_tools",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -4443,6 +4493,7 @@ MENU_ITEMS = [
     ("28", "battery",   "Battery & Power",    "Improve battery life, fix overheating",   feat_battery),
     ("29", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes", feat_performance),
     ("30", "apps",      "Install Apps",       "Quick catalog of 30 popular Linux apps",  feat_install_apps),
+    ("40", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
     ("s",  "settings",  "Settings",           "Configure API key and model",             feat_settings),
     ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                   feat_feedback),
 ]
@@ -4481,6 +4532,7 @@ def show_menu():
 
     _cat(BG_ORANGE, "📦", "INSTALL & UPDATE", "Get software and stay up to date")
     _item("30", "Install Apps",        "🎁 Pick from 30 popular apps (Brave, VLC, AnyDesk, Slack…)")
+    _item("40", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
     _item("3",  "Install Software",    '"I need a video editor" → installed')
     _item("10", "Check for Updates",   "Keep your system safe and current")
 
