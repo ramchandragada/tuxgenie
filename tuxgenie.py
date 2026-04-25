@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.42.0"
+__version__ = "5.43.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4463,39 +4463,48 @@ def feat_install_ai_tools(backend, bctx, slog):
 #  SECTION 9 — MENU + MAIN REPL
 # ═══════════════════════════════════════════════════════════════════════════════
 MENU_ITEMS = [
-    ("1",  "fix",       "Fix Issue",          "Describe any Linux problem",              feat_fix),
-    ("2",  "health",    "Health Dashboard",   "Full CPU/RAM/disk/service health scan",   feat_health),
-    ("3",  "packages",  "Package Wizard",     "Find & install software by description",  feat_packages),
-    ("4",  "network",   "Network Doctor",     "Diagnose & fix connectivity",             feat_network),
-    ("5",  "security",  "Security Audit",     "Harden firewall, SSH, open ports",        feat_security),
-    ("6",  "disk",      "Disk Detective",     "Find space hogs & clean up safely",       feat_disk),
-    ("7",  "drivers",   "Driver Check",       "Detect & install missing drivers",        feat_drivers),
-    ("8",  "services",  "Service Manager",    "Optimise startup & running services",     feat_services),
-    ("9",  "logs",      "Log Analyser",       "Decode cryptic errors & system logs",     feat_logs),
-    ("10", "updates",   "Update Advisor",     "Safe upgrade analysis & ordering",        feat_updates),
-    ("11", "script",    "Script Generator",   "Describe a task → get a bash script",     feat_script),
-    ("12", "cron",      "Cron Assistant",     "Schedule tasks in plain English",         feat_cron),
-    ("13", "perms",     "Permission Doctor",  "Diagnose & fix permission denied errors", feat_perms),
-    ("14", "boot",      "Boot Analyser",      "Find why boot is slow & speed it up",     feat_boot),
-    ("15", "docker",    "Docker Helper",      "Container troubleshooting & cleanup",     feat_docker),
-    ("16", "backup",    "Config Backup",      "Snapshot all system configs to .tar.gz",  feat_backup),
-    ("17", "hardware",  "Hardware Info",      "Full hardware report & health check",     feat_hardware),
-    ("18", "ssh",       "SSH Wizard",         "Set up & harden SSH securely",            feat_ssh),
-    ("19", "processes", "Process Inspector",  "Tame CPU/memory hogs & zombie processes", feat_processes),
-    ("20", "rollback",  "Session Rollback",   "Undo changes made in a previous session", feat_rollback),
-    ("21", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits", feat_git),
-    ("22", "sound",     "Sound Fix",          "No audio, mic not working, HDMI sound",   feat_sound),
-    ("23", "display",   "Display Fix",        "Wrong resolution, monitor not detected",  feat_display),
-    ("24", "bluetooth", "Bluetooth Fix",      "Pairing fails, device not found",         feat_bluetooth),
-    ("25", "printer",   "Printer Setup",      "Install printer, fix printing problems",  feat_printer),
-    ("26", "webcam",    "Webcam Fix",         "Camera not detected, black screen",       feat_webcam),
-    ("27", "appswitch", "App Finder",         "Find Linux equivalents of Windows apps",  feat_appswitch),
-    ("28", "battery",   "Battery & Power",    "Improve battery life, fix overheating",   feat_battery),
-    ("29", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes", feat_performance),
-    ("30", "apps",      "Install Apps",       "Quick catalog of 30 popular Linux apps",  feat_install_apps),
-    ("40", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
-    ("s",  "settings",  "Settings",           "Configure API key and model",             feat_settings),
-    ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                   feat_feedback),
+    # ── START HERE ───────────────────────────────────────────────
+    ("1",  "fix",       "Fix a Problem",      "Describe what's wrong in plain English",         feat_fix),
+    ("2",  "health",    "Health Check",       "System CPU/RAM/disk/service health scan",        feat_health),
+    # ── FIX SOMETHING ────────────────────────────────────────────
+    ("3",  "network",   "Internet / WiFi",    "Diagnose & fix connectivity",                    feat_network),
+    ("4",  "sound",     "Sound / Audio",      "No audio, mic not working, HDMI sound",          feat_sound),
+    ("5",  "display",   "Display",            "Wrong resolution, monitor not detected",         feat_display),
+    ("6",  "bluetooth", "Bluetooth",          "Pairing fails, device not found",                feat_bluetooth),
+    ("7",  "printer",   "Printer Setup",      "Install printer, fix printing problems",         feat_printer),
+    ("8",  "webcam",    "Webcam Fix",         "Camera not detected, black screen",              feat_webcam),
+    ("9",  "drivers",   "Missing Drivers",    "Detect & install missing drivers",               feat_drivers),
+    ("10", "perms",     "Permissions",        "Diagnose & fix permission denied errors",        feat_perms),
+    # ── INSTALL & UPDATE ─────────────────────────────────────────
+    ("11", "packages",  "Install Software",   "Find & install software by description",         feat_packages),
+    ("12", "updates",   "Check for Updates",  "Safe upgrade analysis & ordering",               feat_updates),
+    ("13", "appswitch", "Find Linux App",     "Find Linux equivalents of Windows apps",         feat_appswitch),
+    # ── PROTECT & RECOVER ────────────────────────────────────────
+    ("14", "security",  "Security Check",     "Harden firewall, SSH, open ports",               feat_security),
+    ("15", "backup",    "Backup Settings",    "Snapshot all system configs to .tar.gz",         feat_backup),
+    ("16", "rollback",  "Undo Changes",       "Undo changes made in a previous session",        feat_rollback),
+    # ── SPEED & MAINTENANCE ──────────────────────────────────────
+    ("17", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes",        feat_performance),
+    ("18", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
+    ("19", "boot",      "Speed Up Boot",      "Find why boot is slow & speed it up",            feat_boot),
+    ("20", "battery",   "Battery & Power",    "Improve battery life, fix overheating",          feat_battery),
+    ("21", "services",  "Manage Services",    "Optimise startup & running services",            feat_services),
+    # ── INSPECT ──────────────────────────────────────────────────
+    ("22", "hardware",  "Hardware Info",      "Full hardware report & health check",            feat_hardware),
+    ("23", "processes", "Running Programs",   "Tame CPU/memory hogs & zombie processes",        feat_processes),
+    ("24", "logs",      "Explain Logs",       "Decode cryptic errors & system logs",            feat_logs),
+    # ── FOR DEVELOPERS ───────────────────────────────────────────
+    ("25", "script",    "Generate Script",    "Describe a task → get a bash script",            feat_script),
+    ("26", "cron",      "Schedule Task",      "Schedule tasks in plain English",                feat_cron),
+    ("27", "docker",    "Docker Help",        "Container troubleshooting & cleanup",            feat_docker),
+    ("28", "ssh",       "SSH Setup",          "Set up & harden SSH securely",                   feat_ssh),
+    ("29", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
+    # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
+    ("77", "apps",      "Install Apps",       "Quick catalog of 30 popular Linux apps",         feat_install_apps),
+    ("99", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
+    # ── LETTER SHORTCUTS ─────────────────────────────────────────
+    ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
+    ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                          feat_feedback),
 ]
 
 def show_menu():
@@ -4510,48 +4519,50 @@ def show_menu():
 
     print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🐧 What would you like to do today?  {R}")
 
-    _cat(BG_FOREST, "🔧", "FIX & TROUBLESHOOT", "Having a problem? Start here")
+    _cat(BG_FOREST, "🚀", "START HERE", "The two most-used features")
     _item("1",  "Fix a Problem",       "Describe what's wrong in plain English")
-    _item("4",  "Fix Internet / WiFi", "Can't connect? Slow internet?")
-    _item("7",  "Fix Missing Drivers", "WiFi, GPU, or printer not working?")
-    _item("13", "Fix Permissions",     "'Permission denied' errors")
-    _item("22", "Fix Sound / Audio",   "No sound, mic not working, HDMI audio?")
-    _item("23", "Fix Display",         "Wrong resolution, monitor not detected?")
-    _item("24", "Fix Bluetooth",       "Device won't pair or keeps disconnecting?")
-    _item("25", "Set Up Printer",      "Install printer or fix printing problems")
-    _item("26", "Fix Webcam",          "Camera not working in Zoom / Teams / Meet?")
+    _item("2",  "Health Check",        "Is everything running OK?")
 
-    _cat(BG_TEAL, "🌍", "SWITCHING TO LINUX?", "Coming from Windows or Mac?")
-    _item("27", "Find Linux App",      '"What replaces Photoshop / Word / iTunes?"')
-
-    _cat(BG_PURPLE, "📊", "CHECK & MONITOR", "See how your computer is doing")
-    _item("2",  "System Health Check", "Is everything running OK?")
-    _item("9",  "Explain Error Logs",  "Decode confusing error messages")
-    _item("17", "Hardware Info",       "What's inside my computer?")
-    _item("19", "Running Programs",    "What's using CPU / memory?")
+    _cat(BG_FOREST, "🔧", "FIX SOMETHING", "Common things that go wrong")
+    _item("3",  "Internet / WiFi",     "Can't connect? Slow internet?")
+    _item("4",  "Sound / Audio",       "No sound, mic not working, HDMI audio?")
+    _item("5",  "Display",             "Wrong resolution, monitor not detected?")
+    _item("6",  "Bluetooth",           "Device won't pair or keeps disconnecting?")
+    _item("7",  "Printer Setup",       "Install printer or fix printing problems")
+    _item("8",  "Webcam Fix",          "Camera not working in Zoom / Teams / Meet?")
+    _item("9",  "Missing Drivers",     "WiFi, GPU, or printer not working?")
+    _item("10", "Permissions",         "'Permission denied' errors")
 
     _cat(BG_ORANGE, "📦", "INSTALL & UPDATE", "Get software and stay up to date")
-    _item("30", "Install Apps",        "🎁 Pick from 30 popular apps (Brave, VLC, AnyDesk, Slack…)")
-    _item("40", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
-    _item("3",  "Install Software",    '"I need a video editor" → installed')
-    _item("10", "Check for Updates",   "Keep your system safe and current")
+    _item("77", "Install Apps",        "🎁 Pick from 30 popular apps (Brave, VLC, AnyDesk, Slack…)")
+    _item("99", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
+    _item("11", "Install Software",    '"I need a video editor" → installed')
+    _item("12", "Check for Updates",   "Keep your system safe and current")
+    _item("13", "Find Linux App",      '"What replaces Photoshop / Word / iTunes?"')
 
-    _cat(BG_NAVY, "🛡️ ", "SECURITY & SAFETY", "Protect your computer")
-    _item("5",  "Security Check",      "Are you protected? Find out now")
-    _item("16", "Backup Settings",     "Save your config before making changes")
-    _item("20", "Undo Changes",        "Oops? Roll back what TuxGenie did")
+    _cat(BG_NAVY, "🛡️ ", "PROTECT & RECOVER", "Stay safe and reversible")
+    _item("14", "Security Check",      "Are you protected? Find out now")
+    _item("15", "Backup Settings",     "Save your config before making changes")
+    _item("16", "Undo Changes",        "Oops? Roll back what TuxGenie did")
 
-    _cat(BG_DARK, "⚡", "POWER TOOLS", "For when you're feeling adventurous")
-    _item("29", "Performance Boost",   "🚀 Full audit + apply ALL safe speed fixes")
-    _item("6",  "Free Up Disk Space",  "Running out of storage?")
-    _item("8",  "Manage Services",     "Speed up startup, fix service failures")
-    _item("11", "Generate a Script",   '"Back up my files nightly" → bash script')
-    _item("12", "Schedule a Task",     "Run things automatically on a schedule")
-    _item("14", "Speed Up Boot",       "Computer starts slowly? Fix it")
-    _item("15", "Docker Help",         "Container troubleshooting & cleanup")
-    _item("18", "SSH Setup",           "Remote access to another computer")
-    _item("21", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
-    _item("28", "Battery & Power",     "Battery draining fast? Laptop overheating?")
+    _cat(BG_DARK, "⚡", "SPEED & MAINTENANCE", "Keep your computer fast")
+    _item("17", "Performance Boost",   "🚀 Full audit + apply ALL safe speed fixes")
+    _item("18", "Disk Cleanup",        "Running out of storage?")
+    _item("19", "Speed Up Boot",       "Computer starts slowly? Fix it")
+    _item("20", "Battery & Power",     "Battery draining fast? Laptop overheating?")
+    _item("21", "Manage Services",     "Speed up startup, fix service failures")
+
+    _cat(BG_PURPLE, "📊", "INSPECT", "See how your computer is doing")
+    _item("22", "Hardware Info",       "What's inside my computer?")
+    _item("23", "Running Programs",    "What's using CPU / memory?")
+    _item("24", "Explain Logs",        "Decode confusing error messages")
+
+    _cat(BG_TEAL, "⚙️ ", "FOR DEVELOPERS", "Power-user tools")
+    _item("25", "Generate Script",     '"Back up my files nightly" → bash script')
+    _item("26", "Schedule Task",       "Run things automatically on a schedule")
+    _item("27", "Docker Help",         "Container troubleshooting & cleanup")
+    _item("28", "SSH Setup",           "Remote access to another computer")
+    _item("29", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
 
     print(f"""
   {BG_DARK}{BWHITE}  {C('[s]',GOLD,BOLD)} Settings   {C('[u]',BCYAN,BOLD)} Update   {C('[h]',BMAGENTA,BOLD)} History   {C('[f]',PINK,BOLD)} Suggest Feature   {C('[q]',BRED,BOLD)} Quit  {R}
@@ -4580,7 +4591,7 @@ def show_help():
       {BLUE}{BOLD}how much disk space do I have{R}
       {BLUE}{BOLD}update everything{R}
 
-  {GREEN}{BOLD}Or pick a number:{R}  Type a number from the menu (1-29)
+  {GREEN}{BOLD}Or pick a number:{R}  Type 1-29, or 77 for Apps, 99 for AI Tools
 
   {GREEN}{BOLD}Safety:{R}
     {GREEN}{BOLD}✓{R} Every command is shown before it runs
