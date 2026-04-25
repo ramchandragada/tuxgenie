@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. 31 built-in tools. Free forever. Open source.">
+<meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. 31 built-in tools, app catalog, AI tools installer, cross-session memory. Free forever. Open source.">
 <meta property="og:title" content="TuxGenie — AI-Powered Linux Assistant">
 <meta property="og:description" content="Fix any Linux problem by just describing it in plain English.">
 <title>TuxGenie — AI-Powered Linux Assistant</title>
@@ -187,6 +187,13 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
         <div><span style="font-size:24px;font-weight:900" class="grad">BYOK</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Your API Key</span></div>
         <div style="width:1px;background:#e2e8f0"></div>
         <div><span style="font-size:24px;font-weight:900" class="grad">Any</span><br><span style="font-size:12px;color:#94a3b8;font-weight:500">Linux Distro</span></div>
+      </div>
+      <!-- What's New highlights -->
+      <div style="margin-top:28px;display:flex;flex-wrap:wrap;gap:10px">
+        <span style="display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;border:1px solid #86efac;border-radius:20px;padding:6px 14px;font-size:12px;font-weight:600;color:#15803d">🆕 [77] App Catalog — 30 apps</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;background:#eff6ff;border:1px solid #93c5fd;border-radius:20px;padding:6px 14px;font-size:12px;font-weight:600;color:#1d4ed8">🆕 [99] AI Tools — Ollama, Claude Code &amp; more</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;background:#faf5ff;border:1px solid #c4b5fd;border-radius:20px;padding:6px 14px;font-size:12px;font-weight:600;color:#7c3aed">🆕 Cross-session memory</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;background:#fff7ed;border:1px solid #fdba74;border-radius:20px;padding:6px 14px;font-size:12px;font-weight:600;color:#c2410c">🆕 Live install progress</span>
       </div>
     </div>
     <!-- RIGHT: Tux + Terminal -->
@@ -400,6 +407,35 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
         <div class="card"><div style="font-size:26px;margin-bottom:8px">⚙️</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Process Inspector</div><div style="color:#64748b;font-size:13px;line-height:1.6">Tame CPU and memory hogs, kill zombie processes, restore speed.</div></div>
       </div>
     </div>
+    <!-- ONE-TAP CATALOGS — NEW headline feature -->
+    <div style="margin-bottom:44px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+        <span class="cat" style="background:#fdf4ff;color:#9333ea">🎁 ONE-TAP CATALOGS</span>
+        <span style="color:#94a3b8;font-size:13px">Type 77 or 99 — get an instant installer menu</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px">
+        <div class="card" style="border-color:#e9d5ff;background:linear-gradient(135deg,#fdf4ff,#fff)">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <span style="font-size:28px">🎁</span>
+            <div>
+              <div style="font-weight:800;color:#7c3aed;font-size:18px">[77] App Catalog</div>
+              <div style="font-size:12px;color:#94a3b8">30 popular Linux apps</div>
+            </div>
+          </div>
+          <div style="color:#64748b;font-size:13px;line-height:1.7">Pick one or more apps by number. Brave, Chrome, Firefox, Slack, Discord, Zoom, VS Code, Docker, VLC, Spotify, GIMP, Steam and more. Type <strong>1</strong>, <strong>1-5</strong>, or <strong>1,3,7</strong> — TuxGenie picks the right install method per distro.</div>
+        </div>
+        <div class="card" style="border-color:#bfdbfe;background:linear-gradient(135deg,#eff6ff,#fff)">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <span style="font-size:28px">🤖</span>
+            <div>
+              <div style="font-weight:800;color:#1d4ed8;font-size:18px">[99] AI Tools</div>
+              <div style="font-size:12px;color:#94a3b8">10 AI apps + a starter pack</div>
+            </div>
+          </div>
+          <div style="color:#64748b;font-size:13px;line-height:1.7">Install Ollama, Open WebUI, Jan, LM Studio, Claude Code, Aider, Whisper, ChatGPT and more. Option <strong>[10]</strong> — <em>Local AI Starter Pack</em> — sets up Ollama + Open WebUI + llama3.2:3b in one tap. Zero to local AI.</div>
+        </div>
+      </div>
+    </div>
     <!-- INSTALL/UPDATE + SECURITY -->
     <div class="two-col">
       <div>
@@ -407,8 +443,9 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
           <span class="cat" style="background:#fff7ed;color:#c2410c">📦 INSTALL &amp; UPDATE</span>
         </div>
         <div style="display:grid;gap:13px">
-          <div class="card"><div style="font-size:26px;margin-bottom:8px">📦</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Package Wizard</div><div style="color:#64748b;font-size:13px;line-height:1.6">"I need a video editor" → finds and installs the best option automatically.</div></div>
-          <div class="card"><div style="font-size:26px;margin-bottom:8px">🔄</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Update Advisor</div><div style="color:#64748b;font-size:13px;line-height:1.6">Safe upgrade analysis — see what's pending, install updates securely.</div></div>
+          <div class="card"><div style="font-size:26px;margin-bottom:8px">📦</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Install Software</div><div style="color:#64748b;font-size:13px;line-height:1.6">"I need a video editor" → finds and installs the best option automatically.</div></div>
+          <div class="card"><div style="font-size:26px;margin-bottom:8px">🔄</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Check for Updates</div><div style="color:#64748b;font-size:13px;line-height:1.6">Safe upgrade analysis — see what's pending, install updates securely.</div></div>
+          <div class="card"><div style="font-size:26px;margin-bottom:8px">🌍</div><div style="font-weight:700;margin-bottom:5px;color:#0f172a">Find Linux App</div><div style="color:#64748b;font-size:13px;line-height:1.6">"What replaces Photoshop / Word / iTunes on Linux?" — finds the best alternative.</div></div>
         </div>
       </div>
       <div>
@@ -479,7 +516,15 @@ body{font-family:'Inter',sans-serif;background:#f8fafc;color:#0f172a}
       </div>
       <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px">
         <div style="color:#fb923c;font-weight:700;margin-bottom:8px;font-size:15px">⚡ Smart &amp; Fast</div>
-        <div style="color:#94a3b8;font-size:13px;line-height:1.7">Common commands bypass AI entirely — instant response, zero tokens. AI only when it truly helps.</div>
+        <div style="color:#94a3b8;font-size:13px;line-height:1.7">Common commands bypass AI entirely — instant response, zero tokens. Smart routing uses the smallest model that can handle the task, escalating only when needed.</div>
+      </div>
+      <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px">
+        <div style="color:#c4b5fd;font-weight:700;margin-bottom:8px;font-size:15px">🧠 Cross-Session Memory</div>
+        <div style="color:#94a3b8;font-size:13px;line-height:1.7">TuxGenie remembers your system specs, installed apps, and every past action across sessions. It gets smarter the more you use it — no repeating yourself.</div>
+      </div>
+      <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px">
+        <div style="color:#fcd34d;font-weight:700;margin-bottom:8px;font-size:15px">⏳ Live Install Progress</div>
+        <div style="color:#94a3b8;font-size:13px;line-height:1.7">Every install shows a live spinner with elapsed time, apt percentage, and the current action. You always know what's happening — never wonder if it hung.</div>
       </div>
       <div style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:22px">
         <div style="color:#60a5fa;font-weight:700;margin-bottom:8px;font-size:15px">🔄 Auto-Updates</div>
