@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.37.0"
+__version__ = "5.38.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -299,8 +299,10 @@ class AnthropicBackend:
         self.auto_model = True
         self.expert_mode = False   # compact output — skip beginner explanations
         self.client     = None
-        self._session_input_tokens  = 0
-        self._session_output_tokens = 0
+        self._session_input_tokens         = 0
+        self._session_output_tokens        = 0
+        self._session_cache_creation_tokens = 0   # written to cache (~1.25x cost)
+        self._session_cache_read_tokens     = 0   # served from cache (~0.1x cost)
         if not self._no_key:
             self._init_client(api_key)
 
@@ -343,23 +345,44 @@ class AnthropicBackend:
     def label(self):
         return f"Anthropic · {self.model}"
 
+    # Hints that a request likely needs Sonnet-level reasoning even on round 1.
+    # Multi-step installs, network/boot diagnostics, kernel/driver issues — Haiku
+    # often produces shallow plans that fail and force a retry. Starting at Sonnet
+    # avoids the wasted Haiku call.
+    _COMPLEX_HINTS = (
+        "install ", "uninstall ", "remove ", "configure ", "set up ",
+        "boot ", "kernel", "driver", "wifi", "bluetooth", "audio",
+        "graphics", "gpu", "nvidia", "amdgpu", "compile", "kernel panic",
+        "secure boot", "dual boot", "encrypt", "luks", "lvm",
+        "systemd", "service ", "cron", "nginx", "apache", "docker",
+        "permission denied", "won't start", "won't boot", "fails to",
+    )
+
     def select_model_for_task(self, user_text: str, round_num: int = 1):
         """Auto-select the cheapest model that can handle the task.
-        Round 1 simple tasks → Haiku. Retries or complex → Sonnet."""
+        Round 1 simple tasks → Haiku. Complex tasks or retries → Sonnet."""
         if not self.auto_model:
             return  # user manually picked a model, respect it
         if round_num > 1:
-            # If first attempt failed, escalate to Sonnet
             if self.model != _SONNET_MODEL and self.base_model != _OPUS_MODEL:
                 self.model = _SONNET_MODEL
             return
-        if self.base_model != _OPUS_MODEL:
-            self.model = _HAIKU_MODEL
-        else:
+        if self.base_model == _OPUS_MODEL:
             self.model = self.base_model
+            return
+        text = (user_text or "").lower()
+        if any(h in text for h in self._COMPLEX_HINTS):
+            self.model = _SONNET_MODEL
+        else:
+            self.model = _HAIKU_MODEL
 
-    def ask(self, system, messages, max_tokens=4096):
-        """Streaming call — prints a live progress counter while receiving."""
+    def ask(self, system, messages, max_tokens=4096, cache_system=False):
+        """Streaming call — prints a live progress counter while receiving.
+
+        cache_system=True wraps the system prompt in a cache_control block,
+        cutting input cost ~90% on repeated calls with the same system prompt.
+        Only effective when the system prompt exceeds the model's cache minimum
+        (4096 tokens for Opus/Haiku, 2048 for Sonnet)."""
         if self._no_key:
             print(f"\n  {YELLOW}{BOLD}🔑 AI features need an Anthropic API key.{R}")
             print(f"  {DIM}Terminal commands work without a key — always free.{R}")
@@ -372,6 +395,9 @@ class AnthropicBackend:
                 info(f"Cancelled. Type {BOLD}k{R} at the menu anytime to add your key.")
                 return ""
             self._set_key(key)
+        if cache_system and isinstance(system, str):
+            system = [{"type": "text", "text": system,
+                       "cache_control": {"type": "ephemeral"}}]
         chunks = []
         char_count = 0
         with self.client.messages.stream(
@@ -382,13 +408,18 @@ class AnthropicBackend:
                 chunks.append(text)
                 char_count += len(text)
                 print(f"\r  {CYAN}⚡ Receiving… {char_count} chars{R}   ", end="", flush=True)
-        # Track token usage from the stream's final message
         final = stream.get_final_message()
         if final and final.usage:
-            self._session_input_tokens  += final.usage.input_tokens
-            self._session_output_tokens += final.usage.output_tokens
+            self._record_usage(final.usage)
         print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
         return "".join(chunks)
+
+    def _record_usage(self, usage):
+        """Accumulate per-session token counts (regular + cache)."""
+        self._session_input_tokens          += getattr(usage, "input_tokens", 0) or 0
+        self._session_output_tokens         += getattr(usage, "output_tokens", 0) or 0
+        self._session_cache_creation_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+        self._session_cache_read_tokens     += getattr(usage, "cache_read_input_tokens", 0) or 0
 
     def session_cost_estimate(self) -> str:
         """Return estimated session cost based on tracked tokens."""
@@ -400,10 +431,22 @@ class AnthropicBackend:
         }
         # Use average pricing since model may switch mid-session
         p_in, p_out = model_prices.get(self.model, (3.0, 15.0))
-        cost = (self._session_input_tokens * p_in + self._session_output_tokens * p_out) / 1_000_000
-        return (f"Session tokens: ~{self._session_input_tokens:,} in + "
+        # Cache writes cost ~1.25x base input; reads cost ~0.1x.
+        cost = (
+            self._session_input_tokens          * p_in
+          + self._session_output_tokens         * p_out
+          + self._session_cache_creation_tokens * p_in * 1.25
+          + self._session_cache_read_tokens     * p_in * 0.10
+        ) / 1_000_000
+        line = (f"Session tokens: ~{self._session_input_tokens:,} in + "
                 f"~{self._session_output_tokens:,} out · "
                 f"Est. cost: ${cost:.4f}")
+        if self._session_cache_read_tokens or self._session_cache_creation_tokens:
+            saved = self._session_cache_read_tokens * p_in * 0.90 / 1_000_000
+            line += (f"\n  Cache: {self._session_cache_read_tokens:,} read + "
+                     f"{self._session_cache_creation_tokens:,} written · "
+                     f"saved ~${saved:.4f}")
+        return line
 
 # ── Config / API key ─────────────────────────────────────────────────────────
 _NO_KEY = "__NO_KEY__"   # sentinel — user chose to skip key setup
@@ -1126,26 +1169,62 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     True agentic fix engine using Claude's native tool_use API.
     Claude calls run_command one step at a time, sees real output, and
     diagnoses/fixes based on actual results — no upfront batch planning.
-    Powered by Opus for maximum reasoning quality.
+    Powered by Opus 4.7 with adaptive thinking and prompt caching.
+
+    Optimizations:
+    - Prompt caching: tools + system are cached once; per-turn breakpoints on
+      the latest user message let subsequent turns read everything before for
+      ~0.1x cost. Saves the bulk of input tokens on long agentic loops.
+    - Adaptive thinking + effort=xhigh: 4.7 dynamically allocates thinking
+      tokens; xhigh is the recommended setting for coding/agentic work.
     """
-    system   = AGENTIC_SYS + _sys_ctx_block(ctx)
+    # System prompt + tools are stable across the whole loop — cache them.
+    system_blocks = [{
+        "type": "text",
+        "text": AGENTIC_SYS + _sys_ctx_block(ctx),
+        "cache_control": {"type": "ephemeral"},
+    }]
+    # The last tool definition gets a cache_control so the entire tools array
+    # is cached together with system. (Tools render before system in the prefix.)
+    tools = [dict(t) for t in AGENTIC_TOOLS]
+    tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
+
     messages = [{"role": "user", "content": task}]
     sudo_pw  = None
     step_counter = [1]
 
-    print(f"\n  {CYAN}{BOLD}⚡ AI: Anthropic · {_OPUS_MODEL}{R}")
+    print(f"\n  {CYAN}{BOLD}⚡ AI: Anthropic · {_OPUS_MODEL}  ·  adaptive thinking{R}")
+
+    def _create_request():
+        # cache_control on the last block of the most recent user message
+        # so the next turn can read the whole accumulated prefix back.
+        msgs = [dict(m) for m in messages]
+        last = msgs[-1]
+        if last["role"] == "user":
+            content = last["content"]
+            if isinstance(content, str):
+                content = [{"type": "text", "text": content,
+                            "cache_control": {"type": "ephemeral"}}]
+            elif isinstance(content, list) and content:
+                content = [dict(b) for b in content]
+                content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
+            last["content"] = content
+            msgs[-1] = last
+        return backend.client.messages.create(
+            model        = _OPUS_MODEL,
+            max_tokens   = 16000,
+            thinking     = {"type": "adaptive"},
+            output_config= {"effort": "xhigh"},
+            system       = system_blocks,
+            tools        = tools,
+            messages     = msgs,
+        )
 
     try:
         for turn in range(max_turns):
             print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
             try:
-                response = backend.client.messages.create(
-                    model      = _OPUS_MODEL,
-                    max_tokens = 4096,
-                    system     = system,
-                    tools      = AGENTIC_TOOLS,
-                    messages   = messages
-                )
+                response = _create_request()
             except KeyboardInterrupt:
                 print(f"\n  {YELLOW}Cancelled.{R}")
                 return
@@ -1153,6 +1232,10 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 print(" " * 40, end="\r")
                 print(f"  {RED}API error: {e}{R}")
                 return
+
+            # Track usage (regular + cache tokens) so session cost is accurate.
+            if getattr(response, "usage", None):
+                backend._record_usage(response.usage)
 
             print(" " * 40, end="\r", flush=True)
 

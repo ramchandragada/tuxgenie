@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tuxgenie"
-version = "5.37.0"
+version = "5.38.0"
 description = "AI-powered Linux assistant — fix any Linux problem in plain English"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.8"
-dependencies = ["anthropic>=0.20.0"]
+dependencies = ["anthropic>=0.50.0"]
 
 keywords = ["linux", "ai", "assistant", "claude", "terminal", "troubleshooter", "sysadmin"]
 classifiers = [
