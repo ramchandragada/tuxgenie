@@ -4,10 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. 31 built-in tools, app catalog, AI tools installer, cross-session memory. Free forever.">
+<meta name="author" content="Aspera Technologies">
 <meta property="og:title" content="TuxGenie — AI-Powered Linux Assistant">
-<meta property="og:description" content="Fix any Linux problem by describing it in plain English. Powered by Claude AI. Free forever.">
+<meta property="og:description" content="Fix any Linux problem by describing it in plain English. 31 built-in tools, app catalog, AI tools installer. Powered by Claude AI. Free forever.">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://tuxgenie.com/">
+<meta property="og:image" content="https://opengraph.githubassets.com/1/ramchandragada/tuxgenie">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="TuxGenie — AI-Powered Linux Assistant">
+<meta name="twitter:description" content="Fix any Linux problem in plain English. 31 built-in tools, app catalog, AI tools installer. Free forever.">
+<meta name="twitter:image" content="https://opengraph.githubassets.com/1/ramchandragada/tuxgenie">
 <meta name="theme-color" content="#f8f7ff">
+<link rel="canonical" href="https://tuxgenie.com/">
 <title>TuxGenie — AI-Powered Linux Assistant</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -22,7 +32,7 @@
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html{scroll-behavior:smooth}
-body{font-family:var(--fb);background:var(--bg);color:var(--t1);line-height:1.6;-webkit-font-smoothing:antialiased}
+body{font-family:var(--fb);background:var(--bg);color:var(--t1);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
 h1,h2,h3{font-family:var(--fd);font-weight:700;letter-spacing:-.02em}
 .mono{font-family:var(--fm)}
 a{color:inherit}
@@ -197,12 +207,40 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
   .btn{padding:10px 16px;font-size:13px}
 }
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "TuxGenie",
+  "applicationCategory": "UtilitiesApplication",
+  "operatingSystem": "Linux",
+  "description": "AI-powered Linux assistant. Fix any Linux problem in plain English. 31 built-in tools, app catalog, AI tools installer, cross-session memory.",
+  "url": "https://tuxgenie.com/",
+  "downloadUrl": "https://github.com/ramchandragada/tuxgenie/releases/latest",
+  "softwareVersion": "5.43.1",
+  "author": {
+    "@type": "Organization",
+    "name": "Aspera Technologies",
+    "url": "https://github.com/ramchandragada/tuxgenie"
+  },
+  "license": "https://opensource.org/licenses/MIT",
+  "isAccessibleForFree": true,
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  },
+  "codeRepository": "https://github.com/ramchandragada/tuxgenie"
+}
+</script>
 </head>
 <body>
+<a href="#main-content" class="skip-link" style="position:absolute;top:-40px;left:8px;padding:8px 14px;background:var(--green);color:#fff;border-radius:0 0 8px 8px;font-size:13px;font-weight:600;text-decoration:none;z-index:999;transition:top .2s" onfocus="this.style.top='0'" onblur="this.style.top='-40px'">Skip to main content</a>
 <!-- NAV -->
+<div id="top"></div>
 <nav class="nav">
   <div class="nav-in">
-    <a href="#" class="nav-logo" aria-label="TuxGenie home">
+    <a href="#top" class="nav-logo" aria-label="TuxGenie home">
       <span>🐧</span>
       <span style="font-family:var(--fd);font-size:18px;font-weight:800" class="grad">TuxGenie</span>
       <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v5.43.1</span>
@@ -228,7 +266,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
 </nav>
 
 <!-- HERO -->
-<section class="hero">
+<section id="main-content" class="hero">
   <div class="container">
     <div class="hero-grid">
       <div>
@@ -326,7 +364,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
       <div class="step step-2 fade">
         <div class="step-num">2</div>
         <h3>Add your API key</h3>
-        <p>Get a free key at <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">console.anthropic.com</a>. TuxGenie connects directly — your data never touches our servers.</p>
+        <p>Get an API key at <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">console.anthropic.com</a> — sign-up is free, usage is billed by Anthropic. TuxGenie connects directly; your data never touches our servers.</p>
       </div>
       <div class="step step-3 fade">
         <div class="step-num">3</div>
@@ -375,6 +413,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
       <div class="fgroup-hd"><span class="cat-pill cat-fix">🔧 Fix Something</span><span class="fgroup-tip">Common things that go wrong</span></div>
       <div class="fgrid">
         <div class="fcard"><span class="fcard-num">[1]</span><span class="fcard-icon">🔧</span><div class="fcard-name">Fix a Problem</div><div class="fcard-desc">Describe any Linux issue in plain English — diagnosed and fixed step by step.</div></div>
+        <div class="fcard"><span class="fcard-num">[2]</span><span class="fcard-icon">🩺</span><div class="fcard-name">Health Check</div><div class="fcard-desc">Full system health scan — CPU, memory, disk, services, and update status at a glance.</div></div>
         <div class="fcard"><span class="fcard-num">[3]</span><span class="fcard-icon">📶</span><div class="fcard-name">Internet / WiFi</div><div class="fcard-desc">Diagnose &amp; fix WiFi, DNS, and connectivity problems automatically.</div></div>
         <div class="fcard"><span class="fcard-num">[4]</span><span class="fcard-icon">🔊</span><div class="fcard-name">Sound / Audio</div><div class="fcard-desc">No audio, mic not working, HDMI sound — fixed in minutes.</div></div>
         <div class="fcard"><span class="fcard-num">[5]</span><span class="fcard-icon">🖥</span><div class="fcard-name">Display</div><div class="fcard-desc">Wrong resolution, monitor not detected, multi-display problems solved.</div></div>
@@ -492,7 +531,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
 <footer>
   <div class="container">
     <div class="foot">
-      <a href="#" class="foot-l" aria-label="TuxGenie home">
+      <a href="#top" class="foot-l" aria-label="TuxGenie home">
         <span style="font-size:18px">🐧</span>
         <span class="grad" style="font-family:var(--fd);font-weight:800;font-size:14px">TuxGenie</span>
         <span>v5.43.1</span><span>·</span><span>MIT License</span><span>·</span><span>Built by Aspera Technologies</span>
