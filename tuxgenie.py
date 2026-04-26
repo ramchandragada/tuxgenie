@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.44.0"
+__version__ = "5.45.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -450,16 +450,188 @@ class AnthropicBackend:
                      f"saved ~${saved:.4f}")
         return line
 
+# ── Ollama backend (free, local, zero-config) ────────────────────────────────
+_OLLAMA_DEFAULT_MODEL = "llama3.2:3b"   # ~2 GB, runs on 4 GB RAM, decent for shell tasks
+_OLLAMA_API = "http://127.0.0.1:11434"
+
+def _detect_ollama():
+    """Return (installed, running, models). models is a list of model names."""
+    installed = shutil.which("ollama") is not None
+    if not installed:
+        return False, False, []
+    try:
+        req = urllib.request.Request(f"{_OLLAMA_API}/api/tags")
+        with urllib.request.urlopen(req, timeout=2) as r:
+            data = json.loads(r.read().decode())
+        models = [m.get("name", "") for m in data.get("models", [])]
+        return True, True, models
+    except Exception:
+        return True, False, []
+
+def _start_ollama_service():
+    """Try to start the Ollama systemd service if it isn't running."""
+    try:
+        subprocess.run(["systemctl", "--user", "start", "ollama"],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+    try:
+        subprocess.run(["sudo", "systemctl", "start", "ollama"],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+    # Give it a moment to come up
+    for _ in range(10):
+        time.sleep(0.5)
+        try:
+            with urllib.request.urlopen(f"{_OLLAMA_API}/api/tags", timeout=1):
+                return True
+        except Exception:
+            continue
+    return False
+
+def _install_ollama_auto(model_name=_OLLAMA_DEFAULT_MODEL):
+    """Auto-install Ollama + pull a model. Returns True on success."""
+    print(f"\n  {CYAN}{BOLD}▶ Setting up local AI (one-time setup)…{R}\n")
+    installed, _, _ = _detect_ollama()
+    if not installed:
+        print(f"  {CYAN}Step 1/2: Installing Ollama (~50 MB)…{R}")
+        rc = subprocess.run(
+            "curl -fsSL https://ollama.com/install.sh | sh",
+            shell=True
+        ).returncode
+        if rc != 0:
+            err("Ollama install failed. Check your internet connection and try again.")
+            info("Manual install: curl -fsSL https://ollama.com/install.sh | sh")
+            return False
+        ok("Ollama installed!")
+    else:
+        ok("Ollama already installed.")
+
+    # Make sure the service is up
+    _, running, _ = _detect_ollama()
+    if not running:
+        print(f"  {DIM}Starting Ollama service…{R}")
+        if not _start_ollama_service():
+            warn("Could not auto-start Ollama. Try: sudo systemctl start ollama")
+            return False
+
+    # Check if model already there
+    _, _, models = _detect_ollama()
+    have = any(m.startswith(model_name.split(":")[0]) for m in models)
+    if have:
+        ok(f"Model {model_name} already downloaded.")
+        return True
+
+    print(f"\n  {CYAN}Step 2/2: Downloading AI model {BOLD}{model_name}{R}{CYAN} (~2 GB, one-time)…{R}")
+    print(f"  {DIM}This takes 1-5 minutes depending on your internet.{R}\n")
+    rc = subprocess.run(["ollama", "pull", model_name]).returncode
+    if rc != 0:
+        err(f"Could not download {model_name}.")
+        info(f"Try manually: ollama pull {model_name}")
+        return False
+    ok(f"Model {model_name} ready!")
+    return True
+
+class OllamaBackend:
+    """Local AI backend via Ollama. Same interface as AnthropicBackend."""
+    def __init__(self, model=_OLLAMA_DEFAULT_MODEL):
+        self._no_key     = False    # local — no key needed
+        self.api_key     = ""
+        self.model       = model
+        self.base_model  = model
+        self.auto_model  = False
+        self.expert_mode = False
+        self.is_local    = True
+        self._weak_response_count = 0   # tracks "I don't know" type responses
+
+    def label(self):
+        return f"Ollama (local) · {self.model}"
+
+    def select_model_for_task(self, user_text: str, round_num: int = 1):
+        # Local model is fixed — no escalation possible
+        return
+
+    def ask(self, system, messages, max_tokens=4096, cache_system=False):
+        """Call Ollama's /api/chat endpoint. Streams response with progress."""
+        # Normalize system prompt (AnthropicBackend supports list-form for cache)
+        if isinstance(system, list):
+            system = "".join(b.get("text", "") for b in system if isinstance(b, dict))
+
+        chat_messages = [{"role": "system", "content": system}] if system else []
+        for m in messages:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
+            chat_messages.append({"role": m.get("role", "user"), "content": content})
+
+        body = json.dumps({
+            "model": self.model,
+            "messages": chat_messages,
+            "stream": True,
+            "options": {"num_predict": max_tokens, "temperature": 0.3},
+        }).encode()
+
+        chunks = []
+        char_count = 0
+        try:
+            req = urllib.request.Request(
+                f"{_OLLAMA_API}/api/chat",
+                data=body,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                for raw_line in resp:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line:
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    msg = evt.get("message", {}).get("content", "")
+                    if msg:
+                        chunks.append(msg)
+                        char_count += len(msg)
+                        print(f"\r  {CYAN}⚡ Local AI… {char_count} chars{R}   ",
+                              end="", flush=True)
+                    if evt.get("done"):
+                        break
+        except urllib.error.URLError:
+            print()
+            err("Could not reach Ollama. Is the service running?")
+            info("Try: sudo systemctl start ollama")
+            return ""
+        except Exception as e:
+            print()
+            err(f"Ollama error: {e}")
+            return ""
+
+        text = "".join(chunks)
+        print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
+
+        # Detect "I don't know" / weak responses → suggest Claude upgrade
+        weak_phrases = ("i'm not sure", "i don't know", "cannot help",
+                        "unable to determine", "i cannot")
+        if text and any(p in text.lower()[:200] for p in weak_phrases):
+            self._weak_response_count += 1
+            if self._weak_response_count == 2:
+                print(f"\n  {YELLOW}💡 Local AI is struggling on this one.{R}")
+                print(f"  {DIM}Claude handles complex problems better. Type {BOLD}k{R}{DIM} to add a Claude key.{R}\n")
+        return text
+
+    def session_cost_estimate(self) -> str:
+        return "Session cost: $0.00 (local AI — always free)"
+
+    def _set_key(self, key):
+        # No-op: Ollama doesn't use keys
+        pass
+
 # ── Config / API key ─────────────────────────────────────────────────────────
 _NO_KEY = "__NO_KEY__"   # sentinel — user chose to skip key setup
 
-def _load_api_key(cfg):
-    """Get API key from env, config, old installs, or prompt user."""
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if key: return key
-    key = cfg.get("api_key", "").strip()
-    if key: return key
-    # Migrate from old ai-terminal install
+def _migrate_old_key():
+    """Pull an API key from the old ai-terminal install if one exists."""
     try:
         old = json.loads(open(os.path.expanduser("~/.config/ai-terminal/config.json")).read())
         k = old.get("api_key","").strip()
@@ -468,36 +640,96 @@ def _load_api_key(cfg):
             return k
     except Exception:
         pass
-    # Ask user — with option to skip and add later
-    _line = f"  {DIM}{'─'*54}{R}"
+    return ""
+
+def _load_api_key(cfg):
+    """Get API key from env, config, or migration."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if key: return key
+    key = cfg.get("api_key", "").strip()
+    if key: return key
+    return _migrate_old_key()
+
+def _setup_wizard(cfg):
+    """First-run wizard offering Ollama (free local) or Claude (paid cloud).
+    Returns ('ollama', model_name) | ('claude', api_key) | ('skip', None)."""
+    _line = f"  {DIM}{'─'*58}{R}"
     print(f"\n{_line}")
-    print(f"  {YELLOW}{BOLD}🔑 Anthropic API Key Setup{R}")
+    print(f"  {GREEN}{BOLD}🐧 TuxGenie — Quick Setup{R}")
     print(f"{_line}")
-    print(f"\n  TuxGenie needs an API key to use AI features")
-    print(f"  (diagnosis, fixes, script generation, etc.)\n")
-    print(f"  {GREEN}{BOLD}✔{R}  Terminal commands ALWAYS work — no key needed")
-    print(f"  {GREEN}{BOLD}✔{R}  250+ Linux commands run free, instantly\n")
-    print(f"  Get your free key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
-    print(f"  Costs ~ a few cents/session via Anthropic (we earn nothing)\n")
-    print(f"  {DIM}Press Enter to skip for now — type {BOLD}k{R}{DIM} anytime to add key later{R}\n")
+    print(f"\n  How do you want to power TuxGenie's AI?\n")
+    print(f"    {GREEN}{BOLD}[1]{R} {BOLD}FREE  Local AI{R}     Installs Ollama + a 2 GB model")
+    print(f"        {DIM}Private, no account, works offline forever{R}\n")
+    print(f"    {CYAN}{BOLD}[2]{R} {BOLD}BEST  Claude AI{R}    Paste your Anthropic key")
+    print(f"        {DIM}Smarter for tough problems · ~$0.01 per session{R}\n")
+    print(f"    {DIM}{BOLD}[s]{R}{DIM} Skip — terminal commands still work without AI{R}\n")
     try:
-        key = input("  Paste API key (or press Enter to skip): ").strip()
+        choice = input(f"  Your choice [{BOLD}1{R}/2/s]: ").strip().lower() or "1"
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
-    if not key:
-        print(f"\n  {YELLOW}Continuing without API key.{R}")
-        print(f"  {DIM}Terminal commands work fine. Type {BOLD}k{R}{DIM} whenever you want to enable AI.{R}\n")
-        return _NO_KEY
-    return key
+
+    if choice == "s":
+        print(f"\n  {YELLOW}Continuing without AI.{R}")
+        print(f"  {DIM}Type {BOLD}k{R}{DIM} anytime to set up later.{R}\n")
+        return ("skip", None)
+
+    if choice == "2":
+        print(f"\n  Get your key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
+        print(f"  {DIM}Sign-up is free. Anthropic charges by usage (a few cents/session).{R}\n")
+        try:
+            key = input("  Paste API key (or press Enter to skip): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return ("skip", None)
+        if not key:
+            return ("skip", None)
+        return ("claude", key)
+
+    # Default: Ollama (option 1)
+    print(f"\n  {GREEN}Setting up free local AI…{R}")
+    if not _install_ollama_auto():
+        print(f"\n  {YELLOW}Ollama setup failed. Falling back to no-AI mode.{R}")
+        print(f"  {DIM}Type {BOLD}k{R}{DIM} to retry or use Claude instead.{R}\n")
+        return ("skip", None)
+    print(f"\n  {GREEN}{BOLD}🎉 TuxGenie is ready! Local AI is active.{R}\n")
+    return ("ollama", _OLLAMA_DEFAULT_MODEL)
 
 def load_backend():
-    """Load config and return a single AnthropicBackend."""
+    """Load config and return either an OllamaBackend or AnthropicBackend."""
     cfg = load_cfg()
+
+    # 1. Saved Ollama backend?
+    if cfg.get("backend") == "ollama":
+        installed, running, models = _detect_ollama()
+        if installed:
+            if not running:
+                _start_ollama_service()
+            ollama_model = cfg.get("ollama_model", _OLLAMA_DEFAULT_MODEL)
+            b = OllamaBackend(model=ollama_model)
+            b.expert_mode = bool(cfg.get("expert_mode", False))
+            return b
+        # Ollama gone — fall through to ask again
+
+    # 2. Saved Claude key?
     key = _load_api_key(cfg)
-    model = cfg.get("model", "claude-haiku-4-5-20251001")
-    if key != _NO_KEY:
-        save_cfg({"api_key": key})   # only persist real keys
-    b = AnthropicBackend(api_key=key, model=model)
+    if key:
+        save_cfg({"api_key": key, "backend": "claude"})
+        model = cfg.get("model", "claude-haiku-4-5-20251001")
+        b = AnthropicBackend(api_key=key, model=model)
+        b.expert_mode = bool(cfg.get("expert_mode", False))
+        return b
+
+    # 3. First run — show the wizard
+    kind, value = _setup_wizard(cfg)
+    if kind == "ollama":
+        save_cfg({"backend": "ollama", "ollama_model": value})
+        b = OllamaBackend(model=value)
+    elif kind == "claude":
+        save_cfg({"backend": "claude", "api_key": value})
+        model = cfg.get("model", "claude-haiku-4-5-20251001")
+        b = AnthropicBackend(api_key=value, model=model)
+    else:
+        save_cfg({"backend": "none"})
+        b = AnthropicBackend(api_key=_NO_KEY)
     b.expert_mode = bool(cfg.get("expert_mode", False))
     return b
 
@@ -508,34 +740,55 @@ AVAILABLE_MODELS = [
 ]
 
 def feat_set_api_key(backend):
-    """Set or update the Anthropic API key — command: k"""
-    hdr("Connect Anthropic API Key")
-    if not backend._no_key and backend.api_key:
-        masked = backend.api_key[:8] + "…" + backend.api_key[-4:]
-        info(f"Current key: {CYAN}{masked}{R}  (AI features are active)")
-    else:
-        print(f"\n  {YELLOW}No API key set — AI features are currently disabled.{R}")
-    print(f"\n  Get your free key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
-    print(f"  {DIM}Cost: ~$0.25 per million tokens via Anthropic (Haiku model)")
-    print(f"  A typical session costs a fraction of a cent. We earn nothing.{R}\n")
+    """Switch between AI backends (Ollama / Claude) — command: k"""
+    hdr("AI Backend Setup")
+    info(f"Current: {backend.label()}")
+
+    print(f"\n  Pick a backend:\n")
+    print(f"    {GREEN}{BOLD}[1]{R} Local AI (Ollama)   {DIM}— free, private, offline{R}")
+    print(f"    {CYAN}{BOLD}[2]{R} Claude AI            {DIM}— smarter, ~$0.01/session, needs API key{R}")
+    print(f"    {DIM}[c] Cancel{R}\n")
     try:
-        key = input("  Paste API key (or press Enter to cancel): ").strip()
+        choice = input(f"  Your choice: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         return
-    if not key:
-        warn("No key entered. Nothing changed.")
-        return
-    if not key.startswith("sk-ant-") or len(key) < 20:
-        warn("That doesn't look like a valid Anthropic API key.")
-        info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
-        try:
-            confirm = input("  Save it anyway? [y/n]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            confirm = "n"
-        if confirm not in ("y", "yes"):
-            warn("Key not saved.")
+
+    if choice == "1":
+        if not _install_ollama_auto():
+            warn("Ollama setup failed.")
             return
-    backend._set_key(key)
+        save_cfg({"backend": "ollama", "ollama_model": _OLLAMA_DEFAULT_MODEL})
+        ok(f"Switched to local AI ({_OLLAMA_DEFAULT_MODEL}). Restart TuxGenie to take effect.")
+        return
+
+    if choice == "2":
+        print(f"\n  Get your key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
+        print(f"  {DIM}Sign-up is free. Anthropic charges by usage (a few cents/session).{R}\n")
+        try:
+            key = input("  Paste API key (or press Enter to cancel): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if not key:
+            warn("No key entered. Nothing changed.")
+            return
+        if not key.startswith("sk-ant-") or len(key) < 20:
+            warn("That doesn't look like a valid Anthropic API key.")
+            info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
+            try:
+                confirm = input("  Save it anyway? [y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                confirm = "n"
+            if confirm not in ("y", "yes"):
+                warn("Key not saved.")
+                return
+        save_cfg({"backend": "claude", "api_key": key})
+        if isinstance(backend, AnthropicBackend):
+            backend._set_key(key)
+        else:
+            ok("Claude key saved. Restart TuxGenie to switch backends.")
+        return
+
+    info("Cancelled.")
 
 def feat_settings(backend, bctx, slog):
     """Settings: view/change API key and model."""

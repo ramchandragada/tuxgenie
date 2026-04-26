@@ -217,7 +217,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
   "description": "AI-powered Linux assistant. Fix any Linux problem in plain English. 31 built-in tools, app catalog, AI tools installer, cross-session memory.",
   "url": "https://tuxgenie.com/",
   "downloadUrl": "https://github.com/ramchandragada/tuxgenie/releases/latest",
-  "softwareVersion": "5.44.0",
+  "softwareVersion": "5.45.0",
   "author": {
     "@type": "Organization",
     "name": "Aspera Technologies",
@@ -243,7 +243,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
     <a href="#top" class="nav-logo" aria-label="TuxGenie home">
       <span>🐧</span>
       <span style="font-family:var(--fd);font-size:18px;font-weight:800" class="grad">TuxGenie</span>
-      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v5.44.0</span>
+      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v5.45.0</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
@@ -274,9 +274,9 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
         <h1 class="hero-h1">Linux,<br>made <span class="grad">effortlessly</span><br>simple.</h1>
         <p class="hero-sub">TuxGenie is an AI-powered Linux assistant. Describe what you need in plain English — it diagnoses, fixes, installs, and configures your system for you. No experience required.</p>
         <div class="api-note">
-          <span style="font-size:16px;flex-shrink:0;line-height:1.3">🔑</span>
+          <span style="font-size:16px;flex-shrink:0;line-height:1.3">⚡</span>
           <div style="font-size:13px;color:var(--t2);line-height:1.6">
-            <strong style="color:var(--t1)">Bring your own Anthropic API key.</strong> Get one at <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> — usage billed by Anthropic (~cents per session). Terminal commands run free.
+            <strong style="color:var(--t1)">Two ways to power it:</strong> free local AI (Ollama, auto-installed in 2 keystrokes) or your own Claude key for top quality. Pick at first run — switch anytime.
           </div>
         </div>
         <div class="hero-ctas">
@@ -286,15 +286,15 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
         <div class="stats">
           <div><span class="grad">31</span><span>Built-in Tools</span></div>
           <div style="width:1px;background:var(--border)"></div>
-          <div><span class="grad">BYOK</span><span>Your API Key</span></div>
+          <div><span class="grad">Free</span><span>Or Claude AI</span></div>
           <div style="width:1px;background:var(--border)"></div>
           <div><span class="grad">Any</span><span>Linux Distro</span></div>
         </div>
         <div class="new-strip">
+          <span class="pill pill-g">🆕 Free local AI · zero config</span>
           <span class="pill pill-g">🆕 [77] App Catalog · 30 apps</span>
           <span class="pill pill-g">🆕 [99] AI Tools · Ollama, Claude Code &amp; more</span>
           <span class="pill pill-g">🧠 Cross-session memory</span>
-          <span class="pill pill-g">⏳ Live install progress</span>
         </div>
       </div>
       <div class="tw-wrap">
@@ -363,8 +363,8 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
       </div>
       <div class="step step-2 fade">
         <div class="step-num">2</div>
-        <h3>Add your API key</h3>
-        <p>Get an API key at <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">console.anthropic.com</a> — sign-up is free, usage is billed by Anthropic. TuxGenie connects directly; your data never touches our servers.</p>
+        <h3>Pick your AI</h3>
+        <p>Press <strong style="color:var(--t1)">1</strong> for free local AI (auto-installs Ollama + a 2 GB model) or <strong style="color:var(--t1)">2</strong> for Claude (paste a key from <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">console.anthropic.com</a>). Switch anytime by typing <code style="background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-family:var(--fm);font-weight:600">k</code>.</p>
       </div>
       <div class="step step-3 fade">
         <div class="step-num">3</div>
@@ -491,9 +491,10 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
     <div class="cost-note fade">
       <span style="font-size:18px;flex-shrink:0;line-height:1.3">💡</span>
       <div style="font-size:14px;color:var(--t2);line-height:1.7">
-        <strong style="color:var(--t1)">TuxGenie is free and open source.</strong> The app costs nothing.
-        AI features use the <strong style="color:var(--t1)">Anthropic Claude API</strong> — you'll need a free key from <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>.
-        Anthropic charges for AI usage (Haiku ~$0.25/M tokens — a session costs a fraction of a cent). <strong style="color:var(--t1)">Terminal commands bypass AI entirely and are always free.</strong>
+        <strong style="color:var(--t1)">TuxGenie is free and open source.</strong> Pick your AI on first run:
+        <strong style="color:var(--t1)">free local AI</strong> (Ollama auto-installs in 2 keystrokes — works offline)
+        or <strong style="color:var(--t1)">Claude</strong> (paste a key from <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a>; ~cents per session).
+        <strong style="color:var(--t1)">Terminal commands bypass AI entirely and are always free.</strong>
       </div>
     </div>
     <div id="dpicker" class="fade"></div>
@@ -517,7 +518,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
       </div>
     </div>
     <div class="trust-grid">
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">Your Key — Your Cost</h4><p>You bring your own <a href="https://console.anthropic.com" target="_blank" rel="noopener">Anthropic API key</a>. No middleman, no markup. We make nothing from your usage.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🆓</div><h4 style="color:#4338ca">Free Forever Mode</h4><p>Press <strong>1</strong> at first run — TuxGenie auto-installs Ollama and a local AI model. No account, no key, no cloud. Works offline. Or bring your own <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude key</a> for top quality.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. Smart routing uses the smallest model that handles the task — escalates only when needed.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🧠</div><h4 style="color:#7e22ce">Cross-Session Memory</h4><p>TuxGenie remembers your system specs, installed apps, and every past action. Gets smarter the more you use it.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⏳</div><h4 style="color:#854d0e">Live Install Progress</h4><p>Spinner with elapsed time, apt percentage, and current action. Never wonder if a long install hung.</p></div>
@@ -534,7 +535,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
       <a href="#top" class="foot-l" aria-label="TuxGenie home">
         <span style="font-size:18px">🐧</span>
         <span class="grad" style="font-family:var(--fd);font-weight:800;font-size:14px">TuxGenie</span>
-        <span>v5.44.0</span><span>·</span><span>MIT License</span><span>·</span><span>Built by Aspera Technologies</span>
+        <span>v5.45.0</span><span>·</span><span>MIT License</span><span>·</span><span>Built by Aspera Technologies</span>
       </a>
       <div class="foot-r">
         <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">GitHub</a>
@@ -627,7 +628,7 @@ function copyCmd(btn,txt){
 // Terminal animation
 const lines=[
   {t:'p',v:'tuxgenie'},
-  {t:'o',v:'🐧 TuxGenie v5.44.0 — Your Linux AI assistant',c:'#a5b4fc'},
+  {t:'o',v:'🐧 TuxGenie v5.45.0 — Your Linux AI assistant',c:'#a5b4fc'},
   {t:'b'},
   {t:'i',v:'my wifi is not working'},
   {t:'o',v:'  🔍 Scanning network interfaces...',c:'#93c5fd'},
