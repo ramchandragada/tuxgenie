@@ -217,7 +217,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
   "description": "AI-powered Linux assistant. Fix any Linux problem in plain English. 31 built-in tools, app catalog, AI tools installer, cross-session memory.",
   "url": "https://tuxgenie.com/",
   "downloadUrl": "https://github.com/ramchandragada/tuxgenie/releases/latest",
-  "softwareVersion": "5.43.1",
+  "softwareVersion": "5.44.0",
   "author": {
     "@type": "Organization",
     "name": "Aspera Technologies",
@@ -243,7 +243,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
     <a href="#top" class="nav-logo" aria-label="TuxGenie home">
       <span>🐧</span>
       <span style="font-family:var(--fd);font-size:18px;font-weight:800" class="grad">TuxGenie</span>
-      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v5.43.1</span>
+      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v5.44.0</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
@@ -534,7 +534,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
       <a href="#top" class="foot-l" aria-label="TuxGenie home">
         <span style="font-size:18px">🐧</span>
         <span class="grad" style="font-family:var(--fd);font-weight:800;font-size:14px">TuxGenie</span>
-        <span>v5.43.1</span><span>·</span><span>MIT License</span><span>·</span><span>Built by Aspera Technologies</span>
+        <span>v5.44.0</span><span>·</span><span>MIT License</span><span>·</span><span>Built by Aspera Technologies</span>
       </a>
       <div class="foot-r">
         <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">GitHub</a>
@@ -602,13 +602,23 @@ function installHtml(d){
 })();
 
 function copyCmd(btn,txt){
-  navigator.clipboard.writeText(txt).then(()=>{const o=btn.textContent;btn.textContent='✅ Copied!';setTimeout(()=>btn.textContent=o,2000);});
+  const done=()=>{const o=btn.textContent;btn.textContent='✅ Copied!';setTimeout(()=>btn.textContent=o,2000);};
+  const fallback=()=>{
+    const ta=document.createElement('textarea');
+    ta.value=txt;ta.style.cssText='position:fixed;top:-9999px;left:-9999px;opacity:0';
+    document.body.appendChild(ta);ta.focus();ta.select();
+    try{document.execCommand('copy');done();}catch(e){}
+    document.body.removeChild(ta);
+  };
+  if(navigator.clipboard&&window.isSecureContext){
+    navigator.clipboard.writeText(txt).then(done).catch(fallback);
+  }else{fallback();}
 }
 
 // Terminal animation
 const lines=[
   {t:'p',v:'tuxgenie'},
-  {t:'o',v:'🐧 TuxGenie v5.43.1 — Your Linux AI assistant',c:'#a5b4fc'},
+  {t:'o',v:'🐧 TuxGenie v5.44.0 — Your Linux AI assistant',c:'#a5b4fc'},
   {t:'b'},
   {t:'i',v:'my wifi is not working'},
   {t:'o',v:'  🔍 Scanning network interfaces...',c:'#93c5fd'},

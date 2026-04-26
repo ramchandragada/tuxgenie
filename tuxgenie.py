@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.43.1"
+__version__ = "5.44.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3886,7 +3886,23 @@ def _save_update_cache(data):
         pass
 
 def _do_update_install(deb_url, deb_name, latest):
-    """Download and install a .deb update. Returns True on success."""
+    """Download and install a .deb update, or pip upgrade on non-deb systems."""
+    # Non-deb systems (Fedora, Arch, openSUSE, etc.) — upgrade via pip
+    if not shutil.which("dpkg"):
+        print(f"\n  {CYAN}▶ Upgrading via pip (non-deb system)…{R}")
+        pkg = f"tuxgenie=={latest}"
+        rc, _, _ = run_cmd_live(f"pip3 install {pkg} --break-system-packages")
+        if rc != 0:
+            rc, _, _ = run_cmd_live(f"pip3 install {pkg}")
+        if rc == 0:
+            print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
+            print(f"  {YELLOW}Restarting TuxGenie…{R}\n")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        else:
+            err("pip upgrade failed.")
+            info(f"Try manually:  pip3 install --upgrade tuxgenie")
+        return rc == 0
+
     tmp_deb = os.path.join("/tmp", deb_name)
     print(f"\n  {CYAN}▶ Downloading v{latest}…{R}", flush=True)
     try:
