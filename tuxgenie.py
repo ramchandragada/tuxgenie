@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.45.1"
+__version__ = "5.46.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -469,17 +469,30 @@ def _detect_ollama():
         return True, False, []
 
 def _start_ollama_service():
-    """Try to start the Ollama systemd service if it isn't running."""
+    """Try to start Ollama. Returns True if reachable after starting."""
+    # 1. systemd user unit (no sudo)
     try:
         subprocess.run(["systemctl", "--user", "start", "ollama"],
                        capture_output=True, timeout=5)
     except Exception:
         pass
+    # 2. system-wide systemd (no-prompt sudo — only works if cached)
     try:
-        subprocess.run(["sudo", "systemctl", "start", "ollama"],
+        subprocess.run(["sudo", "-n", "systemctl", "start", "ollama"],
                        capture_output=True, timeout=5)
     except Exception:
         pass
+    # 3. Direct background process (works without sudo if port 11434 is free)
+    if shutil.which("ollama"):
+        try:
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception:
+            pass
     # Give it a moment to come up
     for _ in range(10):
         time.sleep(0.5)
@@ -489,6 +502,36 @@ def _start_ollama_service():
         except Exception:
             continue
     return False
+
+def _build_local_fallback(current_backend):
+    """If the current backend is cloud-based, return a usable local OllamaBackend
+    (when Ollama is installed with at least one model). Otherwise None."""
+    if getattr(current_backend, "is_local", False):
+        return None
+    installed, _running, models = _detect_ollama()
+    if not installed or not models:
+        return None
+    try:
+        cfg = load_cfg()
+    except Exception:
+        cfg = {}
+    model = cfg.get("ollama_model") or _OLLAMA_DEFAULT_MODEL
+    if model not in models:
+        model = models[0]
+    return OllamaBackend(model=model)
+
+
+def _classify_anthropic_error(exc):
+    """Map an Anthropic SDK exception to ('billing'|'auth'|'network'|'other', user_msg)."""
+    msg = str(exc).lower()
+    if "credit balance" in msg or "billing" in msg or "insufficient" in msg or "quota" in msg:
+        return "billing", "Your Anthropic API balance is empty"
+    if "authentication" in msg or "invalid api" in msg or "invalid x-api-key" in msg or "401" in msg:
+        return "auth", "Your Anthropic API key is invalid"
+    if "connection" in msg or "timeout" in msg or "timed out" in msg or "network" in msg:
+        return "network", "Could not reach the Anthropic API"
+    return "other", str(exc)
+
 
 def _install_ollama_auto(model_name=_OLLAMA_DEFAULT_MODEL):
     """Auto-install Ollama + pull a model. Returns True on success."""
@@ -557,7 +600,8 @@ class OllamaBackend:
         return
 
     def ask(self, system, messages, max_tokens=4096, cache_system=False):
-        """Call Ollama's /api/chat endpoint. Streams response with progress."""
+        """Call Ollama's /api/chat endpoint. Streams response with progress.
+        Auto-starts the Ollama service once if it isn't reachable."""
         # Normalize system prompt (AnthropicBackend supports list-form for cache)
         if isinstance(system, list):
             system = "".join(b.get("text", "") for b in system if isinstance(b, dict))
@@ -576,13 +620,38 @@ class OllamaBackend:
             "options": {"num_predict": max_tokens, "temperature": 0.3},
         }).encode()
 
+        text, char_count, recoverable = self._stream(body)
+        if text is None and recoverable:
+            # URLError → service likely down. Try to start it once and retry.
+            print(f"\n  {DIM}Ollama not running — starting service…{R}")
+            if _start_ollama_service():
+                print(f"  {GREEN}✓ Ollama service started{R}")
+                text, char_count, _ = self._stream(body)
+        if text is None:
+            return ""
+
+        print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
+
+        # Detect "I don't know" / weak responses → suggest Claude upgrade
+        weak_phrases = ("i'm not sure", "i don't know", "cannot help",
+                        "unable to determine", "i cannot")
+        if text and any(p in text.lower()[:200] for p in weak_phrases):
+            self._weak_response_count += 1
+            if self._weak_response_count == 2:
+                print(f"\n  {YELLOW}💡 Local AI is struggling on this one.{R}")
+                print(f"  {DIM}Claude handles complex problems better. Type {BOLD}k{R}{DIM} to add a Claude key.{R}\n")
+        return text
+
+    def _stream(self, body):
+        """Stream a chat response. Returns (text, char_count, recoverable).
+        text is None on failure; recoverable=True only for URLError (service down)."""
         chunks = []
         char_count = 0
         try:
             req = urllib.request.Request(
                 f"{_OLLAMA_API}/api/chat",
                 data=body,
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(req, timeout=180) as resp:
                 for raw_line in resp:
@@ -601,28 +670,13 @@ class OllamaBackend:
                               end="", flush=True)
                     if evt.get("done"):
                         break
+            return "".join(chunks), char_count, False
         except urllib.error.URLError:
-            print()
-            err("Could not reach Ollama. Is the service running?")
-            info("Try: sudo systemctl start ollama")
-            return ""
+            return None, 0, True   # recoverable — service likely down
         except Exception as e:
             print()
             err(f"Ollama error: {e}")
-            return ""
-
-        text = "".join(chunks)
-        print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
-
-        # Detect "I don't know" / weak responses → suggest Claude upgrade
-        weak_phrases = ("i'm not sure", "i don't know", "cannot help",
-                        "unable to determine", "i cannot")
-        if text and any(p in text.lower()[:200] for p in weak_phrases):
-            self._weak_response_count += 1
-            if self._weak_response_count == 2:
-                print(f"\n  {YELLOW}💡 Local AI is struggling on this one.{R}")
-                print(f"  {DIM}Claude handles complex problems better. Type {BOLD}k{R}{DIM} to add a Claude key.{R}\n")
-        return text
+            return None, 0, False
 
     def session_cost_estimate(self) -> str:
         return "Session cost: $0.00 (local AI — always free)"
@@ -1513,6 +1567,17 @@ def _handle_tool_call(block, sudo_pw, step_counter):
     return f"Unknown tool: {name}"
 
 
+def _run_simple_ai(backend, task: str, ctx: dict):
+    """One-shot AI response without the agentic tool-calling loop.
+    Used for local backends (no native tool_use) and as a fallback when
+    a cloud backend fails."""
+    print(f"\n  {CYAN}{BOLD}⚡ AI: {backend.label()}{R}")
+    system = AGENTIC_SYS + _sys_ctx_block(ctx)
+    result = backend.ask(system, [{"role": "user", "content": task}], max_tokens=4096)
+    if result:
+        print(f"\n{result}\n")
+
+
 def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: int = 25):
     """
     True agentic fix engine using Claude's native tool_use API.
@@ -1529,11 +1594,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     """
     # Ollama doesn't support native tool_use — fall back to a simple ask()
     if getattr(backend, 'is_local', False):
-        print(f"\n  {CYAN}{BOLD}⚡ AI: Ollama (local) · {backend.model}{R}")
-        system = AGENTIC_SYS + _sys_ctx_block(ctx)
-        result = backend.ask(system, [{"role": "user", "content": task}], max_tokens=4096)
-        if result:
-            print(f"\n{result}\n")
+        _run_simple_ai(backend, task, ctx)
         return
 
     # System prompt + tools are stable across the whole loop — cache them.
@@ -1588,7 +1649,24 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 return
             except Exception as e:
                 print(" " * 40, end="\r")
-                print(f"  {RED}API error: {e}{R}")
+                kind, msg = _classify_anthropic_error(e)
+                if turn == 0 and kind in ("billing", "auth"):
+                    alt = _build_local_fallback(backend)
+                    if alt is not None:
+                        reason = "low API balance" if kind == "billing" else "invalid API key"
+                        print(f"  {YELLOW}⚠ Anthropic failed ({reason}) — switching to free local AI…{R}")
+                        _run_simple_ai(alt, task, ctx)
+                        return
+                # No fallback available — show actionable help
+                if kind == "billing":
+                    print(f"  {RED}API error: {msg}.{R}")
+                    print(f"  {DIM}Top up: https://console.anthropic.com/settings/billing{R}")
+                    print(f"  {DIM}Or press {BOLD}k{R}{DIM} to switch to free local AI (Ollama){R}")
+                elif kind == "auth":
+                    print(f"  {RED}API error: {msg}.{R}")
+                    print(f"  {DIM}Press {BOLD}k{R}{DIM} to set a new key or switch to free local AI{R}")
+                else:
+                    print(f"  {RED}API error: {e}{R}")
                 return
 
             # Track usage (regular + cache tokens) so session cost is accurate.
@@ -1940,6 +2018,44 @@ _KNOWN_LINUX_CMDS = frozenset([
     'cargo','go','java','javac','mvn','gradle',
 ])
 
+_NL_UPDATE_RE = re.compile(
+    r"^\s*(?:please\s+)?"
+    r"(?:"
+        r"(?:update|upgrade)\s+"
+        r"(?:my|this|the)?\s*"
+        r"(?:pc|system|computer|laptop|machine|os|distro|"
+        r"everything|all|all\s+packages|all\s+apps|all\s+software|"
+        r"packages|apps|software)"
+    r"|"
+        r"system\s+(?:update|upgrade)"
+    r"|"
+        r"(?:check|run)\s+(?:for\s+)?(?:system\s+)?(?:update|updates|upgrade|upgrades)"
+    r")"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _system_update_cmd_for_phrase(text: str):
+    """If the user's natural-language input means 'update my system', return the
+    right command for this distro. Otherwise None."""
+    if not _NL_UPDATE_RE.match(text or ""):
+        return None
+    if shutil.which("apt-get") or shutil.which("apt"):
+        return "sudo apt-get update -q && sudo apt-get upgrade -y"
+    if shutil.which("dnf"):
+        return "sudo dnf upgrade -y"
+    if shutil.which("pacman"):
+        return "sudo pacman -Syu --noconfirm"
+    if shutil.which("zypper"):
+        return "sudo zypper --non-interactive update"
+    if shutil.which("apk"):
+        return "sudo apk update && sudo apk upgrade"
+    if shutil.which("xbps-install"):
+        return "sudo xbps-install -Su -y"
+    return None
+
+
 def _looks_like_command(text):
     """
     Return (True, first_word) if text looks like a shell command.
@@ -2070,6 +2186,17 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
     On failure, offers AI explanation if backend is available.
     """
     cmd = user_input.strip()
+
+    # Natural-language system update — run the right command for this distro
+    # without burning AI tokens. "update this pc", "upgrade my system", etc.
+    sys_update_cmd = _system_update_cmd_for_phrase(cmd)
+    if sys_update_cmd:
+        print(f"\n  {CYAN}⚡ {sys_update_cmd}{R}")
+        rc = run_cmd_live(sys_update_cmd)
+        if rc == 0:
+            ok("System updated.")
+        return True
+
     is_cmd, effective_word = _looks_like_command(cmd)
 
     if not is_cmd:
