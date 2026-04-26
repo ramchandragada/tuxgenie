@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.47.0"
+__version__ = "5.47.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -631,8 +631,10 @@ class OllamaBackend:
         # Local model is fixed — no escalation possible
         return
 
-    def ask(self, system, messages, max_tokens=4096, cache_system=False):
+    def ask(self, system, messages, max_tokens=4096, cache_system=False, stage2_timeout=None):
         """Call Ollama's /api/chat endpoint. Streams response with progress.
+        stage2_timeout: socket timeout in seconds; if exceeded, returns ""
+        without retrying (caller escalates to Stage 3).
         Auto-starts the Ollama service once if it isn't reachable."""
         # Normalize system prompt (AnthropicBackend supports list-form for cache)
         if isinstance(system, list):
@@ -652,7 +654,12 @@ class OllamaBackend:
             "options": {"num_predict": max_tokens, "temperature": 0.3},
         }).encode()
 
-        text, char_count, recoverable = self._stream(body)
+        sock_timeout = stage2_timeout or 180
+        text, char_count, recoverable = self._stream(body, timeout=sock_timeout)
+        if text is None and not recoverable and stage2_timeout:
+            # Timed out during Stage 2 — don't retry, let caller escalate
+            print(f"\r  {YELLOW}⏱ Local AI timed out — escalating to Stage 3…{R}   ")
+            return ""
         if text is None and recoverable:
             # URLError → service likely down. Try to start it once and retry
             # with brief backoff because the model may still be loading.
@@ -664,7 +671,7 @@ class OllamaBackend:
             print(f"  {GREEN}✓ Ollama service started{R}")
             for delay in (1, 2, 4):
                 time.sleep(delay)
-                text, char_count, recoverable = self._stream(body)
+                text, char_count, recoverable = self._stream(body, timeout=sock_timeout)
                 if text is not None:
                     break
                 if not recoverable:
@@ -686,10 +693,11 @@ class OllamaBackend:
                 print(f"  {DIM}Claude handles complex problems better. Type {BOLD}k{R}{DIM} to add a Claude key.{R}\n")
         return text
 
-    def _stream(self, body):
+    def _stream(self, body, timeout=180):
         """Stream a chat response. Returns (text, char_count, recoverable).
-        text is None on failure; recoverable=True means service is down and
-        worth retrying after _start_ollama_service()."""
+        text is None on failure.
+        recoverable=True  → connection refused (service down, worth auto-starting)
+        recoverable=False → timeout, bad request, or model error (escalate instead)."""
         chunks = []
         char_count = 0
         try:
@@ -698,7 +706,7 @@ class OllamaBackend:
                 data=body,
                 headers={"Content-Type": "application/json"},
             )
-            with urllib.request.urlopen(req, timeout=180) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 for raw_line in resp:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line:
@@ -734,8 +742,11 @@ class OllamaBackend:
             else:
                 err(f"Ollama HTTP {e.code}: {body_txt[:200] or e.reason}")
             return None, 0, False
-        except urllib.error.URLError:
-            return None, 0, True   # recoverable — service likely down
+        except urllib.error.URLError as e:
+            reason = str(getattr(e, "reason", e))
+            if "timed out" in reason.lower() or isinstance(getattr(e, "reason", None), TimeoutError):
+                return None, 0, False  # timeout — service is up but too slow; escalate
+            return None, 0, True       # connection refused — service likely down
         except Exception as e:
             print()
             err(f"Ollama error: {e}")
@@ -1502,6 +1513,7 @@ AGENTIC_TOOLS = [
     }
 ]
 
+# System prompt for Stage 3 (Claude) — full agentic tool-use loop
 AGENTIC_SYS = """You are TuxGenie, an AI assistant that fixes Linux problems for complete beginners.
 
 You have two tools: run_command (run shell commands) and read_file (read files).
@@ -1554,6 +1566,25 @@ EMPTY OUTPUT:
 KNOWING WHEN TO STOP:
 - If 2 different approaches failed for the same goal, stop and tell the user honestly
   what happened and what their options are. Do NOT endlessly retry.
+"""
+
+# System prompt for Stage 2 (Ollama) — plain advice, no tool simulation
+OLLAMA_SYS = """You are TuxGenie, a Linux assistant for complete beginners.
+
+IMPORTANT RULES — read carefully:
+- You DO NOT have access to the user's system. You CANNOT run commands.
+- NEVER invent, simulate, or fake command output. Never write things like
+  "Output:" or "$ command → result" unless quoting documentation.
+- NEVER check package lists, run apt-cache, or pretend to inspect the system.
+- Give clear numbered steps with the exact commands to paste into a terminal.
+- Be concise. One short paragraph of context, then numbered steps with commands.
+- Use plain English. The user may be a complete Linux beginner.
+- If genuinely unsure, say so honestly — do not guess.
+
+Format:
+1. One sentence of context (what we're doing and why).
+2. Numbered steps. Each step = one short sentence + the exact command in a code block.
+3. Optional: one sentence on how to verify it worked.
 """
 
 
@@ -1632,10 +1663,13 @@ def _handle_tool_call(block, sudo_pw, step_counter):
 
 def _ask_local(backend, task: str, ctx: dict) -> str:
     """One-shot AI response. Returns raw text (caller decides if it's good enough).
-    Used for Stage 2 (Ollama) and as a fallback when a cloud backend fails."""
+    Uses OLLAMA_SYS (no tool simulation) and a 60s socket timeout so slow
+    hardware escalates to Stage 3 quickly rather than hanging for 2+ minutes."""
     print(f"\n  {CYAN}{BOLD}⚡ Stage 2: free local AI · {backend.label()}{R}")
-    system = AGENTIC_SYS + _sys_ctx_block(ctx)
-    return backend.ask(system, [{"role": "user", "content": task}], max_tokens=4096)
+    print(f"  {DIM}Thinking… (escalates to Claude if no response in 60s){R}", end="\r", flush=True)
+    system = OLLAMA_SYS + _sys_ctx_block(ctx)
+    return backend.ask(system, [{"role": "user", "content": task}],
+                       max_tokens=1024, stage2_timeout=60)
 
 
 def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: int = 25):
