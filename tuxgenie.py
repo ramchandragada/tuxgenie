@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.47.1"
+__version__ = "5.48.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -450,109 +450,7 @@ class AnthropicBackend:
                      f"saved ~${saved:.4f}")
         return line
 
-# ── Ollama backend (free, local, zero-config) ────────────────────────────────
-_OLLAMA_DEFAULT_MODEL = "llama3.2:3b"   # ~2 GB, runs on 4 GB RAM, decent for shell tasks
-_OLLAMA_API = "http://127.0.0.1:11434"
-
-def _detect_ollama():
-    """Return (installed, running, models). models is a list of model names."""
-    installed = shutil.which("ollama") is not None
-    if not installed:
-        return False, False, []
-    try:
-        req = urllib.request.Request(f"{_OLLAMA_API}/api/tags")
-        with urllib.request.urlopen(req, timeout=2) as r:
-            data = json.loads(r.read().decode())
-        models = [m.get("name", "") for m in data.get("models", [])]
-        return True, True, models
-    except Exception:
-        return True, False, []
-
-def _start_ollama_service():
-    """Try to start Ollama. Returns True if reachable after starting."""
-    # 1. systemd user unit (no sudo)
-    try:
-        subprocess.run(["systemctl", "--user", "start", "ollama"],
-                       capture_output=True, timeout=5)
-    except Exception:
-        pass
-    # 2. system-wide systemd (no-prompt sudo — only works if cached)
-    try:
-        subprocess.run(["sudo", "-n", "systemctl", "start", "ollama"],
-                       capture_output=True, timeout=5)
-    except Exception:
-        pass
-    # 3. Direct background process (works without sudo if port 11434 is free)
-    if shutil.which("ollama"):
-        try:
-            subprocess.Popen(
-                ["ollama", "serve"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except Exception:
-            pass
-    # Give it a moment to come up
-    for _ in range(10):
-        time.sleep(0.5)
-        try:
-            with urllib.request.urlopen(f"{_OLLAMA_API}/api/tags", timeout=1):
-                return True
-        except Exception:
-            continue
-    return False
-
-def _build_ollama_backend():
-    """Return a usable OllamaBackend, or None if Ollama isn't installed/ready."""
-    installed, _running, models = _detect_ollama()
-    if not installed or not models:
-        return None
-    try:
-        cfg = load_cfg()
-    except Exception:
-        cfg = {}
-    model = cfg.get("ollama_model") or _OLLAMA_DEFAULT_MODEL
-    if model not in models:
-        model = models[0]
-    return OllamaBackend(model=model)
-
-
-def _build_anthropic_backend():
-    """Return a usable AnthropicBackend, or None if no key is configured."""
-    try:
-        cfg = load_cfg()
-    except Exception:
-        cfg = {}
-    key = _load_api_key(cfg)
-    if not key or key == _NO_KEY:
-        return None
-    try:
-        b = AnthropicBackend()
-        b._set_key(key)
-        return b
-    except Exception:
-        return None
-
-
-def _is_weak_response(text: str) -> bool:
-    """True if a local model's response indicates it couldn't solve the
-    problem (empty, too short, or contains an explicit 'I don't know' phrase)."""
-    if not text or not text.strip():
-        return True
-    if len(text.strip()) < 30:
-        return True
-    head = text.lower()[:600]
-    weak_phrases = (
-        "i don't know", "i do not know", "i'm not sure", "i am not sure",
-        "i cannot help", "i can't help", "unable to determine",
-        "cannot help with", "i do not have", "without more information",
-        "i'm afraid i can't", "i'm just an ai", "as a language model",
-        "i don't have enough", "more context",
-    )
-    return any(p in head for p in weak_phrases)
-
-
+# ── Anthropic error classification ───────────────────────────────────────────
 def _classify_anthropic_error(exc):
     """Map an Anthropic SDK exception to ('billing'|'auth'|'network'|'other', user_msg)."""
     msg = str(exc).lower()
@@ -564,200 +462,6 @@ def _classify_anthropic_error(exc):
         return "network", "Could not reach the Anthropic API"
     return "other", str(exc)
 
-
-def _install_ollama_auto(model_name=_OLLAMA_DEFAULT_MODEL):
-    """Auto-install Ollama + pull a model. Returns True on success."""
-    print(f"\n  {CYAN}{BOLD}▶ Setting up local AI (one-time setup)…{R}\n")
-    installed, _, _ = _detect_ollama()
-    if not installed:
-        print(f"  {CYAN}Step 1/2: Installing Ollama (~50 MB)…{R}")
-        rc = subprocess.run(
-            "curl -fsSL https://ollama.com/install.sh | sh",
-            shell=True
-        ).returncode
-        if rc != 0:
-            err("Ollama install failed. Check your internet connection and try again.")
-            info("Manual install: curl -fsSL https://ollama.com/install.sh | sh")
-            return False
-        ok("Ollama installed!")
-    else:
-        ok("Ollama already installed.")
-
-    # Make sure the service is up
-    _, running, _ = _detect_ollama()
-    if not running:
-        print(f"  {DIM}Starting Ollama service…{R}")
-        if not _start_ollama_service():
-            warn("Could not auto-start Ollama. Try: sudo systemctl start ollama")
-            return False
-
-    # Check if model already there
-    _, _, models = _detect_ollama()
-    have = any(m.startswith(model_name.split(":")[0]) for m in models)
-    if have:
-        ok(f"Model {model_name} already downloaded.")
-        return True
-
-    print(f"\n  {CYAN}Step 2/2: Downloading AI model {BOLD}{model_name}{R}{CYAN} (~2 GB, one-time)…{R}")
-    print(f"  {DIM}This takes 1-5 minutes depending on your internet.{R}\n")
-    rc = subprocess.run(["ollama", "pull", model_name]).returncode
-    if rc != 0:
-        err(f"Could not download {model_name}.")
-        info(f"Try manually: ollama pull {model_name}")
-        return False
-    ok(f"Model {model_name} ready!")
-    return True
-
-class OllamaBackend:
-    """Local AI backend via Ollama. Same interface as AnthropicBackend."""
-    def __init__(self, model=_OLLAMA_DEFAULT_MODEL):
-        self._no_key     = False    # local — no key needed
-        self.api_key     = ""
-        self.model       = model
-        self.base_model  = model
-        self.auto_model  = False
-        self.expert_mode = False
-        self.is_local    = True
-        self._weak_response_count = 0
-        self._session_input_tokens          = 0
-        self._session_output_tokens         = 0
-        self._session_cache_creation_tokens = 0
-        self._session_cache_read_tokens     = 0
-
-    def label(self):
-        return f"Ollama (local) · {self.model}"
-
-    def select_model_for_task(self, user_text: str, round_num: int = 1):
-        # Local model is fixed — no escalation possible
-        return
-
-    def ask(self, system, messages, max_tokens=4096, cache_system=False, stage2_timeout=None):
-        """Call Ollama's /api/chat endpoint. Streams response with progress.
-        stage2_timeout: socket timeout in seconds; if exceeded, returns ""
-        without retrying (caller escalates to Stage 3).
-        Auto-starts the Ollama service once if it isn't reachable."""
-        # Normalize system prompt (AnthropicBackend supports list-form for cache)
-        if isinstance(system, list):
-            system = "".join(b.get("text", "") for b in system if isinstance(b, dict))
-
-        chat_messages = [{"role": "system", "content": system}] if system else []
-        for m in messages:
-            content = m.get("content", "")
-            if isinstance(content, list):
-                content = "".join(b.get("text", "") for b in content if isinstance(b, dict))
-            chat_messages.append({"role": m.get("role", "user"), "content": content})
-
-        body = json.dumps({
-            "model": self.model,
-            "messages": chat_messages,
-            "stream": True,
-            "options": {"num_predict": max_tokens, "temperature": 0.3},
-        }).encode()
-
-        sock_timeout = stage2_timeout or 180
-        text, char_count, recoverable = self._stream(body, timeout=sock_timeout)
-        if text is None and not recoverable and stage2_timeout:
-            # Timed out during Stage 2 — don't retry, let caller escalate
-            print(f"\r  {YELLOW}⏱ Local AI timed out — escalating to Stage 3…{R}   ")
-            return ""
-        if text is None and recoverable:
-            # URLError → service likely down. Try to start it once and retry
-            # with brief backoff because the model may still be loading.
-            print(f"\n  {DIM}Ollama not running — starting service…{R}")
-            if not _start_ollama_service():
-                err("Could not start Ollama service.")
-                info("Try: sudo systemctl start ollama")
-                return ""
-            print(f"  {GREEN}✓ Ollama service started{R}")
-            for delay in (1, 2, 4):
-                time.sleep(delay)
-                text, char_count, recoverable = self._stream(body, timeout=sock_timeout)
-                if text is not None:
-                    break
-                if not recoverable:
-                    break
-        if text is None:
-            if recoverable:
-                err("Ollama is unreachable. Try: sudo systemctl restart ollama")
-            return ""
-
-        print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
-
-        # Detect "I don't know" / weak responses → suggest Claude upgrade
-        weak_phrases = ("i'm not sure", "i don't know", "cannot help",
-                        "unable to determine", "i cannot")
-        if text and any(p in text.lower()[:200] for p in weak_phrases):
-            self._weak_response_count += 1
-            if self._weak_response_count == 2:
-                print(f"\n  {YELLOW}💡 Local AI is struggling on this one.{R}")
-                print(f"  {DIM}Claude handles complex problems better. Type {BOLD}k{R}{DIM} to add a Claude key.{R}\n")
-        return text
-
-    def _stream(self, body, timeout=180):
-        """Stream a chat response. Returns (text, char_count, recoverable).
-        text is None on failure.
-        recoverable=True  → connection refused (service down, worth auto-starting)
-        recoverable=False → timeout, bad request, or model error (escalate instead)."""
-        chunks = []
-        char_count = 0
-        try:
-            req = urllib.request.Request(
-                f"{_OLLAMA_API}/api/chat",
-                data=body,
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                for raw_line in resp:
-                    line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line:
-                        continue
-                    try:
-                        evt = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if evt.get("error"):
-                        print()
-                        err(f"Ollama: {evt['error']}")
-                        return None, 0, False
-                    msg = evt.get("message", {}).get("content", "")
-                    if msg:
-                        chunks.append(msg)
-                        char_count += len(msg)
-                        print(f"\r  {CYAN}⚡ Local AI… {char_count} chars{R}   ",
-                              end="", flush=True)
-                    if evt.get("done"):
-                        break
-            return "".join(chunks), char_count, False
-        except urllib.error.HTTPError as e:
-            # Reachable but rejected — likely a missing model or bad request
-            print()
-            body_txt = ""
-            try:
-                body_txt = e.read().decode("utf-8", errors="replace")
-            except Exception:
-                pass
-            if "model" in body_txt.lower() and "not found" in body_txt.lower():
-                err(f"Model '{self.model}' is not installed.")
-                info(f"Install it with:  ollama pull {self.model}")
-            else:
-                err(f"Ollama HTTP {e.code}: {body_txt[:200] or e.reason}")
-            return None, 0, False
-        except urllib.error.URLError as e:
-            reason = str(getattr(e, "reason", e))
-            if "timed out" in reason.lower() or isinstance(getattr(e, "reason", None), TimeoutError):
-                return None, 0, False  # timeout — service is up but too slow; escalate
-            return None, 0, True       # connection refused — service likely down
-        except Exception as e:
-            print()
-            err(f"Ollama error: {e}")
-            return None, 0, False
-
-    def session_cost_estimate(self) -> str:
-        return "Session cost: $0.00 (local AI — always free)"
-
-    def _set_key(self, key):
-        # No-op: Ollama doesn't use keys
-        pass
 
 # ── Config / API key ─────────────────────────────────────────────────────────
 _NO_KEY = "__NO_KEY__"   # sentinel — user chose to skip key setup
@@ -783,65 +487,31 @@ def _load_api_key(cfg):
     return _migrate_old_key()
 
 def _setup_wizard(cfg):
-    """First-run wizard offering Ollama (free local) or Claude (paid cloud).
-    Returns ('ollama', model_name) | ('claude', api_key) | ('skip', None)."""
+    """First-run wizard. Asks for an Anthropic API key (or skip).
+    Returns ('claude', api_key) | ('skip', None)."""
     _line = f"  {DIM}{'─'*58}{R}"
     print(f"\n{_line}")
     print(f"  {GREEN}{BOLD}🐧 TuxGenie — Quick Setup{R}")
     print(f"{_line}")
-    print(f"\n  How do you want to power TuxGenie's AI?\n")
-    print(f"    {GREEN}{BOLD}[1]{R} {BOLD}FREE  Local AI{R}     Installs Ollama + a 2 GB model")
-    print(f"        {DIM}Private, no account, works offline forever{R}\n")
-    print(f"    {CYAN}{BOLD}[2]{R} {BOLD}BEST  Claude AI{R}    Paste your Anthropic key")
-    print(f"        {DIM}Smarter for tough problems · ~$0.01 per session{R}\n")
-    print(f"    {DIM}{BOLD}[s]{R}{DIM} Skip — terminal commands still work without AI{R}\n")
+    print(f"\n  TuxGenie uses Claude (Anthropic) to fix Linux problems.")
+    print(f"  Get your free API key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
+    print(f"  {DIM}Sign-up is free. Costs ~$0.01 per session — top up $5 once and it lasts months.{R}\n")
     try:
-        choice = input(f"  Your choice [{BOLD}1{R}/2/s]: ").strip().lower() or "1"
+        key = input(f"  Paste API key (or press {BOLD}Enter{R} to skip): ").strip()
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
-
-    if choice == "s":
+    if not key:
         print(f"\n  {YELLOW}Continuing without AI.{R}")
-        print(f"  {DIM}Type {BOLD}k{R}{DIM} anytime to set up later.{R}\n")
+        print(f"  {DIM}Type {BOLD}k{R}{DIM} anytime to add a key later.{R}\n")
         return ("skip", None)
+    return ("claude", key)
 
-    if choice == "2":
-        print(f"\n  Get your key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
-        print(f"  {DIM}Sign-up is free. Anthropic charges by usage (a few cents/session).{R}\n")
-        try:
-            key = input("  Paste API key (or press Enter to skip): ").strip()
-        except (EOFError, KeyboardInterrupt):
-            return ("skip", None)
-        if not key:
-            return ("skip", None)
-        return ("claude", key)
-
-    # Default: Ollama (option 1)
-    print(f"\n  {GREEN}Setting up free local AI…{R}")
-    if not _install_ollama_auto():
-        print(f"\n  {YELLOW}Ollama setup failed. Falling back to no-AI mode.{R}")
-        print(f"  {DIM}Type {BOLD}k{R}{DIM} to retry or use Claude instead.{R}\n")
-        return ("skip", None)
-    print(f"\n  {GREEN}{BOLD}🎉 TuxGenie is ready! Local AI is active.{R}\n")
-    return ("ollama", _OLLAMA_DEFAULT_MODEL)
 
 def load_backend():
-    """Load config and return either an OllamaBackend or AnthropicBackend."""
+    """Load config and return an AnthropicBackend (with key, or _NO_KEY sentinel)."""
     cfg = load_cfg()
 
-    # 1. Saved Ollama backend?
-    if cfg.get("backend") == "ollama":
-        installed, running, models = _detect_ollama()
-        if installed:
-            if not running:
-                _start_ollama_service()
-            ollama_model = cfg.get("ollama_model", _OLLAMA_DEFAULT_MODEL)
-            b = OllamaBackend(model=ollama_model)
-            b.expert_mode = bool(cfg.get("expert_mode", False))
-            return b
-        # Ollama gone — fall through to ask again
-
-    # 2. Saved Claude key?
+    # 1. Saved Claude key?
     key = _load_api_key(cfg)
     if key:
         save_cfg({"api_key": key, "backend": "claude"})
@@ -850,12 +520,9 @@ def load_backend():
         b.expert_mode = bool(cfg.get("expert_mode", False))
         return b
 
-    # 3. First run — show the wizard
+    # 2. First run — ask for a key
     kind, value = _setup_wizard(cfg)
-    if kind == "ollama":
-        save_cfg({"backend": "ollama", "ollama_model": value})
-        b = OllamaBackend(model=value)
-    elif kind == "claude":
+    if kind == "claude":
         save_cfg({"backend": "claude", "api_key": value})
         model = cfg.get("model", "claude-haiku-4-5-20251001")
         b = AnthropicBackend(api_key=value, model=model)
@@ -872,55 +539,31 @@ AVAILABLE_MODELS = [
 ]
 
 def feat_set_api_key(backend):
-    """Switch between AI backends (Ollama / Claude) — command: k"""
-    hdr("AI Backend Setup")
+    """Add or change the Anthropic API key — command: k"""
+    hdr("Claude API Key")
     info(f"Current: {backend.label()}")
-
-    print(f"\n  Pick a backend:\n")
-    print(f"    {GREEN}{BOLD}[1]{R} Local AI (Ollama)   {DIM}— free, private, offline{R}")
-    print(f"    {CYAN}{BOLD}[2]{R} Claude AI            {DIM}— smarter, ~$0.01/session, needs API key{R}")
-    print(f"    {DIM}[c] Cancel{R}\n")
+    print(f"\n  Get your key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
+    print(f"  {DIM}Sign-up is free. Anthropic charges by usage (a few cents/session).{R}\n")
     try:
-        choice = input(f"  Your choice: ").strip().lower()
+        key = input("  Paste API key (or press Enter to cancel): ").strip()
     except (EOFError, KeyboardInterrupt):
         return
-
-    if choice == "1":
-        if not _install_ollama_auto():
-            warn("Ollama setup failed.")
-            return
-        save_cfg({"backend": "ollama", "ollama_model": _OLLAMA_DEFAULT_MODEL})
-        ok(f"Switched to local AI ({_OLLAMA_DEFAULT_MODEL}). Restart TuxGenie to take effect.")
+    if not key:
+        warn("No key entered. Nothing changed.")
         return
-
-    if choice == "2":
-        print(f"\n  Get your key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
-        print(f"  {DIM}Sign-up is free. Anthropic charges by usage (a few cents/session).{R}\n")
+    if not key.startswith("sk-ant-") or len(key) < 20:
+        warn("That doesn't look like a valid Anthropic API key.")
+        info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
         try:
-            key = input("  Paste API key (or press Enter to cancel): ").strip()
+            confirm = input("  Save it anyway? [y/n]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
+            confirm = "n"
+        if confirm not in ("y", "yes"):
+            warn("Key not saved.")
             return
-        if not key:
-            warn("No key entered. Nothing changed.")
-            return
-        if not key.startswith("sk-ant-") or len(key) < 20:
-            warn("That doesn't look like a valid Anthropic API key.")
-            info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
-            try:
-                confirm = input("  Save it anyway? [y/n]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                confirm = "n"
-            if confirm not in ("y", "yes"):
-                warn("Key not saved.")
-                return
-        save_cfg({"backend": "claude", "api_key": key})
-        if isinstance(backend, AnthropicBackend):
-            backend._set_key(key)
-        else:
-            ok("Claude key saved. Restart TuxGenie to switch backends.")
-        return
-
-    info("Cancelled.")
+    save_cfg({"backend": "claude", "api_key": key})
+    backend._set_key(key)
+    ok("Claude key saved.")
 
 def feat_settings(backend, bctx, slog):
     """Settings: view/change API key and model."""
@@ -1513,7 +1156,6 @@ AGENTIC_TOOLS = [
     }
 ]
 
-# System prompt for Stage 3 (Claude) — full agentic tool-use loop
 AGENTIC_SYS = """You are TuxGenie, an AI assistant that fixes Linux problems for complete beginners.
 
 You have two tools: run_command (run shell commands) and read_file (read files).
@@ -1566,25 +1208,6 @@ EMPTY OUTPUT:
 KNOWING WHEN TO STOP:
 - If 2 different approaches failed for the same goal, stop and tell the user honestly
   what happened and what their options are. Do NOT endlessly retry.
-"""
-
-# System prompt for Stage 2 (Ollama) — plain advice, no tool simulation
-OLLAMA_SYS = """You are TuxGenie, a Linux assistant for complete beginners.
-
-IMPORTANT RULES — read carefully:
-- You DO NOT have access to the user's system. You CANNOT run commands.
-- NEVER invent, simulate, or fake command output. Never write things like
-  "Output:" or "$ command → result" unless quoting documentation.
-- NEVER check package lists, run apt-cache, or pretend to inspect the system.
-- Give clear numbered steps with the exact commands to paste into a terminal.
-- Be concise. One short paragraph of context, then numbered steps with commands.
-- Use plain English. The user may be a complete Linux beginner.
-- If genuinely unsure, say so honestly — do not guess.
-
-Format:
-1. One sentence of context (what we're doing and why).
-2. Numbered steps. Each step = one short sentence + the exact command in a code block.
-3. Optional: one sentence on how to verify it worked.
 """
 
 
@@ -1661,64 +1284,8 @@ def _handle_tool_call(block, sudo_pw, step_counter):
     return f"Unknown tool: {name}"
 
 
-def _ask_local(backend, task: str, ctx: dict) -> str:
-    """One-shot AI response. Returns raw text (caller decides if it's good enough).
-    Uses OLLAMA_SYS (no tool simulation) and a 60s socket timeout so slow
-    hardware escalates to Stage 3 quickly rather than hanging for 2+ minutes."""
-    print(f"\n  {CYAN}{BOLD}⚡ Stage 2: free local AI · {backend.label()}{R}")
-    print(f"  {DIM}Thinking… (escalates to Claude if no response in 60s){R}", end="\r", flush=True)
-    system = OLLAMA_SYS + _sys_ctx_block(ctx)
-    return backend.ask(system, [{"role": "user", "content": task}],
-                       max_tokens=1024, stage2_timeout=60)
-
-
 def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: int = 25):
-    """Three-stage AI routing.
-
-    Stage 1 (free, no AI): handled by try_passthrough() before we get here —
-    direct command execution and natural-language system updates.
-
-    Stage 2 (free, local): try Ollama if installed and a model is available.
-    If the answer is confident, return it.
-
-    Stage 3 (paid, cloud): escalate to Claude's full agentic tool-use loop
-    when Ollama is unavailable, fails, or returns an uncertain answer."""
-    # Resolve which backends are usable right now.
-    if getattr(backend, "is_local", False):
-        ollama_b    = backend
-        anthropic_b = _build_anthropic_backend()
-    else:
-        ollama_b    = _build_ollama_backend()
-        anthropic_b = backend if not getattr(backend, "_no_key", False) else _build_anthropic_backend()
-
-    # Stage 2: try Ollama first (free)
-    if ollama_b is not None:
-        result = _ask_local(ollama_b, task, ctx)
-        if result and not _is_weak_response(result):
-            print(f"\n{result}\n")
-            return
-        # Local AI is uncertain or empty → escalate to Claude if we can
-        if anthropic_b is not None:
-            why = "couldn't respond" if not result else "answer was uncertain"
-            print(f"\n  {YELLOW}💡 Local AI {why} — escalating to Claude (Stage 3)…{R}")
-            _run_anthropic_agentic(anthropic_b, task, ctx, session_log, max_turns)
-            return
-        # No Claude fallback available — show whatever Ollama produced
-        if result:
-            print(f"\n{result}\n")
-        info("For harder problems, press k to add a Claude API key.")
-        return
-
-    # No Ollama — go straight to Stage 3
-    if anthropic_b is not None:
-        _run_anthropic_agentic(anthropic_b, task, ctx, session_log, max_turns)
-        return
-
-    err("No AI backend is configured. Press k to set up free local AI or add a Claude key.")
-
-
-def _run_anthropic_agentic(backend, task: str, ctx: dict, session_log: list, max_turns: int = 25):
-    """Stage 3: full agentic tool-use loop using Claude's native tool_use API.
+    """Full agentic fix engine using Claude's native tool_use API.
     Claude calls run_command one step at a time, sees real output, and
     diagnoses/fixes based on actual results — no upfront batch planning.
     Powered by Opus 4.7 with adaptive thinking and prompt caching.
@@ -1745,7 +1312,7 @@ def _run_anthropic_agentic(backend, task: str, ctx: dict, session_log: list, max
     sudo_pw  = None
     step_counter = [1]
 
-    print(f"\n  {CYAN}{BOLD}⚡ Stage 3: Anthropic · {_OPUS_MODEL}  ·  adaptive thinking{R}")
+    print(f"\n  {CYAN}{BOLD}⚡ AI: Anthropic · {_OPUS_MODEL}  ·  adaptive thinking{R}")
 
     def _create_request():
         # cache_control on the last block of the most recent user message
@@ -1783,15 +1350,12 @@ def _run_anthropic_agentic(backend, task: str, ctx: dict, session_log: list, max
             except Exception as e:
                 print(" " * 40, end="\r")
                 kind, msg = _classify_anthropic_error(e)
-                # Stage 2 (Ollama) was already tried by agentic_engine if it
-                # was available — no point retrying it here.
                 if kind == "billing":
                     print(f"  {RED}API error: {msg}.{R}")
                     print(f"  {DIM}Top up: https://console.anthropic.com/settings/billing{R}")
-                    print(f"  {DIM}Or press {BOLD}k{R}{DIM} to set up free local AI (Ollama){R}")
                 elif kind == "auth":
                     print(f"  {RED}API error: {msg}.{R}")
-                    print(f"  {DIM}Press {BOLD}k{R}{DIM} to set a new key or switch to free local AI{R}")
+                    print(f"  {DIM}Press {BOLD}k{R}{DIM} to set a new key.{R}")
                 else:
                     print(f"  {RED}API error: {e}{R}")
                 return
