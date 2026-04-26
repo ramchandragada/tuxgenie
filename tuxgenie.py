@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.46.1"
+__version__ = "5.47.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -503,11 +503,8 @@ def _start_ollama_service():
             continue
     return False
 
-def _build_local_fallback(current_backend):
-    """If the current backend is cloud-based, return a usable local OllamaBackend
-    (when Ollama is installed with at least one model). Otherwise None."""
-    if getattr(current_backend, "is_local", False):
-        return None
+def _build_ollama_backend():
+    """Return a usable OllamaBackend, or None if Ollama isn't installed/ready."""
     installed, _running, models = _detect_ollama()
     if not installed or not models:
         return None
@@ -519,6 +516,41 @@ def _build_local_fallback(current_backend):
     if model not in models:
         model = models[0]
     return OllamaBackend(model=model)
+
+
+def _build_anthropic_backend():
+    """Return a usable AnthropicBackend, or None if no key is configured."""
+    try:
+        cfg = load_cfg()
+    except Exception:
+        cfg = {}
+    key = _load_api_key(cfg)
+    if not key or key == _NO_KEY:
+        return None
+    try:
+        b = AnthropicBackend()
+        b._set_key(key)
+        return b
+    except Exception:
+        return None
+
+
+def _is_weak_response(text: str) -> bool:
+    """True if a local model's response indicates it couldn't solve the
+    problem (empty, too short, or contains an explicit 'I don't know' phrase)."""
+    if not text or not text.strip():
+        return True
+    if len(text.strip()) < 30:
+        return True
+    head = text.lower()[:600]
+    weak_phrases = (
+        "i don't know", "i do not know", "i'm not sure", "i am not sure",
+        "i cannot help", "i can't help", "unable to determine",
+        "cannot help with", "i do not have", "without more information",
+        "i'm afraid i can't", "i'm just an ai", "as a language model",
+        "i don't have enough", "more context",
+    )
+    return any(p in head for p in weak_phrases)
 
 
 def _classify_anthropic_error(exc):
@@ -1598,20 +1630,61 @@ def _handle_tool_call(block, sudo_pw, step_counter):
     return f"Unknown tool: {name}"
 
 
-def _run_simple_ai(backend, task: str, ctx: dict):
-    """One-shot AI response without the agentic tool-calling loop.
-    Used for local backends (no native tool_use) and as a fallback when
-    a cloud backend fails."""
-    print(f"\n  {CYAN}{BOLD}⚡ AI: {backend.label()}{R}")
+def _ask_local(backend, task: str, ctx: dict) -> str:
+    """One-shot AI response. Returns raw text (caller decides if it's good enough).
+    Used for Stage 2 (Ollama) and as a fallback when a cloud backend fails."""
+    print(f"\n  {CYAN}{BOLD}⚡ Stage 2: free local AI · {backend.label()}{R}")
     system = AGENTIC_SYS + _sys_ctx_block(ctx)
-    result = backend.ask(system, [{"role": "user", "content": task}], max_tokens=4096)
-    if result:
-        print(f"\n{result}\n")
+    return backend.ask(system, [{"role": "user", "content": task}], max_tokens=4096)
 
 
 def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: int = 25):
-    """
-    True agentic fix engine using Claude's native tool_use API.
+    """Three-stage AI routing.
+
+    Stage 1 (free, no AI): handled by try_passthrough() before we get here —
+    direct command execution and natural-language system updates.
+
+    Stage 2 (free, local): try Ollama if installed and a model is available.
+    If the answer is confident, return it.
+
+    Stage 3 (paid, cloud): escalate to Claude's full agentic tool-use loop
+    when Ollama is unavailable, fails, or returns an uncertain answer."""
+    # Resolve which backends are usable right now.
+    if getattr(backend, "is_local", False):
+        ollama_b    = backend
+        anthropic_b = _build_anthropic_backend()
+    else:
+        ollama_b    = _build_ollama_backend()
+        anthropic_b = backend if not getattr(backend, "_no_key", False) else _build_anthropic_backend()
+
+    # Stage 2: try Ollama first (free)
+    if ollama_b is not None:
+        result = _ask_local(ollama_b, task, ctx)
+        if result and not _is_weak_response(result):
+            print(f"\n{result}\n")
+            return
+        # Local AI is uncertain or empty → escalate to Claude if we can
+        if anthropic_b is not None:
+            why = "couldn't respond" if not result else "answer was uncertain"
+            print(f"\n  {YELLOW}💡 Local AI {why} — escalating to Claude (Stage 3)…{R}")
+            _run_anthropic_agentic(anthropic_b, task, ctx, session_log, max_turns)
+            return
+        # No Claude fallback available — show whatever Ollama produced
+        if result:
+            print(f"\n{result}\n")
+        info("For harder problems, press k to add a Claude API key.")
+        return
+
+    # No Ollama — go straight to Stage 3
+    if anthropic_b is not None:
+        _run_anthropic_agentic(anthropic_b, task, ctx, session_log, max_turns)
+        return
+
+    err("No AI backend is configured. Press k to set up free local AI or add a Claude key.")
+
+
+def _run_anthropic_agentic(backend, task: str, ctx: dict, session_log: list, max_turns: int = 25):
+    """Stage 3: full agentic tool-use loop using Claude's native tool_use API.
     Claude calls run_command one step at a time, sees real output, and
     diagnoses/fixes based on actual results — no upfront batch planning.
     Powered by Opus 4.7 with adaptive thinking and prompt caching.
@@ -1623,11 +1696,6 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     - Adaptive thinking + effort=xhigh: 4.7 dynamically allocates thinking
       tokens; xhigh is the recommended setting for coding/agentic work.
     """
-    # Ollama doesn't support native tool_use — fall back to a simple ask()
-    if getattr(backend, 'is_local', False):
-        _run_simple_ai(backend, task, ctx)
-        return
-
     # System prompt + tools are stable across the whole loop — cache them.
     system_blocks = [{
         "type": "text",
@@ -1643,7 +1711,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     sudo_pw  = None
     step_counter = [1]
 
-    print(f"\n  {CYAN}{BOLD}⚡ AI: Anthropic · {_OPUS_MODEL}  ·  adaptive thinking{R}")
+    print(f"\n  {CYAN}{BOLD}⚡ Stage 3: Anthropic · {_OPUS_MODEL}  ·  adaptive thinking{R}")
 
     def _create_request():
         # cache_control on the last block of the most recent user message
@@ -1681,18 +1749,12 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
             except Exception as e:
                 print(" " * 40, end="\r")
                 kind, msg = _classify_anthropic_error(e)
-                if turn == 0 and kind in ("billing", "auth"):
-                    alt = _build_local_fallback(backend)
-                    if alt is not None:
-                        reason = "low API balance" if kind == "billing" else "invalid API key"
-                        print(f"  {YELLOW}⚠ Anthropic failed ({reason}) — switching to free local AI…{R}")
-                        _run_simple_ai(alt, task, ctx)
-                        return
-                # No fallback available — show actionable help
+                # Stage 2 (Ollama) was already tried by agentic_engine if it
+                # was available — no point retrying it here.
                 if kind == "billing":
                     print(f"  {RED}API error: {msg}.{R}")
                     print(f"  {DIM}Top up: https://console.anthropic.com/settings/billing{R}")
-                    print(f"  {DIM}Or press {BOLD}k{R}{DIM} to switch to free local AI (Ollama){R}")
+                    print(f"  {DIM}Or press {BOLD}k{R}{DIM} to set up free local AI (Ollama){R}")
                 elif kind == "auth":
                     print(f"  {RED}API error: {msg}.{R}")
                     print(f"  {DIM}Press {BOLD}k{R}{DIM} to set a new key or switch to free local AI{R}")
