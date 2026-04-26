@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.46.0"
+__version__ = "5.46.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -622,12 +622,24 @@ class OllamaBackend:
 
         text, char_count, recoverable = self._stream(body)
         if text is None and recoverable:
-            # URLError → service likely down. Try to start it once and retry.
+            # URLError → service likely down. Try to start it once and retry
+            # with brief backoff because the model may still be loading.
             print(f"\n  {DIM}Ollama not running — starting service…{R}")
-            if _start_ollama_service():
-                print(f"  {GREEN}✓ Ollama service started{R}")
-                text, char_count, _ = self._stream(body)
+            if not _start_ollama_service():
+                err("Could not start Ollama service.")
+                info("Try: sudo systemctl start ollama")
+                return ""
+            print(f"  {GREEN}✓ Ollama service started{R}")
+            for delay in (1, 2, 4):
+                time.sleep(delay)
+                text, char_count, recoverable = self._stream(body)
+                if text is not None:
+                    break
+                if not recoverable:
+                    break
         if text is None:
+            if recoverable:
+                err("Ollama is unreachable. Try: sudo systemctl restart ollama")
             return ""
 
         print(f"\r  {GREEN}✓ Response received ({char_count} chars)   {R}")
@@ -644,7 +656,8 @@ class OllamaBackend:
 
     def _stream(self, body):
         """Stream a chat response. Returns (text, char_count, recoverable).
-        text is None on failure; recoverable=True only for URLError (service down)."""
+        text is None on failure; recoverable=True means service is down and
+        worth retrying after _start_ollama_service()."""
         chunks = []
         char_count = 0
         try:
@@ -662,6 +675,10 @@ class OllamaBackend:
                         evt = json.loads(line)
                     except json.JSONDecodeError:
                         continue
+                    if evt.get("error"):
+                        print()
+                        err(f"Ollama: {evt['error']}")
+                        return None, 0, False
                     msg = evt.get("message", {}).get("content", "")
                     if msg:
                         chunks.append(msg)
@@ -671,6 +688,20 @@ class OllamaBackend:
                     if evt.get("done"):
                         break
             return "".join(chunks), char_count, False
+        except urllib.error.HTTPError as e:
+            # Reachable but rejected — likely a missing model or bad request
+            print()
+            body_txt = ""
+            try:
+                body_txt = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                pass
+            if "model" in body_txt.lower() and "not found" in body_txt.lower():
+                err(f"Model '{self.model}' is not installed.")
+                info(f"Install it with:  ollama pull {self.model}")
+            else:
+                err(f"Ollama HTTP {e.code}: {body_txt[:200] or e.reason}")
+            return None, 0, False
         except urllib.error.URLError:
             return None, 0, True   # recoverable — service likely down
         except Exception as e:
@@ -2192,9 +2223,18 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
     sys_update_cmd = _system_update_cmd_for_phrase(cmd)
     if sys_update_cmd:
         print(f"\n  {CYAN}⚡ {sys_update_cmd}{R}")
-        rc = run_cmd_live(sys_update_cmd)
+        sudo_pw = None
+        if sys_update_cmd.lstrip().startswith("sudo "):
+            try:
+                sudo_pw = get_or_cache_sudo_password()
+            except KeyboardInterrupt:
+                return True
+        # System updates can take 5+ minutes; allow a generous timeout
+        rc, _stdout, _stderr = run_cmd_live(sys_update_cmd, sudo_password=sudo_pw, timeout=900)
         if rc == 0:
-            ok("System updated.")
+            ok("System is up to date.")
+        else:
+            err(f"Update failed (exit code {rc}). Try running it in a terminal.")
         return True
 
     is_cmd, effective_word = _looks_like_command(cmd)
