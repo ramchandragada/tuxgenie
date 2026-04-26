@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.48.0"
+__version__ = "5.49.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -67,27 +67,68 @@ import builtins
 builtins.input = _safe_input
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SECTION 1 — ANSI + UI
+#  SECTION 1 — ANSI + UI  (light-theme palette — always white bg, dark text)
 # ═══════════════════════════════════════════════════════════════════════════════
-R="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"; ITALIC="\033[3m"
-# Standard colours
-GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"
-CYAN="\033[36m"; BLUE="\033[34m"; MAGENTA="\033[35m"; WHITE="\033[37m"
-# Bright / vivid variants — the "light theme" feel
-BRED="\033[91m"; BGREEN="\033[92m"; BYELLOW="\033[93m"
-BBLUE="\033[94m"; BMAGENTA="\033[95m"; BCYAN="\033[96m"; BWHITE="\033[97m"
-# 256-colour extras for a modern palette
-ORANGE="\033[38;5;208m"; PINK="\033[38;5;213m"; LIME="\033[38;5;118m"
-GOLD="\033[38;5;220m";   CORAL="\033[38;5;203m"; TEAL="\033[38;5;43m"
-INDIGO="\033[38;5;135m"; SKY="\033[38;5;117m";   PEACH="\033[38;5;216m"
-# Background colours for card/section headers
-BG_RED="\033[41m"; BG_GREEN="\033[42m"; BG_BLUE="\033[44m"
-BG_MAGENTA="\033[45m"; BG_CYAN="\033[46m"
-BG_DARK="\033[48;5;235m";  BG_NAVY="\033[48;5;17m"
-BG_PURPLE="\033[48;5;55m"; BG_TEAL="\033[48;5;23m"
-BG_ORANGE="\033[48;5;130m";BG_FOREST="\033[48;5;22m"
+# Light-theme base — applied at startup and restored after every reset
+_LBG = "\033[48;2;248;249;252m"   # near-white background (cool off-white)
+_LFG = "\033[38;2;20;25;46m"      # near-black navy foreground
+
+# R resets attributes then immediately restores the light-theme base colours.
+# This makes the light theme "sticky" — every {R} in every print call keeps us
+# on the white background, overriding whatever the system terminal theme is.
+R      = f"\033[0m{_LBG}{_LFG}"
+BOLD   = "\033[1m"
+DIM    = "\033[38;2;108;116;145m"  # medium blue-gray (secondary / hint text)
+ITALIC = "\033[3m"
+
+# Core UI colours — all dark enough to be crisp on white background
+GREEN   = "\033[38;2;22;132;58m"   # forest green
+YELLOW  = "\033[38;2;172;115;0m"   # amber
+RED     = "\033[38;2;185;20;20m"   # dark crimson
+CYAN    = "\033[38;2;0;128;145m"   # dark teal
+BLUE    = "\033[38;2;18;80;198m"   # royal blue
+MAGENTA = "\033[38;2;148;10;168m"  # dark magenta
+WHITE   = "\033[38;2;20;25;46m"    # = _LFG (near-black)
+
+# Vivid variants — still dark enough for white-bg readability
+BRED    = "\033[38;2;198;22;22m"
+BGREEN  = "\033[38;2;22;158;68m"
+BYELLOW = "\033[38;2;198;132;0m"
+BBLUE   = "\033[38;2;22;98;218m"
+BMAGENTA= "\033[38;2;162;18;182m"
+BCYAN   = "\033[38;2;0;152;170m"
+BWHITE  = "\033[97m"               # true bright-white — only ever on dark bg headers
+
+# Accent colours
+ORANGE  = "\033[38;2;195;85;8m"
+PINK    = "\033[38;2;178;16;135m"
+LIME    = "\033[38;2;45;168;48m"
+GOLD    = "\033[38;2;172;122;0m"
+CORAL   = "\033[38;2;188;55;40m"
+TEAL    = "\033[38;2;0;125;130m"
+INDIGO  = "\033[38;2;78;8;178m"
+SKY     = "\033[38;2;20;118;205m"
+PEACH   = "\033[38;2;188;68;50m"
+
+# Section-header backgrounds — kept dark so BWHITE title text pops on any terminal
+BG_RED     = "\033[41m"
+BG_GREEN   = "\033[42m"
+BG_BLUE    = "\033[44m"
+BG_MAGENTA = "\033[45m"
+BG_CYAN    = "\033[46m"
+BG_DARK    = "\033[48;2;50;60;85m"     # dark slate-blue (section header)
+BG_NAVY    = "\033[48;2;12;42;115m"    # deep navy
+BG_PURPLE  = "\033[48;2;88;12;150m"    # deep purple
+BG_TEAL    = "\033[48;2;0;100;110m"    # deep teal
+BG_ORANGE  = "\033[48;2;170;75;8m"     # deep amber-brown
+BG_FOREST  = "\033[48;2;18;90;45m"     # deep forest green
 
 def C(text, *codes): return "".join(codes)+str(text)+R
+
+def _init_light_theme():
+    """Apply the light-theme palette to the terminal (white bg, dark text)."""
+    sys.stdout.write(_LBG + _LFG)
+    sys.stdout.flush()
 
 def banner():
     _letters = [
@@ -95,19 +136,20 @@ def banner():
         (CYAN,    "E"), (BLUE,    "N"), (MAGENTA, "I"), (RED,     "E"),
     ]
     _logo = "".join(f"{col}{BOLD}{ch}{R}" for col, ch in _letters)
-    _line = f"  {DIM}{'─'*66}{R}"
+    _bar  = f"  {DIM}{'─' * 66}{R}"
 
     print(f"""
-{_line}
-  {CYAN}{BOLD}🐧{R}  {_logo}   {DIM}v{__version__} · Free forever · Powered by Claude{R}
-  {BOLD}Your friendly AI assistant for Linux{R}  {DIM}— no experience needed!{R}
-{_line}
-  {GREEN}{BOLD}✔{R}  {BOLD}Type anything in plain English{R}    {DIM}e.g. "my wifi stopped working"{R}
-  {GREEN}{BOLD}✔{R}  {BOLD}Or pick a number from the menu{R}     {DIM}e.g. "2" for Health Check{R}
-  {GREEN}{BOLD}✔{R}  {BOLD}Or run any terminal command directly{R}  {DIM}e.g. "ls -la"{R}
-{_line}
+{_bar}
+  {CYAN}{BOLD}🐧{R}  {_logo}   {DIM}v{__version__} · Powered by Claude · Free forever{R}
+  {DIM}Your friendly AI assistant for Linux  ·  No experience needed{R}
+{_bar}
+  {BGREEN}{BOLD}✔{R}  {BOLD}Just type what you need in plain English{R}
+     {DIM}e.g.{R} {BLUE}\"my wifi stopped working\"{R}  ·  {BLUE}\"install chrome\"{R}  ·  {BLUE}\"why is it slow?\"{R}
+  {BGREEN}{BOLD}✔{R}  {BOLD}Or pick a number from the menu{R}  {DIM}(type{R} {BOLD}menu{R} {DIM}to see it again){R}
+  {BGREEN}{BOLD}✔{R}  {BOLD}Or run any Linux command directly{R}  {DIM}e.g.{R} {BLUE}\"ls -la\"{R}
+{_bar}
   {BLUE}{BOLD}🌐 www.tuxgenie.com{R}  {DIM}· Dedicated to Linus Torvalds · Built by Aspera Technologies{R}
-{_line}
+{_bar}
 """)
 
 def hdr(title, width=64):
@@ -688,7 +730,7 @@ class Spinner:
     def _spin(self):
         i = 0
         while not self._stop.wait(0.08):
-            print(f"\r  {CYAN}{self._FRAMES[i % len(self._FRAMES)]}{R} {self._msg}",
+            print(f"\r  {BLUE}{self._FRAMES[i % len(self._FRAMES)]}{R} {DIM}{self._msg}{R}",
                   end="", flush=True)
             i += 1
 
@@ -4676,11 +4718,12 @@ def show_menu():
     _item("99", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
 
     print(f"""
-  {BG_DARK}{BWHITE}  {C('[s]',GOLD,BOLD)} Settings   {C('[u]',BCYAN,BOLD)} Update   {C('[h]',BMAGENTA,BOLD)} History   {C('[f]',PINK,BOLD)} Suggest Feature   {C('[q]',BRED,BOLD)} Quit  {R}
+  {DIM}{'─' * 65}{R}
+  {C('[s]',GOLD,BOLD)} Settings  ·  {C('[u]',BCYAN,BOLD)} Update  ·  {C('[h]',BMAGENTA,BOLD)} History  ·  {C('[f]',PINK,BOLD)} Suggest Feature  ·  {C('[q]',BRED,BOLD)} Quit
 
   {BGREEN}{BOLD}💡 TIP:{R} {BOLD}You don't need to pick a number!{R}
      Just type what you need, like:
-     {BLUE}{BOLD}\"my wifi is not working\"{R}   {BLUE}{BOLD}\"install chrome\"{R}   {BLUE}{BOLD}\"why is it slow?\"{R}
+     {BLUE}\"my wifi is not working\"{R}   {BLUE}\"install chrome\"{R}   {BLUE}\"why is it slow?\"{R}
 """)
 
 EXIT_WORDS = {"exit","quit","q","bye","logout"}
@@ -4819,6 +4862,7 @@ def main():
     )
     args = parser.parse_args()
 
+    _init_light_theme()
     banner()
     startup_update_check()
     backend = load_backend()
@@ -4881,6 +4925,7 @@ def main():
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
                 print(f"  {DIM}{backend.session_cost_estimate()}{R}")
             print(f"  {DIM}Thank you for using TuxGenie · {BLUE}www.tuxgenie.com{R}{DIM} · Aspera Technologies{R}\n")
+            sys.stdout.write("\033[0m"); sys.stdout.flush()   # restore terminal on exit
             break
 
         if not choice:
@@ -4888,6 +4933,7 @@ def main():
         if choice.lower() in EXIT_WORDS:
             print(f"\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             print(f"  {DIM}Thank you for using TuxGenie · {BLUE}www.tuxgenie.com{R}{DIM} · Aspera Technologies{R}\n")
+            sys.stdout.write("\033[0m"); sys.stdout.flush()   # restore terminal on exit
             break
         if choice.lower() in HELP_WORDS:
             show_help(); continue
@@ -4923,7 +4969,7 @@ def main():
             _restore_terminal()
             print(f"\n  {YELLOW}Cancelled — back to menu.{R}")
             continue
-        print(f"\n  {DIM}Type a number, describe a problem, or {BLUE}{BOLD}menu{R} {DIM}/ {BLUE}{BOLD}k{R}{DIM}=key / {BLUE}{BOLD}u{R}{DIM}=update / {RED}{BOLD}q{R}{DIM}=quit{R}")
+        print(f"\n  {DIM}Type a number, describe a problem, or{R} {BOLD}menu{R} {DIM}·{R} {BOLD}k{R}{DIM}=key{R} {DIM}·{R} {BOLD}u{R}{DIM}=update{R} {DIM}·{R} {RED}{BOLD}q{R}{DIM}=quit{R}")
 
     save_session(session_log)
 
@@ -4934,6 +4980,7 @@ if __name__ == "__main__":
     except SystemExit:
         pass
     except KeyboardInterrupt:
+        sys.stdout.write("\033[0m"); sys.stdout.flush()
         print(f"\n\n  {YELLOW}{BOLD}Goodbye! Long Live Linux 🐧{R}\n")
     except Exception:
         import sys as _sys
