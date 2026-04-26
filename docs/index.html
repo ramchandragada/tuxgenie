@@ -569,19 +569,25 @@ const curlCmd='curl -fsSL https://tuxgenie.com/install.sh | bash';
 const debManual='wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\\n  | grep "browser_download_url.*\\.deb" | cut -d\'"\' -f4)\nsudo dpkg -i tuxgenie_*.deb';
 const pipCmd='pip3 install tuxgenie';
 
+function ibox(label,copyText,bodyHtml){
+  return `<div class="ibox"><div class="ibox-hdr"><span class="ibox-hdr-l">${label}</span><button class="cbtn" data-copy="${copyText.replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">📋 Copy</button></div><div class="ibox-scroll">${bodyHtml}</div></div>`;
+}
 function installHtml(d){
-  const u=`<div class="ibox"><div class="ibox-hdr"><span class="ibox-hdr-l">Quick install · recommended</span><button class="cbtn" onclick="copyCmd(this,${JSON.stringify(curlCmd)})">📋 Copy</button></div><div class="ibox-scroll"><div class="mono" style="padding:14px 18px;text-align:left;font-size:13px;white-space:nowrap"><span style="color:var(--t3)">$</span> <span style="color:var(--green-2);font-weight:600">${curlCmd}</span></div></div></div>`;
+  const mono=(txt,pre)=>`<div class="mono" style="padding:14px 18px;text-align:left;font-size:13px;${pre?'line-height:1.85;white-space:pre':'white-space:nowrap'}">${txt}</div>`;
+  const prompt=`<span style="color:var(--t3)">$</span>`;
+  const hi=t=>`<span style="color:var(--green-2);font-weight:600">${t}</span>`;
+  const curlBox=ibox('Quick install · recommended',curlCmd,mono(`${prompt} ${hi(curlCmd)}`));
   if(d.family==='deb'){
-    return u+`<div style="margin:14px 0 6px;color:var(--t3);font-size:12px;font-weight:600">— or install the .deb package manually —</div><div class="ibox"><div class="ibox-hdr"><span class="ibox-hdr-l">Download .deb package</span><button class="cbtn" onclick="copyCmd(this,${JSON.stringify(debManual)})">📋 Copy</button></div><div class="ibox-scroll"><div class="mono" style="padding:14px 18px;text-align:left;font-size:13px;line-height:1.85;white-space:pre"><span style="color:var(--t3)">$</span> wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\
-    | grep "browser_download_url.*\\.deb" | cut -d'"' -f4)
-<span style="color:var(--t3)">$</span> sudo dpkg -i tuxgenie_*.deb</div></div></div>`;
+    const debDisplay=`${prompt} wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\
+    | grep "browser_download_url.*\\.deb" | cut -d'"' -f4)\n${prompt} sudo dpkg -i tuxgenie_*.deb`;
+    return curlBox+`<div style="margin:14px 0 6px;color:var(--t3);font-size:12px;font-weight:600">— or install the .deb package manually —</div>`+ibox('Download .deb package',debManual,mono(debDisplay,true));
   }
   const note={
     rpm:`<div class="alt-note" style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:#92400e">ℹ <strong>No .deb needed.</strong> The curl installer uses <code>pip3</code> automatically on Fedora / RHEL-based systems.</div>`,
     arch:`<div class="alt-note" style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);color:#1e40af">ℹ <strong>Arch user?</strong> The curl installer uses <code>pip3</code> automatically. AUR also: <code>yay -S tuxgenie</code>.</div>`,
     suse:`<div class="alt-note" style="background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.3);color:#6b21a8">ℹ <strong>openSUSE user?</strong> The curl installer uses <code>pip3</code>. Make sure Python 3.8+ is installed.</div>`,
   }[d.family]||'';
-  return u+`<div style="margin:14px 0 6px;color:var(--t3);font-size:12px;font-weight:600">— or install via pip3 —</div><div class="ibox"><div class="ibox-hdr"><span class="ibox-hdr-l">pip3 (Python package manager)</span><button class="cbtn" onclick="copyCmd(this,${JSON.stringify(pipCmd)})">📋 Copy</button></div><div class="ibox-scroll"><div class="mono" style="padding:14px 18px;text-align:left;font-size:13px;white-space:nowrap"><span style="color:var(--t3)">$</span> <span style="color:var(--green-2);font-weight:600">${pipCmd}</span></div></div></div>${note}`;
+  return curlBox+`<div style="margin:14px 0 6px;color:var(--t3);font-size:12px;font-weight:600">— or install via pip3 —</div>`+ibox('pip3 (Python package manager)',pipCmd,mono(`${prompt} ${hi(pipCmd)}`))+note;
 }
 
 (function(){
@@ -597,6 +603,9 @@ function installHtml(d){
   function select(id){
     distros.forEach(d=>document.getElementById('dp-'+d.id).classList.toggle('on',d.id===id));
     panel.innerHTML=installHtml(distros.find(d=>d.id===id));
+    panel.querySelectorAll('[data-copy]').forEach(b=>{
+      b.addEventListener('click',()=>copyCmd(b,b.dataset.copy));
+    });
   }
   select('ubuntu');
 })();
