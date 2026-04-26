@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.49.0"
+__version__ = "5.49.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -126,9 +126,34 @@ BG_FOREST  = "\033[48;2;18;90;45m"     # deep forest green
 def C(text, *codes): return "".join(codes)+str(text)+R
 
 def _init_light_theme():
-    """Apply the light-theme palette to the terminal (white bg, dark text)."""
+    """Force the terminal into light mode (white bg, dark navy text).
+
+    Uses OSC 10/11/12 to change the terminal's *actual* default fg/bg/cursor
+    colours — this fills the ENTIRE terminal viewport, not just the cells
+    where TuxGenie writes characters. Per-cell `_LBG`/`_LFG` is also written
+    as a fallback for terminals that don't honour OSC."""
+    # OSC 11 = default background, 10 = default foreground, 12 = cursor
+    sys.stdout.write("\033]11;#f8f9fc\033\\")
+    sys.stdout.write("\033]10;#14192e\033\\")
+    sys.stdout.write("\033]12;#14192e\033\\")
+    # Wipe whatever was on the screen (previous shell prompts, etc.) so the
+    # new background fills the visible area cleanly.
+    sys.stdout.write("\033[2J\033[H")
+    # Per-cell colours as a fallback / belt-and-braces
     sys.stdout.write(_LBG + _LFG)
     sys.stdout.flush()
+
+def _restore_default_theme():
+    """Restore the terminal's default colours on exit.
+    OSC 110/111/112 reset 10/11/12 back to the user's theme defaults."""
+    try:
+        sys.stdout.write("\033]110\033\\")   # reset default fg
+        sys.stdout.write("\033]111\033\\")   # reset default bg
+        sys.stdout.write("\033]112\033\\")   # reset cursor colour
+        sys.stdout.write("\033[0m")
+        sys.stdout.flush()
+    except Exception:
+        pass
 
 def banner():
     _letters = [
@@ -4925,7 +4950,7 @@ def main():
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
                 print(f"  {DIM}{backend.session_cost_estimate()}{R}")
             print(f"  {DIM}Thank you for using TuxGenie · {BLUE}www.tuxgenie.com{R}{DIM} · Aspera Technologies{R}\n")
-            sys.stdout.write("\033[0m"); sys.stdout.flush()   # restore terminal on exit
+            _restore_default_theme()   # restore terminal on exit
             break
 
         if not choice:
@@ -4933,7 +4958,7 @@ def main():
         if choice.lower() in EXIT_WORDS:
             print(f"\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             print(f"  {DIM}Thank you for using TuxGenie · {BLUE}www.tuxgenie.com{R}{DIM} · Aspera Technologies{R}\n")
-            sys.stdout.write("\033[0m"); sys.stdout.flush()   # restore terminal on exit
+            _restore_default_theme()   # restore terminal on exit
             break
         if choice.lower() in HELP_WORDS:
             show_help(); continue
@@ -4980,7 +5005,7 @@ if __name__ == "__main__":
     except SystemExit:
         pass
     except KeyboardInterrupt:
-        sys.stdout.write("\033[0m"); sys.stdout.flush()
+        _restore_default_theme()
         print(f"\n\n  {YELLOW}{BOLD}Goodbye! Long Live Linux 🐧{R}\n")
     except Exception:
         import sys as _sys
