@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.45.0"
+__version__ = "5.45.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -543,7 +543,11 @@ class OllamaBackend:
         self.auto_model  = False
         self.expert_mode = False
         self.is_local    = True
-        self._weak_response_count = 0   # tracks "I don't know" type responses
+        self._weak_response_count = 0
+        self._session_input_tokens          = 0
+        self._session_output_tokens         = 0
+        self._session_cache_creation_tokens = 0
+        self._session_cache_read_tokens     = 0
 
     def label(self):
         return f"Ollama (local) · {self.model}"
@@ -1523,6 +1527,15 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     - Adaptive thinking + effort=xhigh: 4.7 dynamically allocates thinking
       tokens; xhigh is the recommended setting for coding/agentic work.
     """
+    # Ollama doesn't support native tool_use — fall back to a simple ask()
+    if getattr(backend, 'is_local', False):
+        print(f"\n  {CYAN}{BOLD}⚡ AI: Ollama (local) · {backend.model}{R}")
+        system = AGENTIC_SYS + _sys_ctx_block(ctx)
+        result = backend.ask(system, [{"role": "user", "content": task}], max_tokens=4096)
+        if result:
+            print(f"\n{result}\n")
+        return
+
     # System prompt + tools are stable across the whole loop — cache them.
     system_blocks = [{
         "type": "text",
