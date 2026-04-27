@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.53.1"
+__version__ = "5.54.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4137,6 +4137,60 @@ def _save_update_cache(data):
     except Exception:
         pass
 
+def _try_silent_update(deb_url, deb_name, latest) -> bool:
+    """Attempt a fully silent auto-update using cached sudo credentials.
+
+    Uses `sudo -n` (non-interactive) so it never prompts for a password.
+    Returns True and re-execs if successful; returns False to let the caller
+    fall back to the interactive prompt.
+    """
+    # Test whether sudo is usable without a password right now
+    probe = subprocess.run(
+        ["sudo", "-n", "true"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    if probe.returncode != 0:
+        return False   # no cached credentials — caller will prompt
+
+    # Non-deb systems: try pip install --user (no sudo needed)
+    if not shutil.which("dpkg"):
+        rc = subprocess.run(
+            ["pip3", "install", f"tuxgenie=={latest}",
+             "--quiet", "--user", "--break-system-packages"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).returncode
+        if rc != 0:
+            rc = subprocess.run(
+                ["pip3", "install", f"tuxgenie=={latest}", "--quiet", "--user"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            ).returncode
+        if rc == 0:
+            print(f"\n  {GREEN}{BOLD}🎉 Auto-updated to v{latest}!{R}  {DIM}Restarting…{R}\n")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        return rc == 0
+
+    # Deb systems: download to /tmp then sudo -n dpkg -i
+    tmp_deb = os.path.join("/tmp", deb_name)
+    try:
+        urllib.request.urlretrieve(deb_url, tmp_deb)
+    except Exception:
+        return False
+
+    rc = subprocess.run(
+        ["sudo", "-n", "dpkg", "-i", tmp_deb],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    ).returncode
+    try:
+        os.unlink(tmp_deb)
+    except Exception:
+        pass
+
+    if rc == 0:
+        print(f"\n  {GREEN}{BOLD}🎉 Auto-updated to v{latest}!{R}  {DIM}Restarting…{R}\n")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    return rc == 0
+
+
 def _do_update_install(deb_url, deb_name, latest):
     """Download and install a .deb update, or pip upgrade on non-deb systems."""
     # Non-deb systems (Fedora, Arch, openSUSE, etc.) — upgrade via pip
@@ -4237,8 +4291,13 @@ def startup_update_check():
     if gap <= 0:
         return  # Already up to date
 
-    # ── 1 minor version behind: recommend (yellow banner, skippable) ──
+    # ── 1 minor version behind: try silent auto-update first ──────────────────
     if gap == 1:
+        if deb_url and deb_name:
+            # Silent path: works when sudo credentials are cached (15-min window)
+            if _try_silent_update(deb_url, deb_name, latest):
+                return  # re-exec already happened inside _try_silent_update
+        # Silent update wasn't possible — show the yellow banner and ask
         print(f"\n  {YELLOW}{BOLD}┌─────────────────────────────────────────────┐{R}")
         print(f"  {YELLOW}{BOLD}│  Update available: v{__version__} → v{latest:<10s}      │{R}")
         print(f"  {YELLOW}{BOLD}└─────────────────────────────────────────────┘{R}")
