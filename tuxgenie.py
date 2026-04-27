@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.49.1"
+__version__ = "5.49.2"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1793,6 +1793,19 @@ _NL_UPDATE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Dist-upgrade phrases: "upgrade to 26.04 LTS", "upgrade ubuntu to next LTS", etc.
+# Anchored on 'upgrade'/'update' + 'to' + version-signal. The .{0,80}? in the middle
+# lets extra words like "recently released" through while limiting blast radius.
+# We require either .04 or an explicit "lts" / "next"/"latest" keyword so we don't
+# accidentally catch "upgrade my app to v2.0" type sentences.
+_NL_DIST_UPGRADE_RE = re.compile(
+    r"^\s*(?:please\s+|i\s+(?:want|need|would\s+like)\s+(?:to\s+))?"
+    r"(?:upgrade|update)\b.{0,80}?"
+    r"to\s+(?:\w+\s+){0,3}(?:ubuntu\s+)?"
+    r"(?:\d{2}\.04\b|\d{2}(?:\.\d{2})?\s*lts|next\s+(?:lts|ubuntu)|latest\s+(?:lts|ubuntu))"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
 
 def _system_update_cmd_for_phrase(text: str):
     """If the user's natural-language input means 'update my system', return the
@@ -1812,6 +1825,66 @@ def _system_update_cmd_for_phrase(text: str):
     if shutil.which("xbps-install"):
         return "sudo xbps-install -Su -y"
     return None
+
+
+def _run_dist_upgrade():
+    """Run an Ubuntu/Debian distribution upgrade via do-release-upgrade.
+    Uses os.system() so the interactive TUI gets the real terminal TTY —
+    subprocess.Popen with pipes would break the interactive installer."""
+    if not shutil.which("do-release-upgrade"):
+        err("'do-release-upgrade' is not available on this system.")
+        info("This upgrade tool is Ubuntu/Debian-specific.")
+        return
+
+    print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🚀 Ubuntu Distribution Upgrade  {R}\n")
+
+    # Quick disk-space pre-check
+    free_gb = "?"
+    try:
+        res = subprocess.run(
+            "df --output=avail -BG / | tail -1",
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+        raw = res.stdout.strip().rstrip("G")
+        free_gb = raw if raw.isdigit() else "?"
+    except Exception:
+        pass
+
+    gb = int(free_gb) if free_gb.isdigit() else 0
+    gb_col = GREEN if gb >= 15 else (YELLOW if gb >= 10 else RED)
+
+    warn("This replaces your entire OS and cannot be safely interrupted.")
+    print(f"  {DIM}Free space on /:{R}  {gb_col}{BOLD}{free_gb} GB{R}  {DIM}(10 GB minimum recommended){R}")
+    warn("Ensure you have AC power and a stable internet connection.")
+    warn("The upgrade takes 1–2 hours — back up important files first.")
+    print()
+
+    try:
+        ans = input(
+            f"  {BOLD}Start the upgrade now?{R}  "
+            f"{C('yes', GREEN, BOLD)} / {C('no', RED, BOLD)}: "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+
+    if ans not in ("y", "yes"):
+        info("Upgrade cancelled — staying on current release.")
+        return
+
+    print(f"\n  {CYAN}Handing over to Ubuntu's upgrade tool…{R}")
+    print(f"  {DIM}Follow the prompts in the upgrade TUI. TuxGenie resumes when it's done.{R}\n")
+
+    # os.system() runs in the same terminal session — do-release-upgrade gets a real TTY
+    rc = os.system("sudo do-release-upgrade -d")
+
+    print()
+    if rc == 0:
+        ok(f"{BOLD}Upgrade complete!{R} Welcome to the new Ubuntu release.")
+        info("A reboot is recommended: sudo reboot")
+    else:
+        warn(f"Upgrade exited with code {rc}. Some steps may need attention.")
+        info("Check the log: /var/log/dist-upgrade/main.log")
 
 
 def _looks_like_command(text):
@@ -1962,6 +2035,14 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
             ok("System is up to date.")
         else:
             err(f"Update failed (exit code {rc}). Try running it in a terminal.")
+        return True
+
+    # Distribution upgrade: "upgrade to 26.04 LTS" (NL) or direct do-release-upgrade command.
+    # do-release-upgrade is a full-screen interactive TUI that needs a real TTY — we hand
+    # control to it via os.system() rather than the subprocess-pipe path used by run_cmd_live().
+    _is_direct_dru = bool(re.match(r"^\s*(?:sudo\s+)?do-release-upgrade\b", cmd, re.IGNORECASE))
+    if _NL_DIST_UPGRADE_RE.match(cmd) or _is_direct_dru:
+        _run_dist_upgrade()
         return True
 
     is_cmd, effective_word = _looks_like_command(cmd)
