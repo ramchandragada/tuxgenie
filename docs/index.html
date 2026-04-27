@@ -206,25 +206,6 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
   .fgrid{grid-template-columns:1fr}
   .btn{padding:10px 16px;font-size:13px}
 }
-/* ── DARK HERO ─────────────────────────────────────────────────────────────── */
-.hero{background:#080c18!important;border-bottom:none!important}
-.hero-glow{position:absolute;pointer-events:none;border-radius:50%}
-.hero-glow-1{top:-280px;left:-180px;width:640px;height:640px;background:radial-gradient(circle,rgba(99,102,241,.22) 0%,transparent 65%)}
-.hero-glow-2{bottom:-240px;right:-120px;width:560px;height:560px;background:radial-gradient(circle,rgba(168,85,247,.18) 0%,transparent 65%)}
-.hero .hero-tag{background:rgba(99,102,241,.18);border-color:rgba(99,102,241,.4);color:#a5b4fc}
-.hero .hero-h1{color:#f1f5f9}
-.hero .hero-sub{color:#94a3b8}
-.hero .api-note{background:rgba(245,158,11,.09);border-color:rgba(245,158,11,.28)}
-.hero .api-note strong{color:#fef3c7}
-.hero .api-note>div{color:#cbd5e1}
-.hero .api-note a{color:#fbbf24!important}
-.hero .stats span:first-child{color:#f1f5f9}
-.hero .stats span:last-child{color:#475569}
-.hero .stats>div:nth-child(even){background:none;border-color:rgba(255,255,255,.12)}
-.hero .pill-g{background:rgba(99,102,241,.16);border-color:rgba(99,102,241,.35);color:#a5b4fc}
-.hero .btn-s{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.18);color:#e2e8f0}
-.hero .btn-s:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.4);color:#fff;transform:translateY(-2px)}
-.hero-fade{height:56px;background:linear-gradient(180deg,#080c18 0%,var(--bg) 100%)}
 /* ── MARQUEE ───────────────────────────────────────────────────────────────── */
 .mq-outer{overflow:hidden;position:relative}
 .mq-outer::before,.mq-outer::after{content:'';position:absolute;top:0;bottom:0;width:80px;z-index:2;pointer-events:none}
@@ -328,8 +309,6 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
 
 <!-- HERO -->
 <section id="main" class="hero">
-  <div class="hero-glow hero-glow-1" aria-hidden="true"></div>
-  <div class="hero-glow hero-glow-2" aria-hidden="true"></div>
   <div class="container">
     <div class="hero-grid">
       <div>
@@ -348,9 +327,9 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
         </div>
         <div class="stats">
           <div><span class="grad">31</span><span>Built-in Tools</span></div>
-          <div style="width:1px;background:rgba(255,255,255,.1)"></div>
+          <div style="width:1px;background:var(--border)"></div>
           <div><span class="grad gh-stars">…</span><span>GitHub Stars</span></div>
-          <div style="width:1px;background:rgba(255,255,255,.1)"></div>
+          <div style="width:1px;background:var(--border)"></div>
           <div><span class="grad">Any</span><span>Linux Distro</span></div>
         </div>
         <div class="new-strip">
@@ -390,8 +369,6 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     </div>
   </div>
 </section>
-
-<div class="hero-fade" aria-hidden="true"></div>
 
 <!-- DISTROS -->
 <section class="distros">
