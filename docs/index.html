@@ -291,9 +291,10 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
           <div><span class="grad">Any</span><span>Linux Distro</span></div>
         </div>
         <div class="new-strip">
-          <span class="pill pill-g">🆕 Smart natural-language updates</span>
-          <span class="pill pill-g">🆕 [77] App Catalog · 30 apps</span>
-          <span class="pill pill-g">🆕 [99] AI Tools · Ollama, Claude Code &amp; more</span>
+          <span class="pill pill-g">🆕 !! fix-last-command</span>
+          <span class="pill pill-g">🆕 tg!! shell shortcut</span>
+          <span class="pill pill-g">🆕 Weekly health digest</span>
+          <span class="pill pill-g">🆕 Background error monitor</span>
           <span class="pill pill-g">🧠 Cross-session memory</span>
         </div>
       </div>
@@ -478,6 +479,19 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
         <div class="fcard"><span class="fcard-num">[29]</span><span class="fcard-icon">🐙</span><div class="fcard-name">Git Helper</div><div class="fcard-desc">Fix conflicts, undo commits, understand diffs in plain English.</div></div>
       </div>
     </div>
+
+    <!-- POWER FEATURES -->
+    <div class="fgroup fade">
+      <div class="fgroup-hd"><span class="cat-pill" style="background:rgba(99,102,241,.12);color:#4338ca;border:1px solid rgba(99,102,241,.3)">🚀 New · Power Features</span><span class="fgroup-tip">Recently added — makes TuxGenie your daily Linux companion</span></div>
+      <div class="fgrid">
+        <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-icon">⚡</span><div class="fcard-name">!! Fix Last Command</div><div class="fcard-desc">Type <strong>!!</strong> after any command fails — TuxGenie instantly diagnoses and fixes it. No copy-pasting error messages.</div></div>
+        <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-icon">🐚</span><div class="fcard-name">tg!! Shell Shortcut</div><div class="fcard-desc">Install with <strong>[i]</strong> to get <strong>tg!!</strong> in every terminal. Works in bash and zsh — type it the moment something breaks.</div></div>
+        <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-icon">🧠</span><div class="fcard-name">Cross-Session Memory</div><div class="fcard-desc">Remembers every past fix. Next time you hit a similar problem, TuxGenie shows what solved it last time.</div></div>
+        <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-icon">📊</span><div class="fcard-name">Weekly Health Digest</div><div class="fcard-desc">A compact health report once a week at startup — disk, memory, failed services, pending updates. Run anytime with <strong>tuxgenie --digest</strong>.</div></div>
+        <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-num">[m]</span><span class="fcard-icon">🔔</span><div class="fcard-name">Background Error Monitor</div><div class="fcard-desc">Installs a systemd service that watches for system errors and fires a desktop notification — so you know to fix things before they get worse.</div></div>
+        <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-icon">📥</span><div class="fcard-name">Pipe Mode</div><div class="fcard-desc">Pipe any output directly to TuxGenie: <strong>journalctl -xe | tuxgenie explain</strong> — instant plain-English explanation of any log.</div></div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -519,9 +533,10 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
     <div class="trust-grid">
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>Paste an <a href="https://console.anthropic.com" target="_blank" rel="noopener">Anthropic API key</a> at first run and you're done. Sign-up is free; usage is metered (about $0.01 per session). Top up $5 once and it lasts months.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. Smart routing uses the smallest model that handles the task — escalates only when needed.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🧠</div><h4 style="color:#7e22ce">Cross-Session Memory</h4><p>TuxGenie remembers your system specs, installed apps, and every past action. Gets smarter the more you use it.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⏳</div><h4 style="color:#854d0e">Live Install Progress</h4><p>Spinner with elapsed time, apt percentage, and current action. Never wonder if a long install hung.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔄</div><h4 style="color:#1d4ed8">Auto-Updates</h4><p>Type <code>u</code> inside TuxGenie to get the latest version instantly. No package manager dance.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🧠</div><h4 style="color:#7e22ce">Cross-Session Memory</h4><p>Remembers every fix across sessions. When you hit a similar problem, TuxGenie surfaces what worked last time.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">📊</div><h4 style="color:#854d0e">Weekly Health Digest</h4><p>A compact health snapshot once a week at startup — disk, memory, failed services, pending updates. Run anytime: <code>tuxgenie --digest</code>.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔔</div><h4 style="color:#1d4ed8">Background Error Monitor</h4><p>Optional systemd service that watches journalctl and fires a desktop notification the moment a system error occurs. Enable with <code>m</code>.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔄</div><h4 style="color:#4338ca">Auto-Updates</h4><p>Type <code>u</code> inside TuxGenie to get the latest version instantly. No package manager dance.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔒</div><h4 style="color:#4338ca">Privacy First</h4><p>Your data goes directly from your machine to Anthropic. The TuxGenie app installs no trackers and collects no telemetry. This website is hosted on Vercel, which may set a visitor-count cookie.</p></div>
     </div>
   </div>
@@ -635,14 +650,16 @@ const lines=[
   {t:'o',v:'  ⚡ Running: sudo ip link set wlan0 up',c:'#94a3b8'},
   {t:'o',v:'  ✔ WiFi restored successfully!',c:'#86efac'},
   {t:'b'},
+  {t:'p',v:'sudo apt install docker-ce'},
+  {t:'o',v:'  ✘  Exit 1  Package not found',c:'#f87171'},
+  {t:'i',v:'!!'},
+  {t:'o',v:'  🧠 Memory: similar issue fixed before',c:'#c4b5fd'},
+  {t:'o',v:'  ⚡ Adding Docker official repo...',c:'#93c5fd'},
+  {t:'o',v:'  ✔ Docker installed successfully!',c:'#86efac'},
+  {t:'b'},
   {t:'i',v:'77'},
   {t:'o',v:'  🎁 App Catalog — pick from 30 apps',c:'#d8b4fe'},
-  {t:'o',v:'  Pick app(s) [1-30]: 1,4',c:'#94a3b8'},
-  {t:'o',v:'  ✔ Brave Browser installed',c:'#86efac'},
-  {t:'o',v:'  ✔ Vivaldi installed',c:'#86efac'},
-  {t:'b'},
-  {t:'i',v:'install chrome'},
-  {t:'o',v:'  📦 Installed via apt successfully!',c:'#86efac'}
+  {t:'o',v:'  ✔ Brave Browser installed',c:'#86efac'}
 ];
 const el=document.getElementById('tlines');
 let li=0,ci=0,cur=null;
