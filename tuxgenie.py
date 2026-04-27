@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.49.2"
+__version__ = "5.50.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2125,26 +2125,16 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
     if rc == 0:
         ok("Done.")
     else:
-        warn(f"Exited with code {rc}.")
-        # ── AI explanation offer ──────────────────────────────────────────
-        if backend and not backend._no_key:
-            combined = (stdout + "\n" + stderr).strip()
-            if combined:
-                print(f"\n  {DIM}{'─'*50}{R}")
-                for line in combined.splitlines()[:6]:
-                    print(f"  {DIM}{line}{R}")
-            try:
-                ans = input(f"\n  {YELLOW}{BOLD}Want AI to explain this error and fix it?{R} [y/n]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                ans = "n"
-            if ans in ("y", "yes"):
-                ctx = (f"I ran this command:\n  {cmd}\n\n"
-                       f"It failed with exit code {rc}.\n\nOutput:\n{combined[:1200]}\n\n"
-                       "Explain what went wrong in plain English and fix it.")
-                sys_p = BASE_SYS + (_sys_ctx_block(bctx) if bctx else "")
-                fix_engine(backend, sys_p, [{"role": "user", "content": ctx}], session_log)
-                session_log.append({"command": cmd, "rc": rc, "source": "passthrough"})
-                return True
+        # Track for the !! shortcut
+        global _last_failed
+        _last_failed = {"cmd": cmd, "rc": rc,
+                        "stdout": stdout[:1500], "stderr": stderr[:600]}
+        print(f"  {BRED}{BOLD}✘{R}  Exit {rc}")
+        combined = (stderr or stdout).strip()
+        if combined:
+            for ln in combined.splitlines()[:5]:
+                print(f"  {DIM}{ln}{R}")
+        print(f"  {DIM}Type {BOLD}!!{R}{DIM} to ask AI to diagnose and fix this{R}")
 
     session_log.append({"command": cmd, "rc": rc, "source": "passthrough"})
     return True
@@ -4761,8 +4751,101 @@ MENU_ITEMS = [
     ("99", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
     ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
+    ("i",  "shell",     "Shell Integration",  "Install tg!! shortcut in your terminal",         feat_shell_integration),
     ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                          feat_feedback),
 ]
+
+def feat_shell_integration():
+    """Install the tg() shell function into .bashrc / .zshrc.
+    After installation users can type  tg!!  after any failed command
+    in any terminal to invoke TuxGenie — command: i"""
+
+    hdr("Shell Integration — tg!! shortcut")
+
+    _SNIPPET = r"""
+# ── TuxGenie shell integration ──────────────────────────────────
+# Installed by: tuxgenie (i → Shell Integration)
+# After any failed command, type:   tg!!   or   tg fix
+# Shorthand for tuxgenie anywhere:  tg "install chrome"
+_tg_last_exit=0
+_tg_last_cmd=""
+
+if [[ -n "${BASH_VERSION:-}" ]]; then
+    _tg_precmd() {
+        _tg_last_exit=$?
+        _tg_last_cmd="$(HISTTIMEFORMAT='' history 1 2>/dev/null | \
+            sed 's/^[[:space:]]*[0-9]*[[:space:]]*//' || true)"
+    }
+    PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }_tg_precmd"
+elif [[ -n "${ZSH_VERSION:-}" ]]; then
+    _tg_preexec() { _tg_last_cmd="$1"; }
+    _tg_precmd()  { _tg_last_exit=$?; }
+    autoload -Uz add-zsh-hook 2>/dev/null
+    add-zsh-hook preexec _tg_preexec
+    add-zsh-hook precmd  _tg_precmd
+fi
+
+tg() {
+    case "${1:-}" in
+        "!!" | fix | why)
+            if [[ "${_tg_last_exit:-0}" -ne 0 ]]; then
+                tuxgenie "!! The command '$_tg_last_cmd' failed with exit code $_tg_last_exit. Please diagnose and fix it."
+            else
+                printf "  \033[38;2;22;132;58m✔\033[0m  Last command succeeded — nothing to fix.\n"
+            fi ;;
+        "") tuxgenie ;;
+        *)  tuxgenie "$@" ;;
+    esac
+}
+# ────────────────────────────────────────────────────────────────
+"""
+
+    _MARKER = "# ── TuxGenie shell integration ──"
+    shell    = os.environ.get("SHELL", "/bin/bash")
+    bash_rc  = os.path.expanduser("~/.bashrc")
+    zsh_rc   = os.path.expanduser("~/.zshrc")
+    targets  = ([zsh_rc, bash_rc] if "zsh" in shell else [bash_rc, zsh_rc])
+
+    installed = []
+    for rc_file in targets:
+        if not os.path.exists(rc_file):
+            continue
+        try:
+            content = open(rc_file).read()
+        except Exception:
+            continue
+        if _MARKER in content:
+            ok(f"Already installed in {rc_file}")
+            installed.append(rc_file)
+        else:
+            try:
+                with open(rc_file, "a") as fh:
+                    fh.write("\n" + _SNIPPET)
+                ok(f"Installed tg() in {rc_file}")
+                installed.append(rc_file)
+            except Exception as e:
+                err(f"Could not write to {rc_file}: {e}")
+
+    if not installed:
+        try:
+            with open(bash_rc, "a") as fh:
+                fh.write("\n" + _SNIPPET)
+            ok(f"Installed tg() in {bash_rc}")
+        except Exception as e:
+            err(f"Could not install shell integration: {e}")
+            return
+
+    print(f"""
+  {BOLD}Restart your terminal (or run: source ~/.bashrc), then use:{R}
+
+  {BGREEN}{BOLD}  tg!!{R}              {DIM}after any failed command — AI diagnoses and fixes{R}
+  {BGREEN}{BOLD}  tg fix{R}            {DIM}same thing, easier to type{R}
+  {BGREEN}{BOLD}  tg "question"{R}     {DIM}shorthand for tuxgenie from anywhere{R}
+
+  {DIM}Works in any terminal — Warp, GNOME Terminal, Kitty, etc.{R}
+  {DIM}Supports bash and zsh.{R}
+""")
+
 
 def show_menu():
     def _cat(bg, icon, title, subtitle):
@@ -4825,12 +4908,15 @@ def show_menu():
 
     print(f"""
   {DIM}{'─' * 65}{R}
-  {C('[s]',GOLD,BOLD)} Settings  ·  {C('[u]',BCYAN,BOLD)} Update  ·  {C('[h]',BMAGENTA,BOLD)} History  ·  {C('[f]',PINK,BOLD)} Suggest Feature  ·  {C('[q]',BRED,BOLD)} Quit
+  {C('[s]',GOLD,BOLD)} Settings  ·  {C('[i]',LIME,BOLD)} Shell Integration  ·  {C('[u]',BCYAN,BOLD)} Update  ·  {C('[h]',BMAGENTA,BOLD)} History  ·  {C('[q]',BRED,BOLD)} Quit
 
   {BGREEN}{BOLD}💡 TIP:{R} {BOLD}You don't need to pick a number!{R}
      Just type what you need, like:
      {BLUE}\"my wifi is not working\"{R}   {BLUE}\"install chrome\"{R}   {BLUE}\"why is it slow?\"{R}
 """)
+
+# Last failed passthrough command — used by the !! fix shortcut
+_last_failed: dict = {}
 
 EXIT_WORDS = {"exit","quit","q","bye","logout"}
 HELP_WORDS = {"help","?","how","what"}
@@ -4968,6 +5054,19 @@ def main():
     )
     args = parser.parse_args()
 
+    # ── Pipe mode: journalctl -xe | tuxgenie explain ─────────────────────────
+    if not sys.stdin.isatty():
+        piped = sys.stdin.read(8000).strip()
+        if piped:
+            _init_light_theme()
+            backend = load_backend()
+            with Spinner("Collecting system info…"):
+                bctx = base_ctx()
+            verb = args.issue or "explain"
+            issue = f"{verb}\n\nPIPED INPUT:\n{piped}"
+            agentic_engine(backend, issue, bctx, [])
+            return
+
     _init_light_theme()
     banner()
     startup_update_check()
@@ -5053,6 +5152,30 @@ def main():
             feat_set_api_key(backend); continue
         if choice.lower() in ("f", "feedback", "feature", "suggest"):
             feat_feedback(); continue
+        if choice.lower() in ("i", "shell", "shellsetup", "integrate"):
+            feat_shell_integration(); continue
+
+        # !! — fix the last failed command (or handle "!! fix: ..." from tg shell function)
+        if choice in ("!!", "fix", "why") or choice.lower().startswith("!! "):
+            if choice.lower().startswith("!! "):
+                # Input came from the external tg shell function — pass straight to AI
+                agentic_engine(backend, choice, bctx, session_log)
+            elif _last_failed:
+                err_out = (_last_failed.get("stderr") or _last_failed.get("stdout", "")).strip()
+                ctx = (
+                    f"The command I just ran failed:\n"
+                    f"  Command: {_last_failed['cmd']}\n"
+                    f"  Exit code: {_last_failed['rc']}\n"
+                )
+                if err_out:
+                    ctx += f"  Error output:\n{err_out[:800]}\n\n"
+                ctx += "Please explain what went wrong in plain English and fix it."
+                agentic_engine(backend, ctx, bctx, session_log)
+                save_session(session_log)
+                _last_failed = {}
+            else:
+                info("No failed command to fix yet — run a command first.")
+            continue
 
         try:
             if choice in feature_map:
