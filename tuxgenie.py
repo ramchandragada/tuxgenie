@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.54.0"
+__version__ = "5.55.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -213,6 +213,8 @@ ACTIONS_FILE = os.path.join(CFG_DIR, "actions.json")   # commands run by AI
 FINGERPRINT_FILE = os.path.join(CFG_DIR, "fingerprint.json")  # cached system info
 MEMORY_FILE  = os.path.join(CFG_DIR, "memory.json")    # cross-session solved issues
 DIGEST_FILE  = os.path.join(CFG_DIR, "digest.json")    # weekly health digest last-run
+CRASH_FILE   = os.path.join(CFG_DIR, "crash.json")     # crash guard counter
+PREV_VER_BAK = os.path.join(CFG_DIR, "tuxgenie.bak")   # last-known-good backup
 DATA_DIR     = os.path.expanduser("~/.local/share/tuxgenie")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 BACKUPS_DIR  = os.path.join(DATA_DIR, "backups")
@@ -4176,6 +4178,7 @@ def _try_silent_update(deb_url, deb_name, latest) -> bool:
     except Exception:
         return False
 
+    _save_version_backup()   # save current version before replacing
     rc = subprocess.run(
         ["sudo", "-n", "dpkg", "-i", tmp_deb],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -4222,6 +4225,7 @@ def _do_update_install(deb_url, deb_name, latest):
     except Exception as e:
         err(f"Download failed: {e}"); return False
     ok(f"Downloaded {deb_name}")
+    _save_version_backup()   # save current version before replacing
 
     print(f"\n  {CYAN}▶ Installing v{latest}…{R}")
     try:
@@ -4510,7 +4514,94 @@ def _weekly_digest(force: bool = False):
         pass
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  SECTION 8 — SESSION SAVE
+#  SECTION 8 — CRASH GUARD
+# ═══════════════════════════════════════════════════════════════════════════════
+_CRASH_THRESHOLD = 3
+_SYSTEM_PY = "/usr/lib/tuxgenie/tuxgenie.py"
+
+def _crash_read() -> dict:
+    try:
+        return json.loads(open(CRASH_FILE).read())
+    except Exception:
+        return {}
+
+def _crash_write(data: dict):
+    try:
+        with open(CRASH_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception:
+        pass
+
+def _crash_mark_clean():
+    """Called on clean exit via atexit — resets the crash counter."""
+    data = _crash_read()
+    if data.get("version") == __version__:
+        data["crashes"] = 0
+        _crash_write(data)
+
+def _save_version_backup():
+    """Copy the running tuxgenie.py to PREV_VER_BAK before an update."""
+    src = _SYSTEM_PY if os.path.exists(_SYSTEM_PY) else os.path.abspath(__file__)
+    try:
+        import shutil as _sh
+        _sh.copy2(src, PREV_VER_BAK)
+    except Exception:
+        pass
+
+def _crash_guard():
+    """Call at startup. Increments crash counter; triggers rollback at threshold."""
+    import atexit
+    atexit.register(_crash_mark_clean)
+
+    data = _crash_read()
+    ver  = data.get("version", "")
+    crashes = data.get("crashes", 0)
+
+    if ver != __version__:
+        # New version just installed — start fresh counter
+        _crash_write({"version": __version__, "crashes": 1})
+        return
+
+    crashes += 1
+    _crash_write({"version": __version__, "crashes": crashes})
+
+    if crashes < _CRASH_THRESHOLD:
+        return
+
+    # ── 3 consecutive crashes — roll back ────────────────────────────────────
+    sys.stdout.write("\033[0m\n")   # reset terminal in case theme wasn't set yet
+    print(f"\n  ⚠  TuxGenie v{__version__} has crashed {crashes} times in a row.")
+    print(f"  Rolling back to the previous version automatically…\n")
+
+    if not os.path.exists(PREV_VER_BAK):
+        print(f"  No backup found at {PREV_VER_BAK}.")
+        print(f"  Run:  tuxgenie-update   to reinstall the latest version.")
+        sys.exit(1)
+
+    # Try sudo -n (cached credentials)
+    probe = subprocess.run(["sudo", "-n", "true"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if probe.returncode == 0:
+        rc = subprocess.run(
+            ["sudo", "-n", "cp", PREV_VER_BAK, _SYSTEM_PY],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ).returncode
+        if rc == 0:
+            # Reset counter for the backup version so it gets a fresh start
+            _crash_write({"version": "rollback", "crashes": 0})
+            print(f"  ✓  Rolled back. Restarting TuxGenie…\n")
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    # sudo not available — give the user the manual command
+    print(f"  Could not auto-rollback (sudo credentials not cached).")
+    print(f"  Run this to fix it:")
+    print(f"\n    sudo cp {PREV_VER_BAK} {_SYSTEM_PY}\n")
+    print(f"  Then run: tuxgenie")
+    sys.exit(1)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SECTION 9 — SESSION SAVE
 # ═══════════════════════════════════════════════════════════════════════════════
 def save_session(slog: list):
     if not slog:
@@ -5505,6 +5596,7 @@ def first_run_check():
         pass
 
 def main():
+    _crash_guard()   # increment crash counter; rolls back if 3 consecutive crashes
     parser = argparse.ArgumentParser(
         prog="tuxgenie",
         description="TuxGenie — AI-powered Linux assistant powered by Claude",
