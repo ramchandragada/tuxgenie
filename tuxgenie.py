@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.51.0"
+__version__ = "5.52.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -212,6 +212,7 @@ HISTORY_FILE = os.path.join(CFG_DIR, "history.json")   # user prompts
 ACTIONS_FILE = os.path.join(CFG_DIR, "actions.json")   # commands run by AI
 FINGERPRINT_FILE = os.path.join(CFG_DIR, "fingerprint.json")  # cached system info
 MEMORY_FILE  = os.path.join(CFG_DIR, "memory.json")    # cross-session solved issues
+DIGEST_FILE  = os.path.join(CFG_DIR, "digest.json")    # weekly health digest last-run
 DATA_DIR     = os.path.expanduser("~/.local/share/tuxgenie")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 BACKUPS_DIR  = os.path.join(DATA_DIR, "backups")
@@ -4322,6 +4323,133 @@ def quick_health_check():
             warn(i)
         print(C("  → Run option [2] Health Dashboard for details\n", YELLOW))
 
+def _weekly_digest(force: bool = False):
+    """Show a compact weekly health digest — auto-skips if run <7 days ago."""
+    today = datetime.date.today().isoformat()
+    try:
+        data = json.loads(open(DIGEST_FILE).read())
+        last = data.get("last_run", "")
+        if not force and last:
+            delta = (datetime.date.today() - datetime.date.fromisoformat(last)).days
+            if delta < 7:
+                return
+    except Exception:
+        pass
+
+    # ── Collect metrics ────────────────────────────────────────────────────────
+    # Disk — only show mounts ≥60% full (skip pseudo-filesystems)
+    disk_lines = []
+    try:
+        for line in _r("df -Ph --output=pcent,target,size,used,avail 2>/dev/null").splitlines()[1:]:
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            mount = parts[1] if len(parts) >= 2 else ""
+            if any(skip in mount for skip in ("/proc", "/sys", "/dev", "/run", "udev", "tmpfs", "snap")):
+                continue
+            pct_s = parts[0].replace("%", "")
+            if pct_s.isdigit() and int(pct_s) >= 60:
+                col = RED if int(pct_s) >= 90 else (YELLOW if int(pct_s) >= 80 else CYAN)
+                size = parts[2] if len(parts) >= 3 else "?"
+                avail = parts[4] if len(parts) >= 5 else "?"
+                disk_lines.append(f"{col}{mount}{R}  {parts[0]} used  ({avail} free of {size})")
+    except Exception:
+        pass
+
+    # Memory
+    mem_str = ""
+    try:
+        for line in _r("free -h").splitlines():
+            if line.startswith("Mem:"):
+                p = line.split()
+                mem_str = f"{p[2]} / {p[1]} used"
+                break
+    except Exception:
+        pass
+
+    # Failed services
+    failed_count = 0
+    failed_names = []
+    try:
+        raw = _r("systemctl --failed --no-pager --no-legend 2>/dev/null").strip()
+        for line in raw.splitlines():
+            if "failed" in line.lower():
+                failed_count += 1
+                name = line.split()[0] if line.split() else ""
+                if name:
+                    failed_names.append(name)
+    except Exception:
+        pass
+
+    # Pending updates
+    updates = 0
+    try:
+        out = _r("apt list --upgradable 2>/dev/null").strip()
+        updates = max(0, len([l for l in out.splitlines() if "/" in l]))
+    except Exception:
+        pass
+
+    # Uptime
+    uptime_str = ""
+    try:
+        uptime_str = _r("uptime -p").strip().replace("up ", "")
+    except Exception:
+        pass
+
+    # ── Print digest ──────────────────────────────────────────────────────────
+    bar = "─" * 56
+    week_label = datetime.date.today().strftime("%B %d, %Y")
+    print(f"\n  {BOLD}{BMAGENTA}📊 Weekly Health Digest{R}  {DIM}{week_label}{R}")
+    print(f"  {DIM}{bar}{R}")
+
+    # Disk
+    if disk_lines:
+        print(f"  {BOLD}Disk{R}")
+        for dl in disk_lines:
+            print(f"    {dl}")
+    else:
+        print(f"  {BOLD}Disk{R}      {GREEN}All partitions below 60%{R}")
+
+    # Memory
+    if mem_str:
+        print(f"  {BOLD}Memory{R}    {mem_str}")
+
+    # Services
+    if failed_count:
+        names = ", ".join(failed_names[:3]) + ("…" if len(failed_names) > 3 else "")
+        print(f"  {BOLD}Services{R}  {RED}{failed_count} failed:{R} {names}")
+        print(f"            {DIM}→ Run option [2] Health Dashboard to investigate{R}")
+    else:
+        print(f"  {BOLD}Services{R}  {GREEN}All running{R}")
+
+    # Updates
+    if updates > 0:
+        col = YELLOW if updates < 20 else RED
+        print(f"  {BOLD}Updates{R}   {col}{updates} package{'s' if updates != 1 else ''} pending{R}  {DIM}(run: sudo apt upgrade){R}")
+    else:
+        print(f"  {BOLD}Updates{R}   {GREEN}System up to date{R}")
+
+    # Uptime
+    if uptime_str:
+        print(f"  {BOLD}Uptime{R}    {uptime_str}")
+
+    # Summary line
+    has_critical = any(p.replace("%","").isdigit() and int(p.replace("%","")) >= 90
+                       for line in _r("df -Ph 2>/dev/null").splitlines()[1:]
+                       for p in [line.split()[4] if len(line.split()) >= 5 else "0"])
+    if failed_count or has_critical:
+        print(f"\n  {RED}{BOLD}⚠  Issues found — run option [2] for details{R}")
+    else:
+        print(f"\n  {GREEN}{BOLD}✓  System looking good!{R}  {DIM}Next digest in 7 days.{R}")
+    print(f"  {DIM}{bar}{R}\n")
+
+    # Save timestamp
+    try:
+        with open(DIGEST_FILE, "w") as f:
+            json.dump({"last_run": today}, f)
+    except Exception:
+        pass
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 8 — SESSION SAVE
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -5150,6 +5278,10 @@ def main():
         "--feature", "-f", metavar="NAME",
         help="Run a specific feature directly (e.g. health, network, disk, git, security)"
     )
+    parser.add_argument(
+        "--digest", action="store_true",
+        help="Show the weekly health digest (force-runs even if <7 days since last)"
+    )
     args = parser.parse_args()
 
     # ── Pipe mode: journalctl -xe | tuxgenie explain ─────────────────────────
@@ -5164,6 +5296,12 @@ def main():
             issue = f"{verb}\n\nPIPED INPUT:\n{piped}"
             agentic_engine(backend, issue, bctx, [])
             return
+
+    # ── Digest-only mode: tuxgenie --digest ──────────────────────────────────
+    if args.digest:
+        _init_light_theme()
+        _weekly_digest(force=True)
+        return
 
     _init_light_theme()
     banner()
@@ -5210,6 +5348,7 @@ def main():
     # ── Interactive mode ──────────────────────────────────────────────────────
     first_run_check()
     quick_health_check()
+    _weekly_digest()
     show_menu()
     if backend._no_key:
         _line = f"  {DIM}{'─'*54}{R}"
