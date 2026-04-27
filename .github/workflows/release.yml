@@ -51,6 +51,12 @@ jobs:
             echo "v${{ steps.ver.outputs.VERSION }} is new — building release."
           fi
 
+      - name: Validate tuxgenie.py syntax
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          python3 -m py_compile tuxgenie.py
+          echo "Syntax OK"
+
       - name: Install build tools
         if: steps.check.outputs.exists == 'false'
         run: pip install build twine
