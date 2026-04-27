@@ -206,6 +206,67 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
   .fgrid{grid-template-columns:1fr}
   .btn{padding:10px 16px;font-size:13px}
 }
+/* ── DARK HERO ─────────────────────────────────────────────────────────────── */
+.hero{background:#080c18!important;border-bottom:none!important}
+.hero-glow{position:absolute;pointer-events:none;border-radius:50%}
+.hero-glow-1{top:-280px;left:-180px;width:640px;height:640px;background:radial-gradient(circle,rgba(99,102,241,.22) 0%,transparent 65%)}
+.hero-glow-2{bottom:-240px;right:-120px;width:560px;height:560px;background:radial-gradient(circle,rgba(168,85,247,.18) 0%,transparent 65%)}
+.hero .hero-tag{background:rgba(99,102,241,.18);border-color:rgba(99,102,241,.4);color:#a5b4fc}
+.hero .hero-h1{color:#f1f5f9}
+.hero .hero-sub{color:#94a3b8}
+.hero .api-note{background:rgba(245,158,11,.09);border-color:rgba(245,158,11,.28)}
+.hero .api-note strong{color:#fef3c7}
+.hero .api-note>div{color:#cbd5e1}
+.hero .api-note a{color:#fbbf24!important}
+.hero .stats span:first-child{color:#f1f5f9}
+.hero .stats span:last-child{color:#475569}
+.hero .stats>div:nth-child(even){background:none;border-color:rgba(255,255,255,.12)}
+.hero .pill-g{background:rgba(99,102,241,.16);border-color:rgba(99,102,241,.35);color:#a5b4fc}
+.hero .btn-s{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.18);color:#e2e8f0}
+.hero .btn-s:hover{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.4);color:#fff;transform:translateY(-2px)}
+.hero-fade{height:56px;background:linear-gradient(180deg,#080c18 0%,var(--bg) 100%)}
+/* ── MARQUEE ───────────────────────────────────────────────────────────────── */
+.mq-outer{overflow:hidden;position:relative}
+.mq-outer::before,.mq-outer::after{content:'';position:absolute;top:0;bottom:0;width:80px;z-index:2;pointer-events:none}
+.mq-outer::before{left:0;background:linear-gradient(90deg,#fff,transparent)}
+.mq-outer::after{right:0;background:linear-gradient(-90deg,#fff,transparent)}
+.mq-track{display:flex;animation:mq-scroll 36s linear infinite;width:max-content}
+.mq-track:hover{animation-play-state:paused}
+@keyframes mq-scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+/* ── FAQ ───────────────────────────────────────────────────────────────────── */
+.faq-wrap{max-width:740px;margin:0 auto}
+.faq-item{border-bottom:1px solid var(--border)}
+.faq-btn{width:100%;text-align:left;background:none;border:none;padding:20px 4px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:16px;font-family:var(--fd);font-size:15px;font-weight:700;color:var(--t1);transition:color .15s}
+.faq-btn:hover{color:var(--green-2)}
+.faq-chevron{font-size:18px;transition:transform .25s;flex-shrink:0;color:var(--green-2);line-height:1}
+.faq-body{max-height:0;overflow:hidden;transition:max-height .35s ease,padding .35s ease;padding:0 4px}
+.faq-body.open{max-height:400px;padding-bottom:20px}
+.faq-body p{font-size:14px;color:var(--t2);line-height:1.75}
+.faq-body code{background:#eef0ff;padding:2px 7px;border-radius:4px;font-family:var(--fm);color:#4338ca;font-size:12px;font-weight:600}
+.faq-body a{color:var(--green-2);font-weight:600;text-decoration:none}
+.faq-body a:hover{text-decoration:underline}
+/* ── BADGE BAR ─────────────────────────────────────────────────────────────── */
+.badge-bar{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:28px 0;border-top:1px solid var(--border);margin-top:48px}
+.badge{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 11px;font-size:11px;font-weight:600;color:var(--t2);white-space:nowrap}
+.badge-green{background:rgba(22,163,74,.06);border-color:rgba(22,163,74,.3);color:#15803d}
+/* ── EXPANDED FOOTER ───────────────────────────────────────────────────────── */
+.foot-grid{display:grid;grid-template-columns:1.8fr 1fr 1fr 1fr;gap:32px;padding:48px 0 32px}
+.foot-col h5{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--t3);margin-bottom:14px}
+.foot-col a{display:block;color:var(--t2);text-decoration:none;font-size:13px;margin-bottom:9px;transition:color .15s}
+.foot-col a:hover{color:var(--green-2)}
+.foot-col p{font-size:13px;color:var(--t2);line-height:1.6;margin-bottom:12px}
+.foot-divider{height:1px;background:var(--border)}
+.foot-bottom{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:18px 0;font-size:12px;color:var(--t3)}
+.foot-bottom a{color:var(--t3);text-decoration:none;transition:color .15s}
+.foot-bottom a:hover{color:var(--green-2)}
+/* ── MOBILE CODE OVERFLOW FIX ──────────────────────────────────────────────── */
+code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
+.ibox-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* ── MISC ──────────────────────────────────────────────────────────────────── */
+.crash-card{border-color:rgba(220,38,38,.25)!important;background:rgba(220,38,38,.02)!important}
+.crash-card h4{color:#dc2626!important}
+@media(max-width:860px){.foot-grid{grid-template-columns:1fr 1fr;gap:24px}}
+@media(max-width:500px){.foot-grid{grid-template-columns:1fr}}
 </style>
 <script type="application/ld+json">
 {
@@ -235,7 +296,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
 </script>
 </head>
 <body>
-<a href="#main-content" class="skip-link" style="position:absolute;top:-40px;left:8px;padding:8px 14px;background:var(--green);color:#fff;border-radius:0 0 8px 8px;font-size:13px;font-weight:600;text-decoration:none;z-index:999;transition:top .2s" onfocus="this.style.top='0'" onblur="this.style.top='-40px'">Skip to main content</a>
+<a href="#main" class="skip-link" style="position:absolute;top:-40px;left:8px;padding:8px 14px;background:var(--green);color:#fff;border-radius:0 0 8px 8px;font-size:13px;font-weight:600;text-decoration:none;z-index:999;transition:top .2s" onfocus="this.style.top='0'" onblur="this.style.top='-40px'">Skip to main content</a>
 <!-- NAV -->
 <div id="top"></div>
 <nav class="nav">
@@ -266,35 +327,37 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
 </nav>
 
 <!-- HERO -->
-<section id="main-content" class="hero">
+<section id="main" class="hero">
+  <div class="hero-glow hero-glow-1" aria-hidden="true"></div>
+  <div class="hero-glow hero-glow-2" aria-hidden="true"></div>
   <div class="container">
     <div class="hero-grid">
       <div>
-        <span class="hero-tag">✨ Powered by Claude · Open Source · MIT</span>
-        <h1 class="hero-h1">Linux,<br>made <span class="grad">effortlessly</span><br>simple.</h1>
+        <span class="hero-tag">✨ Open Source · MIT · Powered by Claude</span>
+        <h1 class="hero-h1" aria-label="Linux, made effortlessly simple.">Linux,<br> made <span class="grad">effortlessly</span><br> simple.</h1>
         <p class="hero-sub">TuxGenie is an AI-powered Linux assistant. Describe what you need in plain English — it diagnoses, fixes, installs, and configures your system for you. No experience required.</p>
         <div class="api-note">
           <span style="font-size:16px;flex-shrink:0;line-height:1.3">⚡</span>
-          <div style="font-size:13px;color:var(--t2);line-height:1.6">
-            <strong style="color:var(--t1)">Powered by Claude:</strong> paste an Anthropic API key at first run. Sign-up is free, ~$0.01 per session, top up $5 once and it lasts months.
+          <div style="font-size:13px;line-height:1.6">
+            <strong>Needs an Anthropic API key</strong> — sign-up is free, ~$0.01 per session. Top up $5 once and it lasts months. <a href="https://console.anthropic.com" target="_blank" rel="noopener">Get a key →</a>
           </div>
         </div>
         <div class="hero-ctas">
-          <a href="#install" class="btn btn-p">🐧 Install TuxGenie</a>
-          <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener" class="btn btn-s">⭐ View on GitHub</a>
+          <a href="#install" class="btn btn-p">🐧 Install Free</a>
+          <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener" class="btn btn-s">⭐ Star on GitHub</a>
         </div>
         <div class="stats">
           <div><span class="grad">31</span><span>Built-in Tools</span></div>
-          <div style="width:1px;background:var(--border)"></div>
-          <div><span class="grad">Free</span><span>Or Claude AI</span></div>
-          <div style="width:1px;background:var(--border)"></div>
+          <div style="width:1px;background:rgba(255,255,255,.1)"></div>
+          <div><span class="grad gh-stars">…</span><span>GitHub Stars</span></div>
+          <div style="width:1px;background:rgba(255,255,255,.1)"></div>
           <div><span class="grad">Any</span><span>Linux Distro</span></div>
         </div>
         <div class="new-strip">
           <span class="pill pill-g">🆕 !! fix-last-command</span>
           <span class="pill pill-g">🆕 tg!! shell shortcut</span>
-          <span class="pill pill-g">🆕 Weekly health digest</span>
-          <span class="pill pill-g">🆕 Background error monitor</span>
+          <span class="pill pill-g">🆕 Silent auto-updates</span>
+          <span class="pill pill-g">🛡️ Crash guard</span>
           <span class="pill pill-g">🧠 Cross-session memory</span>
         </div>
       </div>
@@ -328,23 +391,40 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
   </div>
 </section>
 
+<div class="hero-fade" aria-hidden="true"></div>
+
 <!-- DISTROS -->
 <section class="distros">
   <div class="container">
     <p class="distros-label">Works on every major Linux distribution</p>
-    <div class="distros-grid">
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/ubuntu/E95420" alt="Ubuntu"><span>Ubuntu</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/debian/A81D33" alt="Debian"><span>Debian</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/fedora/51A2DA" alt="Fedora"><span>Fedora</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/archlinux/1793D1" alt="Arch"><span>Arch</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/linuxmint/87CF3E" alt="Mint"><span>Mint</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/popos/48B9C7" alt="Pop!_OS"><span>Pop!_OS</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/manjaro/35BF5C" alt="Manjaro"><span>Manjaro</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/kalilinux/268BEE" alt="Kali"><span>Kali</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/opensuse/73BA25" alt="openSUSE"><span>openSUSE</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/raspberrypi/A22846" alt="Raspberry Pi"><span>Raspberry Pi</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/centos/262577" alt="CentOS"><span>CentOS</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/rockylinux/10B981" alt="Rocky"><span>Rocky</span></div>
+  </div>
+  <div class="mq-outer">
+    <div class="mq-track" id="mq-track">
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/ubuntu/E95420" alt="Ubuntu" loading="lazy"><span>Ubuntu</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/debian/A81D33" alt="Debian" loading="lazy"><span>Debian</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/fedora/51A2DA" alt="Fedora" loading="lazy"><span>Fedora</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/archlinux/1793D1" alt="Arch" loading="lazy"><span>Arch</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/linuxmint/87CF3E" alt="Mint" loading="lazy"><span>Mint</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/popos/48B9C7" alt="Pop!_OS" loading="lazy"><span>Pop!_OS</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/manjaro/35BF5C" alt="Manjaro" loading="lazy"><span>Manjaro</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/kalilinux/268BEE" alt="Kali" loading="lazy"><span>Kali</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/opensuse/73BA25" alt="openSUSE" loading="lazy"><span>openSUSE</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/raspberrypi/A22846" alt="Raspberry Pi" loading="lazy"><span>Raspberry Pi</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/centos/262577" alt="CentOS" loading="lazy"><span>CentOS</span></div>
+      <div class="dlogo"><img src="https://cdn.simpleicons.org/rockylinux/10B981" alt="Rocky" loading="lazy"><span>Rocky</span></div>
+      <!-- duplicate for seamless loop -->
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/ubuntu/E95420" alt="" loading="lazy"><span>Ubuntu</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/debian/A81D33" alt="" loading="lazy"><span>Debian</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/fedora/51A2DA" alt="" loading="lazy"><span>Fedora</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/archlinux/1793D1" alt="" loading="lazy"><span>Arch</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/linuxmint/87CF3E" alt="" loading="lazy"><span>Mint</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/popos/48B9C7" alt="" loading="lazy"><span>Pop!_OS</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/manjaro/35BF5C" alt="" loading="lazy"><span>Manjaro</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/kalilinux/268BEE" alt="" loading="lazy"><span>Kali</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/opensuse/73BA25" alt="" loading="lazy"><span>openSUSE</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/raspberrypi/A22846" alt="" loading="lazy"><span>Raspberry Pi</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/centos/262577" alt="" loading="lazy"><span>CentOS</span></div>
+      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/rockylinux/10B981" alt="" loading="lazy"><span>Rocky</span></div>
     </div>
   </div>
 </section>
@@ -418,7 +498,7 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
         <div class="fcard"><span class="fcard-num">[3]</span><span class="fcard-icon">📶</span><div class="fcard-name">Internet / WiFi</div><div class="fcard-desc">Diagnose &amp; fix WiFi, DNS, and connectivity problems automatically.</div></div>
         <div class="fcard"><span class="fcard-num">[4]</span><span class="fcard-icon">🔊</span><div class="fcard-name">Sound / Audio</div><div class="fcard-desc">No audio, mic not working, HDMI sound — fixed in minutes.</div></div>
         <div class="fcard"><span class="fcard-num">[5]</span><span class="fcard-icon">🖥</span><div class="fcard-name">Display</div><div class="fcard-desc">Wrong resolution, monitor not detected, multi-display problems solved.</div></div>
-        <div class="fcard"><span class="fcard-num">[6]</span><span class="fcard-icon">🦷</span><div class="fcard-name">Bluetooth</div><div class="fcard-desc">Device won't pair or keeps disconnecting — tracked down and fixed.</div></div>
+        <div class="fcard"><span class="fcard-num">[6]</span><span class="fcard-icon">🔵</span><div class="fcard-name">Bluetooth</div><div class="fcard-desc">Device won't pair or keeps disconnecting — tracked down and fixed.</div></div>
         <div class="fcard"><span class="fcard-num">[7]</span><span class="fcard-icon">🖨</span><div class="fcard-name">Printer Setup</div><div class="fcard-desc">Install any printer, fix printing issues — USB and network printers.</div></div>
         <div class="fcard"><span class="fcard-num">[8]</span><span class="fcard-icon">📷</span><div class="fcard-name">Webcam Fix</div><div class="fcard-desc">Camera not working in Zoom, Teams, or Meet? Fixed immediately.</div></div>
         <div class="fcard"><span class="fcard-num">[9]</span><span class="fcard-icon">🛠</span><div class="fcard-name">Missing Drivers</div><div class="fcard-desc">Detect &amp; install missing GPU, WiFi, printer, audio drivers automatically.</div></div>
@@ -490,8 +570,44 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
         <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-icon">📊</span><div class="fcard-name">Weekly Health Digest</div><div class="fcard-desc">A compact health report once a week at startup — disk, memory, failed services, pending updates. Run anytime with <strong>tuxgenie --digest</strong>.</div></div>
         <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-num">[m]</span><span class="fcard-icon">🔔</span><div class="fcard-name">Background Error Monitor</div><div class="fcard-desc">Installs a systemd service that watches for system errors and fires a desktop notification — so you know to fix things before they get worse.</div></div>
         <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-icon">📥</span><div class="fcard-name">Pipe Mode</div><div class="fcard-desc">Pipe any output directly to TuxGenie: <strong>journalctl -xe | tuxgenie explain</strong> — instant plain-English explanation of any log.</div></div>
-        <div class="fcard" style="border-color:rgba(220,38,38,.3);background:rgba(220,38,38,.02)"><span class="fcard-icon">🛡️</span><div class="fcard-name">Crash Guard</div><div class="fcard-desc">3 consecutive crashes → automatic rollback to the last known-good version and restart. TuxGenie does not have the option of staying broken.</div></div>
+        <div class="fcard" style="border-color:rgba(220,38,38,.3);background:rgba(220,38,38,.02)"><span class="fcard-icon">🛡️</span><div class="fcard-name">Crash Guard</div><div class="fcard-desc">3 consecutive crashes → automatic rollback to the last known-good version and silent restart. Zero user action needed.</div></div>
         <div class="fcard" style="border-color:rgba(99,102,241,.25)"><span class="fcard-icon">🔄</span><div class="fcard-name">Silent Auto-Updates</div><div class="fcard-desc">Updates apply automatically at startup when sudo credentials are cached. No prompts, no <strong>u</strong> command needed.</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section id="faq" class="sec" style="background:linear-gradient(180deg,#ffffff,#faf9ff);border-top:1px solid var(--border)">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Common <span class="grad">questions</span></h2>
+      <p class="sh-sub">Everything you need to know before installing.</p>
+    </div>
+    <div class="faq-wrap fade">
+      <div class="faq-item">
+        <button class="faq-btn" aria-expanded="false">Is my API key safe? Does TuxGenie send my data anywhere?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p>Your API key is stored locally in <code>~/.config/tuxgenie/config.json</code> and never leaves your machine. Requests go directly from your computer to Anthropic's servers — TuxGenie itself has no backend and collects zero telemetry.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-btn" aria-expanded="false">What does it actually cost per month?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p>TuxGenie is free. You only pay Anthropic for the Claude API calls it makes — typically <strong>~$0.01 per session</strong>. A $5 top-up lasts most users several months. Simple commands (ls, cd, apt, systemctl) bypass Claude entirely and cost nothing.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-btn" aria-expanded="false">Can it break my system or run dangerous commands?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p>Every command is shown to you <strong>before</strong> it runs. Destructive operations (rm -rf, format, wipe) are blocked by default. You're always in control — press Ctrl-C at any time to stop. All changes are logged so you can roll back with option <code>[16]</code>.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-btn" aria-expanded="false">Does it work offline?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p>Common commands (apt, systemctl, ls, grep, etc.) run offline instantly — TuxGenie only calls Claude for complex diagnostics and fixes. So basic usage works without internet. Full AI-powered fixes need a connection to reach Anthropic's API.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-btn" aria-expanded="false">Which Linux distributions are supported?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p>Any distro running Python 3.8+. Full testing on Ubuntu, Debian, Fedora, Arch, Mint, Pop!_OS, Kali, openSUSE, Raspberry Pi OS, CentOS, and Rocky Linux. The <code>.deb</code> package installs on Debian/Ubuntu-based systems; pip installs everywhere else.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-btn" aria-expanded="false">How is it different from just asking ChatGPT?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p>TuxGenie knows your exact system — kernel version, installed packages, running services, disk usage — and acts on it directly. It runs commands, verifies they worked, retries on failure, rolls back changes, and remembers past fixes across sessions. ChatGPT just gives text suggestions.</p></div>
       </div>
     </div>
   </div>
@@ -533,33 +649,58 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
       </div>
     </div>
     <div class="trust-grid">
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>Paste an <a href="https://console.anthropic.com" target="_blank" rel="noopener">Anthropic API key</a> at first run and you're done. Sign-up is free; usage is metered (about $0.01 per session). Top up $5 once and it lasts months.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. Smart routing uses the smallest model that handles the task — escalates only when needed.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🧠</div><h4 style="color:#7e22ce">Cross-Session Memory</h4><p>Remembers every fix across sessions. When you hit a similar problem, TuxGenie surfaces what worked last time.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">📊</div><h4 style="color:#854d0e">Weekly Health Digest</h4><p>A compact health snapshot once a week at startup — disk, memory, failed services, pending updates. Run anytime: <code>tuxgenie --digest</code>.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔔</div><h4 style="color:#1d4ed8">Background Error Monitor</h4><p>Optional systemd service that watches journalctl and fires a desktop notification the moment a system error occurs. Enable with <code>m</code>.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔄</div><h4 style="color:#4338ca">Silent Auto-Updates</h4><p>Updates apply automatically at startup using cached sudo credentials — no prompt, no <code>u</code> needed. Falls back to a one-tap prompt when sudo isn't cached.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🛡️</div><h4 style="color:#dc2626">Crash Guard</h4><p>If a new version crashes 3 times in a row, TuxGenie automatically rolls back to the last known-good version and restarts — no user action needed. TuxGenie does not have the option of staying broken.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔒</div><h4 style="color:#4338ca">Privacy First</h4><p>Your data goes directly from your machine to Anthropic. The TuxGenie app installs no trackers and collects no telemetry. This website is hosted on Vercel, which may set a visitor-count cookie.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>Paste an <a href="https://console.anthropic.com" target="_blank" rel="noopener">Anthropic API key</a> at first run and you're done. Sign-up is free; ~$0.01 per session. Top up $5 once and it lasts months.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. Smart routing uses the cheapest model that handles the task — Claude Haiku by default, escalates to Sonnet only when needed.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔒</div><h4 style="color:#7e22ce">Privacy First</h4><p>No backend. No telemetry. Your data goes directly from your machine to Anthropic's API. TuxGenie is fully open source — read every line at <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">GitHub</a>.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔄</div><h4 style="color:#4338ca">Silent Auto-Updates</h4><p>New versions apply automatically at startup when sudo credentials are cached. No prompts needed. Falls back to a one-tap confirmation if sudo isn't available.</p></div>
+      <div class="tcard crash-card fade"><div style="font-size:22px;margin-bottom:10px">🛡️</div><h4>Crash Guard</h4><p>If a new version crashes 3 times in a row, TuxGenie automatically rolls back to the last known-good version and restarts. <strong>TuxGenie does not have the option of staying broken.</strong></p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">↩</div><h4 style="color:#15803d">Always Reversible</h4><p>Every command TuxGenie runs is logged. Option <code>[16]</code> rolls back any session. Destructive operations are blocked. You stay in control — always.</p></div>
+    </div>
+    <div class="badge-bar fade">
+      <span class="badge badge-green">✓ MIT License</span>
+      <span class="badge">🐍 Python 3.8+</span>
+      <span class="badge badge-green">✓ No telemetry</span>
+      <span class="badge">🐧 Any Linux distro</span>
+      <span class="badge badge-green">✓ v5.55.0</span>
+      <span class="badge">⭐ <span class="gh-stars">…</span> GitHub stars</span>
     </div>
   </div>
 </section>
 
 <!-- FOOTER -->
-<footer>
+<footer style="background:#fff;border-top:1px solid var(--border)">
   <div class="container">
-    <div class="foot">
-      <a href="#top" class="foot-l" aria-label="TuxGenie home">
-        <span style="font-size:18px">🐧</span>
-        <span class="grad" style="font-family:var(--fd);font-weight:800;font-size:14px">TuxGenie</span>
-        <span>v5.55.0</span><span>·</span><span>MIT License</span><span>·</span><span>Built by Aspera Technologies</span>
-      </a>
-      <div class="foot-r">
-        <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/ramchandragada/tuxgenie/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/ramchandragada/tuxgenie/issues" target="_blank" rel="noopener">Support</a>
-        <a href="https://console.anthropic.com" target="_blank" rel="noopener">Get API Key</a>
+    <div class="foot-grid">
+      <div class="foot-col">
+        <a href="#top" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:14px;font-family:var(--fd);font-size:18px;font-weight:800;text-decoration:none" aria-label="TuxGenie home"><span>🐧</span><span class="grad">TuxGenie</span></a>
+        <p>AI-powered Linux assistant. Fix any Linux problem in plain English. Free forever.</p>
+        <p style="color:var(--t3);font-size:12px;margin-top:4px">Built by Aspera Technologies · Dedicated to Linus Torvalds</p>
       </div>
+      <div class="foot-col">
+        <h5>Product</h5>
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="#faq">FAQ</a>
+        <a href="https://github.com/ramchandragada/tuxgenie/releases" target="_blank" rel="noopener">Changelog</a>
+      </div>
+      <div class="foot-col">
+        <h5>Resources</h5>
+        <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/ramchandragada/tuxgenie/issues" target="_blank" rel="noopener">Report Issue</a>
+        <a href="https://console.anthropic.com" target="_blank" rel="noopener">Get API Key</a>
+        <a href="https://github.com/ramchandragada/tuxgenie/releases/latest" target="_blank" rel="noopener">Latest Release</a>
+      </div>
+      <div class="foot-col">
+        <h5>Legal</h5>
+        <a href="https://github.com/ramchandragada/tuxgenie/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+        <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">Open Source</a>
+        <a href="https://www.anthropic.com/privacy" target="_blank" rel="noopener">Anthropic Privacy</a>
+      </div>
+    </div>
+    <div class="foot-divider"></div>
+    <div class="foot-bottom">
+      <span>© 2025 Aspera Technologies · TuxGenie v5.55.0 · MIT License</span>
+      <span><a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">⭐ <span class="gh-stars">…</span> stars on GitHub</a></span>
     </div>
   </div>
 </footer>
@@ -686,6 +827,29 @@ setTimeout(tick,900);
 // Fade-in on scroll
 const io=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}})},{threshold:.08});
 document.querySelectorAll('.fade').forEach(el=>io.observe(el));
+
+// FAQ accordion
+document.querySelectorAll('.faq-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const body=btn.nextElementSibling;
+    const icon=btn.querySelector('.faq-chevron');
+    const open=body.classList.toggle('open');
+    btn.setAttribute('aria-expanded',open);
+    icon.textContent=open?'−':'+';
+    icon.style.transform=open?'rotate(0deg)':'';
+  });
+});
+
+// GitHub live star count
+fetch('https://api.github.com/repos/ramchandragada/tuxgenie')
+  .then(r=>r.json())
+  .then(d=>{
+    const n=d.stargazers_count;
+    if(!n)return;
+    const fmt=n>=1000?(n/1000).toFixed(1)+'k':n;
+    document.querySelectorAll('.gh-stars').forEach(el=>el.textContent=fmt);
+  })
+  .catch(()=>{});
 </script>
 </body>
 </html>
