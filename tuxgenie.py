@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.53.0"
+__version__ = "5.53.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
