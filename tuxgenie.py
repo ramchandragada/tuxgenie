@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.50.0"
+__version__ = "5.51.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -208,9 +208,10 @@ def print_output(rc, stdout, stderr):
 # ═══════════════════════════════════════════════════════════════════════════════
 CFG_DIR      = os.path.expanduser("~/.config/tuxgenie")
 CFG_FILE     = os.path.join(CFG_DIR, "config.json")
-HISTORY_FILE = os.path.join(CFG_DIR, "history.json")  # user prompts
-ACTIONS_FILE = os.path.join(CFG_DIR, "actions.json")  # commands run by AI
+HISTORY_FILE = os.path.join(CFG_DIR, "history.json")   # user prompts
+ACTIONS_FILE = os.path.join(CFG_DIR, "actions.json")   # commands run by AI
 FINGERPRINT_FILE = os.path.join(CFG_DIR, "fingerprint.json")  # cached system info
+MEMORY_FILE  = os.path.join(CFG_DIR, "memory.json")    # cross-session solved issues
 DATA_DIR     = os.path.expanduser("~/.local/share/tuxgenie")
 SESSIONS_DIR = os.path.join(DATA_DIR, "sessions")
 BACKUPS_DIR  = os.path.join(DATA_DIR, "backups")
@@ -1364,6 +1365,21 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     - Adaptive thinking + effort=xhigh: 4.7 dynamically allocates thinking
       tokens; xhigh is the recommended setting for coding/agentic work.
     """
+    # ── Cross-session memory recall ─────────────────────────────────────────
+    # Search for similar issues the user has had before and show a hint.
+    # The AI also sees this via _mem_block() in the system prompt.
+    _past = _mem_search(task)
+    if _past:
+        print(f"\n  {BMAGENTA}{BOLD}🧠 Memory:{R}  Similar issue resolved before:\n")
+        for _e in _past[:2]:
+            _steps = _e.get("steps", [])
+            print(f"  {DIM}[{_e.get('ts','')}]{R}  {_e.get('problem','')}")
+            if _steps:
+                print(f"  {CYAN}→ Previously fixed by:{R} {_steps[0]}")
+                if len(_steps) > 1:
+                    print(f"  {DIM}  + {len(_steps)-1} more step(s){R}")
+        print()
+
     # System prompt + tools are stable across the whole loop — cache them.
     system_blocks = [{
         "type": "text",
@@ -2973,6 +2989,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     info(sc)
                 print(f"  {DIM}Long live Linux! 🐧{R}")
                 _ask_rating()
+                _mem_record_fix(user_text, [s.get("command", "") for s in step_outputs if s.get("success")])
                 return
             else:
                 if v_is_weak:
@@ -2994,6 +3011,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 _synthesize_findings(backend, user_text, step_outputs)
                 print(f"  {DIM}Long live Linux! 🐧{R}")
                 _ask_rating()
+                _mem_record_fix(user_text, [s.get("command", "") for s in step_outputs if s.get("success")])
                 return
             if sc:
                 print(f"\n  {CYAN}{BOLD}How to check if it worked:{R} {sc}")
@@ -3009,6 +3027,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 print(f"\n  {GREEN}{BOLD}🎉 Great! Glad it's working now!{R}")
                 print(f"  {DIM}Long live Linux! 🐧{R}")
                 _ask_rating()
+                _mem_record_fix(user_text, [s.get("command", "") for s in step_outputs if s.get("success")])
                 return
 
         if rnd >= max_rounds:
@@ -3095,6 +3114,7 @@ def _sys_ctx_block(extra: dict) -> str:
     fp = _load_fingerprint()
     if fp:
         ctx += "\n\nINSTALLED ENVIRONMENT (collected once per session):\n" + json.dumps(fp, indent=2)
+    ctx += _mem_block()
     ctx += _recent_tasks_block()
     ctx += _recent_actions_block()
     return ctx
@@ -4409,6 +4429,84 @@ def _recent_tasks_block(n: int = 8) -> str:
     lines = [f"  {e.get('ts','')}  {e.get('task','')}" for e in entries]
     return ("\n\nRECENT TASKS (what the user has previously asked TuxGenie "
             "to do — use this for continuity):\n" + "\n".join(lines))
+
+# ── Cross-session memory: problem → solution pairs ────────────────────────────
+
+def _mem_load() -> dict:
+    """Load cross-session memory (solved issues). Returns {solved:[...]}."""
+    if load_cfg().get("disable_history"):
+        return {"solved": []}
+    try:
+        return json.loads(open(MEMORY_FILE).read())
+    except Exception:
+        return {"solved": []}
+
+def _mem_save(data: dict):
+    try:
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+        os.chmod(MEMORY_FILE, stat.S_IRUSR | stat.S_IWUSR)
+    except Exception:
+        pass
+
+def _mem_record_fix(problem: str, successful_steps: list):
+    """Save a successfully resolved issue to cross-session memory.
+    Called after the user confirms a fix worked (or verify_command passes)."""
+    if load_cfg().get("disable_history"):
+        return
+    if not problem or not successful_steps:
+        return
+    data    = _mem_load()
+    solved  = data.get("solved", [])
+    p_lower = problem.lower().strip()
+    # Remove any previous entry for the same problem (keep the latest fix)
+    solved  = [s for s in solved if s.get("problem", "").lower() != p_lower]
+    solved.append({
+        "ts":      datetime.datetime.now().strftime("%Y-%m-%d"),
+        "problem": problem.strip()[:120],
+        "steps":   [s for s in successful_steps if s][:5],
+    })
+    data["solved"] = solved[-100:]   # cap at 100 resolved issues
+    _mem_save(data)
+
+def _mem_search(query: str, n: int = 3) -> list:
+    """Keyword search in solved issues. Returns up to n relevant matches."""
+    data   = _mem_load()
+    solved = data.get("solved", [])
+    if not solved or not query:
+        return []
+    _STOP  = {"the","this","my","your","not","working","please","how","can",
+              "why","what","make","get","run","fix","help","need","want",
+              "have","been","is","are","was","it","on","in","to","a","an"}
+    q_words = set(re.findall(r'\b\w{3,}\b', query.lower())) - _STOP
+    if not q_words:
+        return []
+    scored = []
+    for entry in solved:
+        e_text  = (entry.get("problem", "") + " " +
+                   " ".join(entry.get("steps", []))).lower()
+        e_words = set(re.findall(r'\b\w{3,}\b', e_text))
+        score   = len(q_words & e_words)
+        if score > 0:
+            scored.append((score, entry))
+    scored.sort(key=lambda x: -x[0])
+    return [e for _, e in scored[:n]]
+
+def _mem_block() -> str:
+    """Return a system-prompt block of previously solved issues for the AI."""
+    data   = _mem_load()
+    solved = data.get("solved", [])
+    if not solved:
+        return ""
+    lines = []
+    for e in solved[-10:]:   # last 10 resolved issues
+        ts    = e.get("ts", "")
+        prob  = e.get("problem", "")
+        steps = e.get("steps", [])
+        step_str = " → ".join(steps[:2]) if steps else "(fix not recorded)"
+        lines.append(f"  [{ts}] {prob}  →  {step_str}")
+    return ("\n\nPREVIOUSLY RESOLVED ISSUES (suggest proven fixes first when "
+            "the user's problem looks familiar):\n" + "\n".join(lines))
 
 def show_history():
     """Display the last 10 interactions."""
