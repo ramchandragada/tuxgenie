@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.52.0"
+__version__ = "5.53.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4978,8 +4978,194 @@ MENU_ITEMS = [
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
     ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
     ("i",  "shell",     "Shell Integration",  "Install tg!! shortcut in your terminal",         feat_shell_integration),
+    ("m",  "monitor",   "Error Monitor",      "Background daemon: notify on system errors",     feat_monitor),
     ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                          feat_feedback),
 ]
+
+_MONITOR_SERVICE = "tuxgenie-monitor"
+_MONITOR_SERVICE_FILE = os.path.expanduser(
+    f"~/.config/systemd/user/{_MONITOR_SERVICE}.service"
+)
+
+# Units / message fragments that are noisy and rarely need user action
+_MONITOR_NOISE_UNITS = {
+    "audit", "kernel", "avahi-daemon", "avahi-daemon.service",
+    "colord", "colord.service", "upowerd", "upowerd.service",
+    "rtkit-daemon", "rtkit-daemon.service", "packagekit",
+    "packagekit.service", "fwupd", "fwupd.service",
+}
+_MONITOR_NOISE_MSGS = (
+    "deprecated", "no such file or directory", "not found in cache",
+    "ignored", "error code 0", "warning:", "dbus-daemon",
+    "org.freedesktop", "apparmor", "audit:",
+)
+
+
+def _monitor_daemon():
+    """Daemon loop — streams journalctl errors and fires notify-send."""
+    import subprocess as _sp
+    cooldown: dict = {}          # unit -> last notification time
+    COOLDOWN_SECS = 600          # 10 minutes per unit
+
+    cmd = [
+        "journalctl", "-f", "-p", "err",
+        "--output=json", "--no-pager", "--no-hostname",
+    ]
+    try:
+        proc = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.DEVNULL, text=True)
+    except Exception as e:
+        sys.exit(f"tuxgenie-monitor: cannot start journalctl: {e}")
+
+    for raw in proc.stdout:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            entry = json.loads(raw)
+        except Exception:
+            continue
+
+        unit    = (entry.get("_SYSTEMD_UNIT") or entry.get("UNIT") or
+                   entry.get("SYSLOG_IDENTIFIER") or "unknown")
+        message = entry.get("MESSAGE") or ""
+        prio    = entry.get("PRIORITY", "3")
+
+        # Skip noise
+        unit_base = unit.lower().replace(".service", "")
+        if unit_base in _MONITOR_NOISE_UNITS:
+            continue
+        msg_lower = message.lower()
+        if any(n in msg_lower for n in _MONITOR_NOISE_MSGS):
+            continue
+        # Skip kernel / audit lines that sneak through
+        if unit_base in ("kernel", "audit"):
+            continue
+
+        now = time.time()
+        if now - cooldown.get(unit, 0) < COOLDOWN_SECS:
+            continue
+        cooldown[unit] = now
+
+        # Trim message for notification
+        short_msg = message[:120].replace('"', "'")
+        body = f"{short_msg}\n\nType  tuxgenie  to investigate & fix."
+
+        try:
+            _sp.run(
+                [
+                    "notify-send",
+                    "--app-name=TuxGenie",
+                    "--icon=dialog-error",
+                    "--urgency=normal",
+                    f"⚠ TuxGenie: {unit}",
+                    body,
+                ],
+                timeout=5,
+                check=False,
+            )
+        except Exception:
+            pass
+
+
+def feat_monitor():
+    """Install / manage the TuxGenie background error monitor (systemd user service)."""
+    hdr("Error Monitor — background daemon")
+
+    SERVICE_CONTENT = f"""\
+[Unit]
+Description=TuxGenie proactive error monitor
+Documentation=https://github.com/ramchandragada/tuxgenie
+After=graphical-session.target network.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart={shlex.quote(sys.executable)} {shlex.quote(os.path.abspath(sys.argv[0]))} --monitor
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
+"""
+
+    # ── Check current status ──────────────────────────────────────────────────
+    active = _r(f"systemctl --user is-active {_MONITOR_SERVICE} 2>/dev/null").strip()
+    enabled = _r(f"systemctl --user is-enabled {_MONITOR_SERVICE} 2>/dev/null").strip()
+    is_running = active == "active"
+    is_enabled = enabled == "enabled"
+
+    if is_running:
+        print(f"  {GREEN}{BOLD}● Monitor is running{R}  {DIM}(status: {active}, enabled: {enabled}){R}")
+    else:
+        print(f"  {YELLOW}{BOLD}○ Monitor is not running{R}  {DIM}(status: {active}){R}")
+
+    print(f"\n  {DIM}Watches journalctl for system errors and fires a desktop")
+    print(f"  notification so you can fix problems before they get worse.{R}\n")
+
+    # ── Check notify-send ─────────────────────────────────────────────────────
+    has_notify = shutil.which("notify-send") is not None
+    if not has_notify:
+        warn("notify-send not found — notifications won't appear on desktop.")
+        print(f"  {DIM}Install with:{R}  sudo apt install libnotify-bin\n")
+
+    choices = []
+    if not is_running:
+        choices.append(("1", "Install & start the monitor"))
+    else:
+        choices.append(("1", "Restart the monitor"))
+    if is_running or is_enabled:
+        choices.append(("2", "Stop & disable the monitor"))
+    choices.append(("3", "View recent monitor log"))
+    choices.append(("q", "Back"))
+
+    for k, v in choices:
+        print(f"  {CYAN}{BOLD}[{k}]{R}  {v}")
+
+    try:
+        ans = input(f"\n  Choice: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    if ans == "q":
+        return
+
+    if ans == "1":
+        # Write service file
+        svc_dir = os.path.dirname(_MONITOR_SERVICE_FILE)
+        os.makedirs(svc_dir, exist_ok=True)
+        try:
+            with open(_MONITOR_SERVICE_FILE, "w") as f:
+                f.write(SERVICE_CONTENT)
+            ok(f"Service file written: {_MONITOR_SERVICE_FILE}")
+        except Exception as e:
+            err(f"Could not write service file: {e}"); return
+
+        rc1 = os.system("systemctl --user daemon-reload 2>/dev/null")
+        rc2 = os.system(f"systemctl --user enable --now {_MONITOR_SERVICE} 2>/dev/null")
+        if rc2 == 0:
+            ok("Monitor enabled and started!")
+            print(f"  {DIM}You'll see a desktop notification whenever a system error occurs.{R}")
+            if not has_notify:
+                warn("Install libnotify-bin first so notifications actually appear:")
+                print(f"    sudo apt install libnotify-bin")
+        else:
+            warn("Could not start service — check: systemctl --user status tuxgenie-monitor")
+
+    elif ans == "2":
+        os.system(f"systemctl --user disable --now {_MONITOR_SERVICE} 2>/dev/null")
+        try:
+            os.remove(_MONITOR_SERVICE_FILE)
+        except Exception:
+            pass
+        os.system("systemctl --user daemon-reload 2>/dev/null")
+        ok("Monitor stopped and disabled.")
+
+    elif ans == "3":
+        print(f"\n  {DIM}Last 30 log lines:{R}\n")
+        os.system(f"journalctl --user -u {_MONITOR_SERVICE} -n 30 --no-pager 2>/dev/null")
+
 
 def feat_shell_integration():
     """Install the tg() shell function into .bashrc / .zshrc.
@@ -5282,6 +5468,10 @@ def main():
         "--digest", action="store_true",
         help="Show the weekly health digest (force-runs even if <7 days since last)"
     )
+    parser.add_argument(
+        "--monitor", action="store_true",
+        help="Run the background error monitor daemon (used by the systemd user service)"
+    )
     args = parser.parse_args()
 
     # ── Pipe mode: journalctl -xe | tuxgenie explain ─────────────────────────
@@ -5296,6 +5486,11 @@ def main():
             issue = f"{verb}\n\nPIPED INPUT:\n{piped}"
             agentic_engine(backend, issue, bctx, [])
             return
+
+    # ── Monitor daemon mode: tuxgenie --monitor ──────────────────────────────
+    if args.monitor:
+        _monitor_daemon()
+        return
 
     # ── Digest-only mode: tuxgenie --digest ──────────────────────────────────
     if args.digest:
@@ -5391,6 +5586,8 @@ def main():
             feat_feedback(); continue
         if choice.lower() in ("i", "shell", "shellsetup", "integrate"):
             feat_shell_integration(); continue
+        if choice.lower() in ("m", "monitor"):
+            feat_monitor(); continue
 
         # !! — fix the last failed command (or handle "!! fix: ..." from tg shell function)
         if choice in ("!!", "fix", "why") or choice.lower().startswith("!! "):
