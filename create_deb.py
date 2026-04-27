@@ -215,7 +215,46 @@ INSTALLED_KB = max(1, (len(TUXGENIE_PY) + sum(len(v) for v in ICONS.values()) + 
 
 LAUNCHER = b"""\
 #!/bin/bash
-exec python3 /usr/lib/tuxgenie/tuxgenie.py "$@"
+# Run TuxGenie; if Python crashes at startup, offer emergency recovery
+python3 /usr/lib/tuxgenie/tuxgenie.py "$@"
+_rc=$?
+if [ $_rc -ne 0 ] && [ $# -eq 0 ] && [ -t 0 ] && [ -t 1 ]; then
+    echo ""
+    echo "  TuxGenie failed to start (exit $_rc)."
+    echo "  Run: tuxgenie-update   to download the latest version and fix it."
+fi
+exit $_rc
+"""
+
+EMERGENCY_UPDATE = b"""\
+#!/bin/bash
+# tuxgenie-update: emergency recovery - replaces the installed script
+# from GitHub without needing TuxGenie itself to be working.
+set -e
+DEST=/usr/lib/tuxgenie/tuxgenie.py
+RAW_URL="https://raw.githubusercontent.com/ramchandragada/tuxgenie/main/tuxgenie.py"
+
+if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    echo "Error: need curl or wget. Install with: sudo apt install curl" >&2; exit 1
+fi
+
+echo "Downloading latest TuxGenie..."
+TMP=$(mktemp /tmp/tuxgenie_update_XXXXXX.py)
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$RAW_URL" -o "$TMP"
+else
+    wget -qO "$TMP" "$RAW_URL"
+fi
+
+if ! python3 -m py_compile "$TMP" 2>/dev/null; then
+    echo "Downloaded file has syntax errors - aborting to avoid making things worse." >&2
+    rm -f "$TMP"; exit 1
+fi
+
+sudo cp "$TMP" "$DEST"
+sudo chmod 644 "$DEST"
+rm -f "$TMP"
+echo "Done! TuxGenie updated. Run: tuxgenie"
 """
 
 CONTROL = f"""\
@@ -512,6 +551,8 @@ data_entries = [
     # files
     {"path": "./usr/bin/tuxgenie",
      "type": "file", "data": LAUNCHER,                                   "mode": 0o755},
+    {"path": "./usr/bin/tuxgenie-update",
+     "type": "file", "data": EMERGENCY_UPDATE,                           "mode": 0o755},
     {"path": "./usr/lib/tuxgenie/tuxgenie.py",
      "type": "file", "data": TUXGENIE_PY,                                "mode": 0o644},
     {"path": f"./usr/share/doc/{PACKAGE}/copyright",
