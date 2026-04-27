@@ -4935,53 +4935,6 @@ def feat_install_ai_tools(backend, bctx, slog):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 9 — MENU + MAIN REPL
 # ═══════════════════════════════════════════════════════════════════════════════
-MENU_ITEMS = [
-    # ── START HERE ───────────────────────────────────────────────
-    ("1",  "fix",       "Fix a Problem",      "Describe what's wrong in plain English",         feat_fix),
-    ("2",  "health",    "Health Check",       "System CPU/RAM/disk/service health scan",        feat_health),
-    # ── FIX SOMETHING ────────────────────────────────────────────
-    ("3",  "network",   "Internet / WiFi",    "Diagnose & fix connectivity",                    feat_network),
-    ("4",  "sound",     "Sound / Audio",      "No audio, mic not working, HDMI sound",          feat_sound),
-    ("5",  "display",   "Display",            "Wrong resolution, monitor not detected",         feat_display),
-    ("6",  "bluetooth", "Bluetooth",          "Pairing fails, device not found",                feat_bluetooth),
-    ("7",  "printer",   "Printer Setup",      "Install printer, fix printing problems",         feat_printer),
-    ("8",  "webcam",    "Webcam Fix",         "Camera not detected, black screen",              feat_webcam),
-    ("9",  "drivers",   "Missing Drivers",    "Detect & install missing drivers",               feat_drivers),
-    ("10", "perms",     "Permissions",        "Diagnose & fix permission denied errors",        feat_perms),
-    # ── INSTALL & UPDATE ─────────────────────────────────────────
-    ("11", "packages",  "Install Software",   "Find & install software by description",         feat_packages),
-    ("12", "updates",   "Check for Updates",  "Safe upgrade analysis & ordering",               feat_updates),
-    ("13", "appswitch", "Find Linux App",     "Find Linux equivalents of Windows apps",         feat_appswitch),
-    # ── PROTECT & RECOVER ────────────────────────────────────────
-    ("14", "security",  "Security Check",     "Harden firewall, SSH, open ports",               feat_security),
-    ("15", "backup",    "Backup Settings",    "Snapshot all system configs to .tar.gz",         feat_backup),
-    ("16", "rollback",  "Undo Changes",       "Undo changes made in a previous session",        feat_rollback),
-    # ── SPEED & MAINTENANCE ──────────────────────────────────────
-    ("17", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes",        feat_performance),
-    ("18", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
-    ("19", "boot",      "Speed Up Boot",      "Find why boot is slow & speed it up",            feat_boot),
-    ("20", "battery",   "Battery & Power",    "Improve battery life, fix overheating",          feat_battery),
-    ("21", "services",  "Manage Services",    "Optimise startup & running services",            feat_services),
-    # ── INSPECT ──────────────────────────────────────────────────
-    ("22", "hardware",  "Hardware Info",      "Full hardware report & health check",            feat_hardware),
-    ("23", "processes", "Running Programs",   "Tame CPU/memory hogs & zombie processes",        feat_processes),
-    ("24", "logs",      "Explain Logs",       "Decode cryptic errors & system logs",            feat_logs),
-    # ── FOR DEVELOPERS ───────────────────────────────────────────
-    ("25", "script",    "Generate Script",    "Describe a task → get a bash script",            feat_script),
-    ("26", "cron",      "Schedule Task",      "Schedule tasks in plain English",                feat_cron),
-    ("27", "docker",    "Docker Help",        "Container troubleshooting & cleanup",            feat_docker),
-    ("28", "ssh",       "SSH Setup",          "Set up & harden SSH securely",                   feat_ssh),
-    ("29", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
-    # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "Quick catalog of 30 popular Linux apps",         feat_install_apps),
-    ("99", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
-    # ── LETTER SHORTCUTS ─────────────────────────────────────────
-    ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
-    ("i",  "shell",     "Shell Integration",  "Install tg!! shortcut in your terminal",         feat_shell_integration),
-    ("m",  "monitor",   "Error Monitor",      "Background daemon: notify on system errors",     feat_monitor),
-    ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                          feat_feedback),
-]
-
 _MONITOR_SERVICE = "tuxgenie-monitor"
 _MONITOR_SERVICE_FILE = os.path.expanduser(
     f"~/.config/systemd/user/{_MONITOR_SERVICE}.service"
@@ -5257,6 +5210,54 @@ tg() {
   {DIM}Works in any terminal — Warp, GNOME Terminal, Kitty, etc.{R}
   {DIM}Supports bash and zsh.{R}
 """)
+
+
+MENU_ITEMS = [
+    # ── START HERE ───────────────────────────────────────────────
+    ("1",  "fix",       "Fix a Problem",      "Describe what's wrong in plain English",         feat_fix),
+    ("2",  "health",    "Health Check",       "System CPU/RAM/disk/service health scan",        feat_health),
+    # ── FIX SOMETHING ────────────────────────────────────────────
+    ("3",  "network",   "Internet / WiFi",    "Diagnose & fix connectivity",                    feat_network),
+    ("4",  "sound",     "Sound / Audio",      "No audio, mic not working, HDMI sound",          feat_sound),
+    ("5",  "display",   "Display",            "Wrong resolution, monitor not detected",         feat_display),
+    ("6",  "bluetooth", "Bluetooth",          "Pairing fails, device not found",                feat_bluetooth),
+    ("7",  "printer",   "Printer Setup",      "Install printer, fix printing problems",         feat_printer),
+    ("8",  "webcam",    "Webcam Fix",         "Camera not detected, black screen",              feat_webcam),
+    ("9",  "drivers",   "Missing Drivers",    "Detect & install missing drivers",               feat_drivers),
+    ("10", "perms",     "Permissions",        "Diagnose & fix permission denied errors",        feat_perms),
+    # ── INSTALL & UPDATE ─────────────────────────────────────────
+    ("11", "packages",  "Install Software",   "Find & install software by description",         feat_packages),
+    ("12", "updates",   "Check for Updates",  "Safe upgrade analysis & ordering",               feat_updates),
+    ("13", "appswitch", "Find Linux App",     "Find Linux equivalents of Windows apps",         feat_appswitch),
+    # ── PROTECT & RECOVER ────────────────────────────────────────
+    ("14", "security",  "Security Check",     "Harden firewall, SSH, open ports",               feat_security),
+    ("15", "backup",    "Backup Settings",    "Snapshot all system configs to .tar.gz",         feat_backup),
+    ("16", "rollback",  "Undo Changes",       "Undo changes made in a previous session",        feat_rollback),
+    # ── SPEED & MAINTENANCE ──────────────────────────────────────
+    ("17", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes",        feat_performance),
+    ("18", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
+    ("19", "boot",      "Speed Up Boot",      "Find why boot is slow & speed it up",            feat_boot),
+    ("20", "battery",   "Battery & Power",    "Improve battery life, fix overheating",          feat_battery),
+    ("21", "services",  "Manage Services",    "Optimise startup & running services",            feat_services),
+    # ── INSPECT ──────────────────────────────────────────────────
+    ("22", "hardware",  "Hardware Info",      "Full hardware report & health check",            feat_hardware),
+    ("23", "processes", "Running Programs",   "Tame CPU/memory hogs & zombie processes",        feat_processes),
+    ("24", "logs",      "Explain Logs",       "Decode cryptic errors & system logs",            feat_logs),
+    # ── FOR DEVELOPERS ───────────────────────────────────────────
+    ("25", "script",    "Generate Script",    "Describe a task → get a bash script",            feat_script),
+    ("26", "cron",      "Schedule Task",      "Schedule tasks in plain English",                feat_cron),
+    ("27", "docker",    "Docker Help",        "Container troubleshooting & cleanup",            feat_docker),
+    ("28", "ssh",       "SSH Setup",          "Set up & harden SSH securely",                   feat_ssh),
+    ("29", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
+    # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
+    ("77", "apps",      "Install Apps",       "Quick catalog of 30 popular Linux apps",         feat_install_apps),
+    ("99", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
+    # ── LETTER SHORTCUTS ─────────────────────────────────────────
+    ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
+    ("i",  "shell",     "Shell Integration",  "Install tg!! shortcut in your terminal",         feat_shell_integration),
+    ("m",  "monitor",   "Error Monitor",      "Background daemon: notify on system errors",     feat_monitor),
+    ("f",  "feedback",  "Feature Request",    "Suggest a new feature",                          feat_feedback),
+]
 
 
 def show_menu():
