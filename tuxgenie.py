@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.56.0"
+__version__ = "5.57.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2541,9 +2541,24 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
 
     def _reader(stream, buf, color):
         try:
-            for raw in stream:
-                line = raw.decode('utf-8', errors='replace').rstrip('\n')
-                buf.append(line)
+            pending = b''
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    break
+                pending += chunk
+                # Split on both \n and \r so apt's carriage-return progress lines print
+                while True:
+                    for sep in (b'\n', b'\r'):
+                        idx = pending.find(sep)
+                        if idx != -1:
+                            raw = pending[:idx]
+                            pending = pending[idx + 1:]
+                            break
+                    else:
+                        break
+                    line = raw.decode('utf-8', errors='replace').rstrip('\r\n')
+                    buf.append(line)
                 # Suppress sudo password prompts that sudo -S emits to stderr
                 if sudo_password is not None and (
                     '[sudo]' in line or
@@ -2565,12 +2580,21 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
             stream.close()
 
     try:
+        # Force plain-text output from apt/dpkg — prevents ncurses progress UI
+        # that swallows output and blanks the terminal
+        proc_env = os.environ.copy()
+        proc_env.update({
+            'DEBIAN_FRONTEND': 'noninteractive',
+            'APT_LISTCHANGES_FRONTEND': 'none',
+            'DPKG_COLORS': 'never',
+        })
         proc = subprocess.Popen(
             actual_cmd, shell=True,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            bufsize=8192,
+            env=proc_env,
+            bufsize=0,
         )
         if sudo_password is not None:
             try:
