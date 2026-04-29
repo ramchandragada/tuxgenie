@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.55.0"
+__version__ = "5.56.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2138,8 +2138,17 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
     if effective_word in _SHELL_BUILTINS and not shutil.which(effective_word):
         exec_cmd = f'bash -i -c {shlex.quote(exec_cmd)} 2>&1'
 
+    # Long-running apt operations need a much bigger timeout than the default
+    _HEAVY_APT_RE = re.compile(
+        r'(?:sudo\s+)?apt(?:-get)?\s+(?:upgrade|full-upgrade|dist-upgrade|install|remove|autoremove|purge)\b',
+        re.IGNORECASE)
+    cmd_timeout = 3600 if _HEAVY_APT_RE.search(exec_cmd) else None
+    if cmd_timeout:
+        print(f"  {YELLOW}⚠  This may take 10–60 minutes. Please wait…{R}")
+
     print(f"  {CYAN}▶ Running…{R}")
-    rc, stdout, stderr = run_cmd_live(exec_cmd, sudo_password=sudo_pw)
+    rc, stdout, stderr = run_cmd_live(exec_cmd, sudo_password=sudo_pw,
+                                      **({"timeout": cmd_timeout} if cmd_timeout else {}))
 
     if rc == 0:
         ok("Done.")
