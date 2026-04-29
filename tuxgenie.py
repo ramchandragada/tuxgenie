@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.60.0"
+__version__ = "5.61.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1340,7 +1340,26 @@ def _handle_tool_call(block, sudo_pw, step_counter):
         return output[:4000]   # cap what goes back to Claude
 
     elif name == "read_file":
-        path = os.path.expanduser(inp["path"])
+        path = os.path.realpath(os.path.expanduser(inp["path"]))
+        # Block paths that contain private credentials or sensitive system data
+        _DENIED_PREFIXES = (
+            os.path.expanduser("~/.ssh"),
+            os.path.expanduser("~/.gnupg"),
+            os.path.expanduser("~/.aws"),
+            os.path.expanduser("~/.config/gcloud"),
+            os.path.expanduser("~/.kube"),
+            os.path.expanduser("~/.netrc"),
+        )
+        _DENIED_FILES = {
+            "/etc/shadow", "/etc/gshadow", "/etc/sudoers",
+            "/proc/keys", "/proc/key-users",
+        }
+        if (any(path.startswith(p) for p in _DENIED_PREFIXES)
+                or path in _DENIED_FILES
+                or path.endswith((".pem", ".key", ".p12", ".pfx"))):
+            print(f"\n  {'─'*60}")
+            print(f"  {RED}⚠  Blocked: {path} contains sensitive credentials.{R}")
+            return f"BLOCKED: TuxGenie does not read credential files ({path})."
         try:
             with open(path) as f:
                 content = f.read(8000)
@@ -1505,17 +1524,29 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
 
 
 DANGER_RE = [
-    r"rm\s+-[rf]{1,2}\s+/\s*$",    # rm -rf / (root only)
-    r"rm\s+-[rf]{1,2}\s+/\s+\*",  # rm -rf / * (root with wildcard)
-    r"rm\s+-[rf]{1,2}\s+~\s*$",   # rm -rf ~ (home root only)
-    r"rm\s+-[rf]{1,2}\s+~/\s*$",  # rm -rf ~/ (home root only)
-    r"rm\s+--no-preserve-root",   # explicit override of safety guard
+    # ── Disk/filesystem destruction ──────────────────────────────────────────
+    r"rm\s+-[rf]{1,2}\s+/\s*$",                     # rm -rf /
+    r"rm\s+-[rf]{1,2}\s+/\s+\*",                    # rm -rf / *
+    r"rm\s+-[rf]{1,2}\s+~\s*$",                     # rm -rf ~
+    r"rm\s+-[rf]{1,2}\s+~/\s*$",                    # rm -rf ~/
+    r"rm\s+--no-preserve-root",                      # explicit safety override
+    r"rm\s+-[rf]{1,2}\s+/(?:boot|etc|usr|lib(?:64)?|bin|sbin|var|sys|proc|dev|run|opt|home|root)\b",
     r"\bdd\s+if=", r"\bmkfs\b", r"\bfdisk\b",
-    r"\bwipefs\b", r"\bshred\b",
-    r">\s*/dev/sd",               # overwrite disk directly
-    r":\(\)\{\s*:\|:&\s*\};:",    # fork bomb (with optional spaces)
+    r"\bwipefs\b", r"\bshred\b", r"\btruncate\b.*\s/dev/",
+    r">\s*/dev/sd", r">\s*/dev/nvme", r">\s*/dev/vd",
+    # ── Fork bombs / resource exhaustion ────────────────────────────────────
+    r":\(\)\{\s*:\|:&\s*\};:",                       # classic fork bomb
+    r"\(\)\s*\{\s*\w+\s*\|\s*\w+\s*&\s*\}",         # alternate fork bomb form
+    # ── Privilege escalation to root shell ──────────────────────────────────
+    r"sudo\s+(?:bash|sh|dash|zsh|ksh|csh|tcsh|fish)\b",  # sudo <shell>
+    r"sudo\s+-[si]\b",                               # sudo -s / sudo -i
+    # ── Subshell injection inside privileged commands ────────────────────────
+    r"sudo\b.*\$\(",                                 # sudo ... $( )
+    r"sudo\b.*`",                                    # sudo ... `backtick`
+    # ── Dangerous permission changes ─────────────────────────────────────────
     r"chmod\s+-[Rr]\s+[0-7]*7[0-7]*\s+/",
     r"chmod\s+777\s+/",
+    r"chmod\s+[0-7]*7[0-7]*\s+/etc/(?:passwd|shadow|sudoers)",
 ]
 def is_dangerous(cmd):
     return any(re.search(p, cmd) for p in DANGER_RE)
@@ -2252,6 +2283,9 @@ def _sanitize_tb(tb_text):
     home = os.path.expanduser("~")
     tb_text = tb_text.replace(home, "~")
     tb_text = re.sub(r'sk-ant-[A-Za-z0-9_\-]{10,}', '[API_KEY_REDACTED]', tb_text)
+    # Redact cached sudo password if it appears in any repr/locals dump
+    if _SESSION_SUDO_PW:
+        tb_text = tb_text.replace(_SESSION_SUDO_PW, '[SUDO_PW_REDACTED]')
     return tb_text
 
 def _ask_rating():
@@ -4324,6 +4358,9 @@ def _try_silent_update(deb_url, deb_name, latest) -> bool:
     Returns True and re-execs if successful; returns False to let the caller
     fall back to the interactive prompt.
     """
+    # Reject anything that isn't a plain semver — defence against a tampered API response
+    if not re.match(r'^\d+\.\d+\.\d+$', latest):
+        return False
     # Test whether sudo is usable without a password right now
     probe = subprocess.run(
         ["sudo", "-n", "true"],
@@ -4349,11 +4386,15 @@ def _try_silent_update(deb_url, deb_name, latest) -> bool:
             os.execv(sys.executable, [sys.executable] + sys.argv)
         return rc == 0
 
-    # Deb systems: download to /tmp then sudo -n dpkg -i
-    tmp_deb = os.path.join("/tmp", deb_name)
+    # Deb systems: download to a unique temp file then sudo -n dpkg -i
+    import tempfile
+    fd, tmp_deb = tempfile.mkstemp(suffix=".deb", prefix="tuxgenie_upd_")
+    os.close(fd)
     try:
         urllib.request.urlretrieve(deb_url, tmp_deb)
     except Exception:
+        try: os.unlink(tmp_deb)
+        except OSError: pass
         return False
 
     _save_version_backup()   # save current version before replacing
@@ -4361,10 +4402,8 @@ def _try_silent_update(deb_url, deb_name, latest) -> bool:
         ["sudo", "-n", "dpkg", "-i", tmp_deb],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     ).returncode
-    try:
-        os.unlink(tmp_deb)
-    except Exception:
-        pass
+    try: os.unlink(tmp_deb)
+    except OSError: pass
 
     if rc == 0:
         print(f"\n  {GREEN}{BOLD}🎉 Auto-updated to v{latest}!{R}  {DIM}Restarting…{R}\n")
@@ -4374,23 +4413,37 @@ def _try_silent_update(deb_url, deb_name, latest) -> bool:
 
 def _do_update_install(deb_url, deb_name, latest):
     """Download and install a .deb update, or pip upgrade on non-deb systems."""
+    # Validate version string before using it anywhere to prevent injection
+    if not re.match(r'^\d+\.\d+\.\d+$', latest):
+        err(f"Update server returned an invalid version string: {latest!r}")
+        return False
+
     # Non-deb systems (Fedora, Arch, openSUSE, etc.) — upgrade via pip
     if not shutil.which("dpkg"):
         print(f"\n  {CYAN}▶ Upgrading via pip (non-deb system)…{R}")
         pkg = f"tuxgenie=={latest}"
-        rc, _, _ = run_cmd_live(f"pip3 install {pkg} --break-system-packages")
+        # Use list-form (no shell=True) to prevent injection via the version string
+        rc = subprocess.run(
+            ["pip3", "install", pkg, "--break-system-packages"],
+            capture_output=True).returncode
         if rc != 0:
-            rc, _, _ = run_cmd_live(f"pip3 install {pkg}")
+            rc = subprocess.run(
+                ["pip3", "install", pkg],
+                capture_output=True).returncode
         if rc == 0:
             print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
             print(f"  {YELLOW}Restarting TuxGenie…{R}\n")
             os.execv(sys.executable, [sys.executable] + sys.argv)
         else:
             err("pip upgrade failed.")
-            info(f"Try manually:  pip3 install --upgrade tuxgenie")
+            info("Try manually:  pip3 install --upgrade tuxgenie")
         return rc == 0
 
-    tmp_deb = os.path.join("/tmp", deb_name)
+    # Use mkstemp for a unique, non-guessable temp path to prevent TOCTOU attacks
+    # where a local attacker could pre-create /tmp/<predictable_name>.deb
+    import tempfile
+    fd, tmp_deb = tempfile.mkstemp(suffix=".deb", prefix="tuxgenie_upd_")
+    os.close(fd)
     print(f"\n  {CYAN}▶ Downloading v{latest}…{R}", flush=True)
     try:
         def _progress(count, block, total):
@@ -4401,6 +4454,8 @@ def _do_update_install(deb_url, deb_name, latest):
         urllib.request.urlretrieve(deb_url, tmp_deb, _progress)
         print()
     except Exception as e:
+        try: os.unlink(tmp_deb)
+        except OSError: pass
         err(f"Download failed: {e}"); return False
     ok(f"Downloaded {deb_name}")
     _save_version_backup()   # save current version before replacing
@@ -4409,8 +4464,12 @@ def _do_update_install(deb_url, deb_name, latest):
     try:
         inst_pw = get_or_cache_sudo_password()
     except KeyboardInterrupt:
+        try: os.unlink(tmp_deb)
+        except OSError: pass
         warn("Installation cancelled."); return False
     rc, _, _ = run_cmd_live(f"sudo dpkg -i {shlex.quote(tmp_deb)}", sudo_password=inst_pw)
+    try: os.unlink(tmp_deb)
+    except OSError: pass
     if rc == 0:
         print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
         print(f"  {YELLOW}Restarting TuxGenie…{R}\n")
