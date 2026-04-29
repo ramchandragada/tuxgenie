@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.58.0"
+__version__ = "5.59.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5064,43 +5064,80 @@ Set needs_synthesis: true so a full before/after summary is generated."""
 # flatpak vs vendor repo based on the user's distro & system context.
 # Keep prompts short and unambiguous; let the model resolve the install method.
 APP_CATALOG = [
-    # Browsers
-    {"id": 1,  "name": "Brave Browser",       "cat": "Browsers",      "prompt": "Install Brave Browser",                               "desc": "Privacy-focused Chromium browser"},
-    {"id": 2,  "name": "Google Chrome",       "cat": "Browsers",      "prompt": "Install Google Chrome (stable)",                       "desc": "Google's web browser"},
-    {"id": 3,  "name": "Mozilla Firefox",     "cat": "Browsers",      "prompt": "Install the latest Mozilla Firefox",                  "desc": "Open-source web browser"},
-    {"id": 4,  "name": "Vivaldi",             "cat": "Browsers",      "prompt": "Install Vivaldi browser",                              "desc": "Highly customisable Chromium browser"},
-    # Communication
-    {"id": 5,  "name": "Slack",               "cat": "Communication", "prompt": "Install the Slack desktop app",                       "desc": "Team chat and collaboration"},
-    {"id": 6,  "name": "Discord",             "cat": "Communication", "prompt": "Install Discord desktop",                              "desc": "Voice and text chat"},
-    {"id": 7,  "name": "Telegram Desktop",    "cat": "Communication", "prompt": "Install Telegram Desktop",                             "desc": "Encrypted messenger"},
-    {"id": 8,  "name": "Zoom",                "cat": "Communication", "prompt": "Install Zoom video conferencing",                     "desc": "Video meetings"},
-    {"id": 9,  "name": "Microsoft Teams",     "cat": "Communication", "prompt": "Install Microsoft Teams for Linux",                   "desc": "Microsoft's team chat"},
-    # Office
-    {"id": 10, "name": "LibreOffice",         "cat": "Office",        "prompt": "Install the latest LibreOffice (full suite)",         "desc": "Free office suite"},
-    {"id": 11, "name": "OnlyOffice",          "cat": "Office",        "prompt": "Install OnlyOffice Desktop Editors",                  "desc": "MS Office-compatible suite"},
-    {"id": 12, "name": "WPS Office",          "cat": "Office",        "prompt": "Install WPS Office",                                   "desc": "Strong .docx compatibility"},
-    # Media & Graphics
-    {"id": 13, "name": "VLC Media Player",    "cat": "Media",         "prompt": "Install VLC media player",                            "desc": "Plays virtually any video/audio"},
-    {"id": 14, "name": "MPV",                 "cat": "Media",         "prompt": "Install MPV media player",                            "desc": "Lightweight scriptable video player"},
-    {"id": 15, "name": "Spotify",             "cat": "Media",         "prompt": "Install the Spotify desktop client",                  "desc": "Music streaming"},
-    {"id": 16, "name": "OBS Studio",          "cat": "Media",         "prompt": "Install OBS Studio",                                   "desc": "Recording and live streaming"},
-    {"id": 17, "name": "Audacity",            "cat": "Media",         "prompt": "Install Audacity",                                     "desc": "Audio editor and recorder"},
-    {"id": 18, "name": "GIMP",                "cat": "Media",         "prompt": "Install GIMP",                                         "desc": "Image editor (Photoshop alternative)"},
-    # Remote desktop
-    {"id": 19, "name": "AnyDesk",             "cat": "Remote Access", "prompt": "Install AnyDesk remote desktop client",               "desc": "Remote desktop access"},
-    {"id": 20, "name": "TeamViewer",          "cat": "Remote Access", "prompt": "Install TeamViewer",                                   "desc": "Remote desktop and support"},
-    {"id": 21, "name": "RustDesk",            "cat": "Remote Access", "prompt": "Install RustDesk",                                     "desc": "Open-source remote desktop"},
-    # Developer
-    {"id": 22, "name": "Visual Studio Code",  "cat": "Developer",     "prompt": "Install Visual Studio Code (VS Code)",                "desc": "Microsoft's code editor"},
-    {"id": 23, "name": "Sublime Text",        "cat": "Developer",     "prompt": "Install Sublime Text",                                 "desc": "Fast, minimal code editor"},
-    {"id": 24, "name": "Docker",              "cat": "Developer",     "prompt": "Install Docker Engine and the docker-compose plugin", "desc": "Containers for development"},
-    {"id": 25, "name": "Node.js (LTS)",       "cat": "Developer",     "prompt": "Install Node.js LTS via the official NodeSource repo","desc": "JavaScript runtime"},
-    {"id": 26, "name": "Postman",             "cat": "Developer",     "prompt": "Install Postman API client",                           "desc": "HTTP API testing tool"},
-    # Utilities
-    {"id": 27, "name": "Steam",               "cat": "Utilities",     "prompt": "Install the Steam game client",                       "desc": "Gaming platform"},
-    {"id": 28, "name": "btop / htop",         "cat": "Utilities",     "prompt": "Install btop and htop system monitors",               "desc": "Pretty system monitors"},
-    {"id": 29, "name": "neofetch",            "cat": "Utilities",     "prompt": "Install neofetch",                                     "desc": "System info on terminal launch"},
-    {"id": 30, "name": "Dev Essentials Pack", "cat": "Utilities",     "prompt": "Install build-essential, curl, wget, git, unzip, htop, tree", "desc": "Common dev tools in one shot"},
+    # ── Browsers ─────────────────────────────────────────────────────────────
+    {"id": 1,  "name": "Brave Browser",       "cat": "Browsers",       "prompt": "Install Brave Browser",                                                                                                         "desc": "Privacy-focused Chromium browser"},
+    {"id": 2,  "name": "Google Chrome",       "cat": "Browsers",       "prompt": "Install Google Chrome (stable)",                                                                                                "desc": "Google's web browser"},
+    {"id": 3,  "name": "Mozilla Firefox",     "cat": "Browsers",       "prompt": "Install the latest Mozilla Firefox",                                                                                            "desc": "Open-source web browser"},
+    {"id": 4,  "name": "Vivaldi",             "cat": "Browsers",       "prompt": "Install Vivaldi browser",                                                                                                       "desc": "Highly customisable Chromium browser"},
+    {"id": 5,  "name": "Ulaa Browser",        "cat": "Browsers",       "prompt": "Install Ulaa Browser using the official installer: wget -O /tmp/install-ulaa-browser.sh 'https://ulaa.com/release/linux/stable/install-ulaa-browser.sh?isDownload=true' && bash /tmp/install-ulaa-browser.sh", "desc": "Privacy-first Indian browser by Zoho"},
+    # ── Communication ────────────────────────────────────────────────────────
+    {"id": 6,  "name": "Slack",               "cat": "Communication",  "prompt": "Install the Slack desktop app",                                                                                                 "desc": "Team chat and collaboration"},
+    {"id": 7,  "name": "Discord",             "cat": "Communication",  "prompt": "Install Discord desktop",                                                                                                       "desc": "Voice and text chat"},
+    {"id": 8,  "name": "Telegram Desktop",    "cat": "Communication",  "prompt": "Install Telegram Desktop",                                                                                                      "desc": "Fast encrypted messenger"},
+    {"id": 9,  "name": "Signal Desktop",      "cat": "Communication",  "prompt": "Install Signal Desktop from the official Signal apt repository (signal.org) on Debian/Ubuntu, or flatpak from Flathub otherwise", "desc": "Private, end-to-end encrypted messaging"},
+    {"id": 10, "name": "Zoom",                "cat": "Communication",  "prompt": "Install Zoom video conferencing",                                                                                               "desc": "Video meetings"},
+    {"id": 11, "name": "Microsoft Teams",     "cat": "Communication",  "prompt": "Install Microsoft Teams for Linux",                                                                                             "desc": "Microsoft's team chat"},
+    {"id": 12, "name": "Rambox",              "cat": "Communication",  "prompt": "Install Rambox multi-service messaging hub — download the latest .deb from https://github.com/ramboxapp/rambox/releases or use flatpak from Flathub", "desc": "All-in-one workspace for messaging apps"},
+    {"id": 13, "name": "Arattai",             "cat": "Communication",  "prompt": "Install Arattai Tamil community chat app — go to https://www.arattai.in/download.html, download the Linux .deb package and install it with dpkg; fall back to AppImage if no .deb is available", "desc": "Tamil community chat app"},
+    # ── Office & Notes ───────────────────────────────────────────────────────
+    {"id": 14, "name": "LibreOffice",         "cat": "Office & Notes", "prompt": "Install the latest LibreOffice (full suite)",                                                                                   "desc": "Free office suite (Writer, Calc, Impress)"},
+    {"id": 15, "name": "OnlyOffice",          "cat": "Office & Notes", "prompt": "Install OnlyOffice Desktop Editors",                                                                                            "desc": "Best MS Office format compatibility"},
+    {"id": 16, "name": "WPS Office",          "cat": "Office & Notes", "prompt": "Install WPS Office",                                                                                                            "desc": "Strong .docx/.xlsx compatibility"},
+    {"id": 17, "name": "Thunderbird",         "cat": "Office & Notes", "prompt": "Install Mozilla Thunderbird email client via apt on Debian/Ubuntu, dnf on Fedora, or flatpak from Flathub",                     "desc": "Full-featured email client"},
+    {"id": 18, "name": "Obsidian",            "cat": "Office & Notes", "prompt": "Install Obsidian notes app — download the latest .deb from https://obsidian.md or use flatpak from Flathub",                   "desc": "Markdown notes / second brain"},
+    {"id": 19, "name": "Joplin",              "cat": "Office & Notes", "prompt": "Install Joplin encrypted note-taking app using the official installer script from joplinapp.org",                               "desc": "Encrypted, cross-device note-taking"},
+    # ── Media ────────────────────────────────────────────────────────────────
+    {"id": 20, "name": "VLC Media Player",    "cat": "Media",          "prompt": "Install VLC media player",                                                                                                      "desc": "Plays virtually any video/audio format"},
+    {"id": 21, "name": "MPV",                 "cat": "Media",          "prompt": "Install MPV media player",                                                                                                      "desc": "Lightweight scriptable video player"},
+    {"id": 22, "name": "Spotify",             "cat": "Media",          "prompt": "Install the Spotify desktop client",                                                                                            "desc": "Music streaming"},
+    {"id": 23, "name": "Stremio",             "cat": "Media",          "prompt": "Install Stremio streaming hub — use flatpak from Flathub or download from https://www.stremio.com/downloads",                   "desc": "All-in-one streaming hub"},
+    # ── Audio / Video Creation ───────────────────────────────────────────────
+    {"id": 24, "name": "OBS Studio",          "cat": "AV Creation",    "prompt": "Install OBS Studio",                                                                                                            "desc": "Screen recording and live streaming"},
+    {"id": 25, "name": "Kdenlive",            "cat": "AV Creation",    "prompt": "Install Kdenlive video editor via apt on Debian/Ubuntu, dnf on Fedora, or flatpak from Flathub",                               "desc": "Non-linear video editor"},
+    {"id": 26, "name": "HandBrake",           "cat": "AV Creation",    "prompt": "Install HandBrake video transcoder via flatpak from Flathub or the official PPA on Ubuntu",                                    "desc": "Open-source video transcoder"},
+    {"id": 27, "name": "Audacity",            "cat": "AV Creation",    "prompt": "Install Audacity",                                                                                                              "desc": "Audio editor and recorder"},
+    # ── Graphics ────────────────────────────────────────────────────────────
+    {"id": 28, "name": "GIMP",                "cat": "Graphics",       "prompt": "Install GIMP",                                                                                                                  "desc": "Image editor (Photoshop alternative)"},
+    {"id": 29, "name": "Inkscape",            "cat": "Graphics",       "prompt": "Install Inkscape vector graphics editor via apt on Debian/Ubuntu or flatpak from Flathub",                                     "desc": "Vector graphics editor (Illustrator alternative)"},
+    {"id": 30, "name": "Krita",               "cat": "Graphics",       "prompt": "Install Krita digital painting app via apt, snap, or flatpak from Flathub",                                                    "desc": "Professional digital painting"},
+    {"id": 31, "name": "Darktable",           "cat": "Graphics",       "prompt": "Install Darktable RAW photo workflow software via apt on Debian/Ubuntu or flatpak from Flathub",                               "desc": "RAW photo editor (Lightroom alternative)"},
+    {"id": 32, "name": "Blender",             "cat": "Graphics",       "prompt": "Install Blender 3D modelling software via snap (snap install blender --classic) or flatpak from Flathub",                     "desc": "3D modelling, animation, rendering"},
+    # ── Remote Access ────────────────────────────────────────────────────────
+    {"id": 33, "name": "AnyDesk",             "cat": "Remote Access",  "prompt": "Install AnyDesk remote desktop client",                                                                                         "desc": "Fast remote desktop access"},
+    {"id": 34, "name": "TeamViewer",          "cat": "Remote Access",  "prompt": "Install TeamViewer",                                                                                                            "desc": "Remote desktop and support"},
+    {"id": 35, "name": "RustDesk",            "cat": "Remote Access",  "prompt": "Install RustDesk",                                                                                                              "desc": "Open-source, self-hostable remote desktop"},
+    # ── Developer Tools ──────────────────────────────────────────────────────
+    {"id": 36, "name": "Visual Studio Code",  "cat": "Developer",      "prompt": "Install Visual Studio Code (VS Code)",                                                                                          "desc": "Microsoft's code editor"},
+    {"id": 37, "name": "Sublime Text",        "cat": "Developer",      "prompt": "Install Sublime Text",                                                                                                          "desc": "Fast, minimal code editor"},
+    {"id": 38, "name": "Git",                 "cat": "Developer",      "prompt": "Install Git version control via the system package manager and configure global user.name / user.email",                        "desc": "Version control system"},
+    {"id": 39, "name": "Docker",              "cat": "Developer",      "prompt": "Install Docker Engine and the docker-compose plugin",                                                                           "desc": "Containers for development"},
+    {"id": 40, "name": "Node.js (LTS)",       "cat": "Developer",      "prompt": "Install Node.js LTS via the official NodeSource repo",                                                                          "desc": "JavaScript runtime"},
+    {"id": 41, "name": "DBeaver",             "cat": "Developer",      "prompt": "Install DBeaver Community Edition universal database GUI — download the .deb from dbeaver.io or use flatpak from Flathub",     "desc": "Universal database GUI"},
+    {"id": 42, "name": "Bruno",               "cat": "Developer",      "prompt": "Install Bruno open-source API client from usebruno.com — download the .deb or use flatpak from Flathub",                       "desc": "Open-source API testing (Postman alternative)"},
+    {"id": 43, "name": "Postman",             "cat": "Developer",      "prompt": "Install Postman API client",                                                                                                    "desc": "HTTP API testing tool"},
+    {"id": 44, "name": "Kitty Terminal",      "cat": "Developer",      "prompt": "Install Kitty GPU-accelerated terminal using the official installer: curl -L https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin", "desc": "Fast, GPU-accelerated terminal emulator"},
+    {"id": 45, "name": "Lazygit",             "cat": "Developer",      "prompt": "Install Lazygit TUI for git — download the latest binary release from https://github.com/jesseduffield/lazygit/releases and install to /usr/local/bin", "desc": "Terminal UI for Git"},
+    # ── System Tools ─────────────────────────────────────────────────────────
+    {"id": 46, "name": "Timeshift",           "cat": "System Tools",   "prompt": "Install Timeshift system snapshot tool via apt (sudo apt install timeshift) on Debian/Ubuntu or dnf on Fedora",                "desc": "System snapshots & restore (like Time Machine)"},
+    {"id": 47, "name": "Stacer",              "cat": "System Tools",   "prompt": "Install Stacer system optimizer — download the latest .deb from https://github.com/oguzhaninan/Stacer/releases and install it", "desc": "System optimizer, cleaner, and monitor"},
+    {"id": 48, "name": "GParted",             "cat": "System Tools",   "prompt": "Install GParted partition manager via apt (sudo apt install gparted) on Debian/Ubuntu",                                         "desc": "Graphical partition editor"},
+    {"id": 49, "name": "BleachBit",           "cat": "System Tools",   "prompt": "Install BleachBit system cleaner via apt (sudo apt install bleachbit) on Debian/Ubuntu or download from bleachbit.org",         "desc": "Free disk space & protect privacy"},
+    {"id": 50, "name": "Synaptic",            "cat": "System Tools",   "prompt": "Install Synaptic package manager GUI via apt (sudo apt install synaptic) on Debian/Ubuntu",                                     "desc": "GUI frontend for apt"},
+    # ── Files & Sync ─────────────────────────────────────────────────────────
+    {"id": 51, "name": "FileZilla",           "cat": "Files & Sync",   "prompt": "Install FileZilla FTP/SFTP client via apt (sudo apt install filezilla) on Debian/Ubuntu or the system package manager",         "desc": "FTP / SFTP / FTPS client"},
+    {"id": 52, "name": "Rclone",              "cat": "Files & Sync",   "prompt": "Install Rclone cloud sync tool using the official installer: curl https://rclone.org/install.sh | sudo bash",                   "desc": "Sync files to any cloud (Drive, S3, Dropbox…)"},
+    {"id": 53, "name": "Nextcloud Client",    "cat": "Files & Sync",   "prompt": "Install Nextcloud desktop sync client via apt (sudo apt install nextcloud-desktop) or flatpak from Flathub",                    "desc": "Self-hosted cloud storage sync"},
+    {"id": 54, "name": "qBittorrent",         "cat": "Files & Sync",   "prompt": "Install qBittorrent via apt (sudo apt install qbittorrent) on Debian/Ubuntu",                                                   "desc": "Open-source BitTorrent client"},
+    {"id": 55, "name": "KeePassXC",           "cat": "Files & Sync",   "prompt": "Install KeePassXC password manager via apt (sudo apt install keepassxc) or flatpak from Flathub",                              "desc": "Offline password manager"},
+    # ── Utilities ────────────────────────────────────────────────────────────
+    {"id": 56, "name": "Flameshot",           "cat": "Utilities",      "prompt": "Install Flameshot screenshot tool via apt (sudo apt install flameshot) on Debian/Ubuntu",                                       "desc": "Screenshot tool with annotation"},
+    {"id": 57, "name": "CopyQ",               "cat": "Utilities",      "prompt": "Install CopyQ clipboard manager via apt (sudo apt install copyq) on Debian/Ubuntu or flatpak from Flathub",                    "desc": "Advanced clipboard manager with history"},
+    {"id": 58, "name": "Ventoy",              "cat": "Utilities",      "prompt": "Install Ventoy multi-ISO bootable USB creator — download the latest release from https://github.com/ventoy/Ventoy/releases, extract and run the install script", "desc": "Create multi-boot USB drives"},
+    {"id": 59, "name": "Calibre",             "cat": "Utilities",      "prompt": "Install Calibre ebook management software using the official installer: wget -nv -O- https://download.calibre-ebook.com/linux-installer.sh | sudo sh /dev/stdin", "desc": "Ebook library manager and converter"},
+    {"id": 60, "name": "Steam",               "cat": "Utilities",      "prompt": "Install the Steam game client",                                                                                                 "desc": "Gaming platform with Proton (play Windows games)"},
+    {"id": 61, "name": "btop / htop",         "cat": "Utilities",      "prompt": "Install btop and htop system monitors",                                                                                         "desc": "Beautiful real-time system monitors"},
+    {"id": 62, "name": "neofetch",            "cat": "Utilities",      "prompt": "Install neofetch",                                                                                                              "desc": "System info banner on terminal launch"},
+    {"id": 63, "name": "Dev Essentials Pack", "cat": "Utilities",      "prompt": "Install build-essential, curl, wget, git, unzip, htop, tree",                                                                  "desc": "Essential dev tools in one shot"},
 ]
 
 
@@ -5190,10 +5227,11 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
 
 
 def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — flat 1-30 catalog of common Linux apps.
-    Each shortcut maps to a natural-language install prompt; the agentic
-    engine figures out the right method (apt / snap / flatpak / vendor repo)
-    for the user's distro and confirms before running anything."""
+    """Quick app installer — 63-app catalog covering browsers, communication,
+    office, media, graphics, developer tools, system tools, files & sync,
+    and utilities. Each entry maps to a natural-language install prompt;
+    the agentic engine picks the right method (apt / snap / flatpak / vendor
+    repo) for the user's distro and confirms before running anything."""
     _run_catalog_picker(
         backend, bctx, slog,
         catalog=APP_CATALOG,
@@ -5626,7 +5664,7 @@ def show_menu():
     _item("29", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
-    _item("77", "Install Apps",        "🎁 Pick from 30 popular apps (Brave, VLC, AnyDesk, Slack…)")
+    _item("77", "Install Apps",        "🎁 63 apps: Brave, Signal, Obsidian, Blender, KeePassXC, Arattai…")
     _item("99", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
 
     print(f"""
