@@ -29,14 +29,14 @@ www.tuxgenie.com
 """
 
 import os, sys, json, re, stat, tarfile, datetime, textwrap, time, shlex, argparse
-import subprocess, urllib.request, urllib.error, threading, shutil
+import subprocess, urllib.request, urllib.error, threading, shutil, traceback
 try:
     import termios, tty as _tty
     _HAS_TERMIOS = True
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.59.0"
+__version__ = "5.60.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2138,11 +2138,20 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
     if effective_word in _SHELL_BUILTINS and not shutil.which(effective_word):
         exec_cmd = f'bash -i -c {shlex.quote(exec_cmd)} 2>&1'
 
-    # Long-running apt operations need a much bigger timeout than the default
-    _HEAVY_APT_RE = re.compile(
-        r'(?:sudo\s+)?apt(?:-get)?\s+(?:upgrade|full-upgrade|dist-upgrade|install|remove|autoremove|purge)\b',
+    # Long-running operations need a much bigger timeout than the default.
+    # Match apt/dnf/yum/pacman/zypper with any flags between the binary and
+    # the action verb (e.g. "sudo apt -y upgrade", "apt-get --yes install foo").
+    _HEAVY_PKG_RE = re.compile(
+        r'^\s*(?:sudo\s+)?'
+        r'(?:apt(?:-get)?|dnf|yum|pacman|zypper|snap|flatpak)'
+        r'(?:\s+-{1,2}[A-Za-z0-9-]+)*'
+        r'\s+(?:upgrade|full-upgrade|dist-upgrade|install|reinstall|remove|autoremove|'
+        r'purge|update|refresh|-S\b|-Syu\b|system-upgrade|do-release-upgrade)',
         re.IGNORECASE)
-    cmd_timeout = 3600 if _HEAVY_APT_RE.search(exec_cmd) else None
+    _HEAVY_RELEASE_RE = re.compile(
+        r'^\s*(?:sudo\s+)?do-release-upgrade\b', re.IGNORECASE)
+    cmd_timeout = (3600 if (_HEAVY_PKG_RE.search(exec_cmd) or
+                            _HEAVY_RELEASE_RE.search(exec_cmd)) else None)
     if cmd_timeout:
         print(f"  {YELLOW}⚠  This may take 10–60 minutes. Please wait…{R}")
 
@@ -2279,8 +2288,7 @@ def _ask_rating():
 
 def report_crash(exc_type, exc_val, exc_tb, feature="unknown"):
     """Offer to report an unexpected crash as a GitHub issue."""
-    import traceback as _tb
-    tb_text = _sanitize_tb("".join(_tb.format_exception(exc_type, exc_val, exc_tb)))
+    tb_text = _sanitize_tb("".join(traceback.format_exception(exc_type, exc_val, exc_tb)))
     err_summary = f"{exc_type.__name__}: {str(exc_val)[:120]}"
 
     print(f"\n{BG_RED}{BOLD}  ⚠  TuxGenie hit an unexpected error  {R}")
@@ -2540,8 +2548,8 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
     progress = _LiveProgress()
 
     def _reader(stream, buf, color):
+        pending = b''
         try:
-            pending = b''
             while True:
                 chunk = stream.read(4096)
                 if not chunk:
@@ -2559,35 +2567,47 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
                         break
                     line = raw.decode('utf-8', errors='replace').rstrip('\r\n')
                     buf.append(line)
-                # Suppress sudo password prompts that sudo -S emits to stderr
-                if sudo_password is not None and (
-                    '[sudo]' in line or
-                    'password for' in line.lower() or
-                    'sorry, try again' in line.lower() or
-                    'sudo:' in line.lower()
-                ):
-                    continue
-                # Suppress known noise / internal app errors
-                if any(n in line for n in _NOISE):
-                    continue
-                safe = _safe_line(line)
-                if safe.strip():
-                    progress.feed(safe)
-                    progress.print_line(f"  {color}{safe}{R}")
+                    # Suppress sudo password prompts that sudo -S emits to stderr
+                    if sudo_password is not None and (
+                        '[sudo]' in line or
+                        'password for' in line.lower() or
+                        'sorry, try again' in line.lower() or
+                        'sudo:' in line.lower()
+                    ):
+                        continue
+                    # Suppress known noise / internal app errors
+                    if any(n in line for n in _NOISE):
+                        continue
+                    safe = _safe_line(line)
+                    if safe.strip():
+                        progress.feed(safe)
+                        progress.print_line(f"  {color}{safe}{R}")
         except Exception:
             pass
         finally:
+            try:
+                # Flush any trailing partial line that never got terminated
+                if pending:
+                    line = pending.decode('utf-8', errors='replace').rstrip('\r\n')
+                    if line:
+                        buf.append(line)
+                        safe = _safe_line(line)
+                        if safe.strip() and not any(n in line for n in _NOISE):
+                            progress.print_line(f"  {color}{safe}{R}")
+            except Exception:
+                pass
             stream.close()
 
     try:
-        # Force plain-text output from apt/dpkg — prevents ncurses progress UI
-        # that swallows output and blanks the terminal
         proc_env = os.environ.copy()
-        proc_env.update({
-            'DEBIAN_FRONTEND': 'noninteractive',
-            'APT_LISTCHANGES_FRONTEND': 'none',
-            'DPKG_COLORS': 'never',
-        })
+        # Only apt/dpkg need plain-text mode — setting these globally has no
+        # effect elsewhere but we keep them scoped to be tidy.
+        if re.search(r'\b(?:apt|apt-get|dpkg|aptitude|do-release-upgrade)\b', actual_cmd):
+            proc_env.update({
+                'DEBIAN_FRONTEND': 'noninteractive',
+                'APT_LISTCHANGES_FRONTEND': 'none',
+                'DPKG_COLORS': 'never',
+            })
         proc = subprocess.Popen(
             actual_cmd, shell=True,
             stdin=subprocess.PIPE,
@@ -5577,27 +5597,27 @@ MENU_ITEMS = [
     ("13", "osupgrade", "Upgrade OS Version", "Upgrade Ubuntu/Fedora/Debian to latest release", feat_os_upgrade),
     ("14", "appswitch", "Find Linux App",     "Find Linux equivalents of Windows apps",         feat_appswitch),
     # ── PROTECT & RECOVER ────────────────────────────────────────
-    ("14", "security",  "Security Check",     "Harden firewall, SSH, open ports",               feat_security),
-    ("15", "backup",    "Backup Settings",    "Snapshot all system configs to .tar.gz",         feat_backup),
-    ("16", "rollback",  "Undo Changes",       "Undo changes made in a previous session",        feat_rollback),
+    ("15", "security",  "Security Check",     "Harden firewall, SSH, open ports",               feat_security),
+    ("16", "backup",    "Backup Settings",    "Snapshot all system configs to .tar.gz",         feat_backup),
+    ("17", "rollback",  "Undo Changes",       "Undo changes made in a previous session",        feat_rollback),
     # ── SPEED & MAINTENANCE ──────────────────────────────────────
-    ("17", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes",        feat_performance),
-    ("18", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
-    ("19", "boot",      "Speed Up Boot",      "Find why boot is slow & speed it up",            feat_boot),
-    ("20", "battery",   "Battery & Power",    "Improve battery life, fix overheating",          feat_battery),
-    ("21", "services",  "Manage Services",    "Optimise startup & running services",            feat_services),
+    ("18", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes",        feat_performance),
+    ("19", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
+    ("20", "boot",      "Speed Up Boot",      "Find why boot is slow & speed it up",            feat_boot),
+    ("21", "battery",   "Battery & Power",    "Improve battery life, fix overheating",          feat_battery),
+    ("22", "services",  "Manage Services",    "Optimise startup & running services",            feat_services),
     # ── INSPECT ──────────────────────────────────────────────────
-    ("22", "hardware",  "Hardware Info",      "Full hardware report & health check",            feat_hardware),
-    ("23", "processes", "Running Programs",   "Tame CPU/memory hogs & zombie processes",        feat_processes),
-    ("24", "logs",      "Explain Logs",       "Decode cryptic errors & system logs",            feat_logs),
+    ("23", "hardware",  "Hardware Info",      "Full hardware report & health check",            feat_hardware),
+    ("24", "processes", "Running Programs",   "Tame CPU/memory hogs & zombie processes",        feat_processes),
+    ("25", "logs",      "Explain Logs",       "Decode cryptic errors & system logs",            feat_logs),
     # ── FOR DEVELOPERS ───────────────────────────────────────────
-    ("25", "script",    "Generate Script",    "Describe a task → get a bash script",            feat_script),
-    ("26", "cron",      "Schedule Task",      "Schedule tasks in plain English",                feat_cron),
-    ("27", "docker",    "Docker Help",        "Container troubleshooting & cleanup",            feat_docker),
-    ("28", "ssh",       "SSH Setup",          "Set up & harden SSH securely",                   feat_ssh),
-    ("29", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
+    ("26", "script",    "Generate Script",    "Describe a task → get a bash script",            feat_script),
+    ("27", "cron",      "Schedule Task",      "Schedule tasks in plain English",                feat_cron),
+    ("28", "docker",    "Docker Help",        "Container troubleshooting & cleanup",            feat_docker),
+    ("29", "ssh",       "SSH Setup",          "Set up & harden SSH securely",                   feat_ssh),
+    ("30", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "Quick catalog of 30 popular Linux apps",         feat_install_apps),
+    ("77", "apps",      "Install Apps",       "63-app catalog (Brave, Signal, Obsidian, Blender…)", feat_install_apps),
     ("99", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
     ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
@@ -5640,28 +5660,28 @@ def show_menu():
     _item("14", "Find Linux App",      '"What replaces Photoshop / Word / iTunes?"')
 
     _cat(BG_NAVY, "🛡️ ", "PROTECT & RECOVER", "Stay safe and reversible")
-    _item("14", "Security Check",      "Are you protected? Find out now")
-    _item("15", "Backup Settings",     "Save your config before making changes")
-    _item("16", "Undo Changes",        "Oops? Roll back what TuxGenie did")
+    _item("15", "Security Check",      "Are you protected? Find out now")
+    _item("16", "Backup Settings",     "Save your config before making changes")
+    _item("17", "Undo Changes",        "Oops? Roll back what TuxGenie did")
 
     _cat(BG_DARK, "⚡", "SPEED & MAINTENANCE", "Keep your computer fast")
-    _item("17", "Performance Boost",   "🚀 Full audit + apply ALL safe speed fixes")
-    _item("18", "Disk Cleanup",        "Running out of storage?")
-    _item("19", "Speed Up Boot",       "Computer starts slowly? Fix it")
-    _item("20", "Battery & Power",     "Battery draining fast? Laptop overheating?")
-    _item("21", "Manage Services",     "Speed up startup, fix service failures")
+    _item("18", "Performance Boost",   "🚀 Full audit + apply ALL safe speed fixes")
+    _item("19", "Disk Cleanup",        "Running out of storage?")
+    _item("20", "Speed Up Boot",       "Computer starts slowly? Fix it")
+    _item("21", "Battery & Power",     "Battery draining fast? Laptop overheating?")
+    _item("22", "Manage Services",     "Speed up startup, fix service failures")
 
     _cat(BG_PURPLE, "📊", "INSPECT", "See how your computer is doing")
-    _item("22", "Hardware Info",       "What's inside my computer?")
-    _item("23", "Running Programs",    "What's using CPU / memory?")
-    _item("24", "Explain Logs",        "Decode confusing error messages")
+    _item("23", "Hardware Info",       "What's inside my computer?")
+    _item("24", "Running Programs",    "What's using CPU / memory?")
+    _item("25", "Explain Logs",        "Decode confusing error messages")
 
     _cat(BG_TEAL, "⚙️ ", "FOR DEVELOPERS", "Power-user tools")
-    _item("25", "Generate Script",     '"Back up my files nightly" → bash script')
-    _item("26", "Schedule Task",       "Run things automatically on a schedule")
-    _item("27", "Docker Help",         "Container troubleshooting & cleanup")
-    _item("28", "SSH Setup",           "Remote access to another computer")
-    _item("29", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
+    _item("26", "Generate Script",     '"Back up my files nightly" → bash script')
+    _item("27", "Schedule Task",       "Run things automatically on a schedule")
+    _item("28", "Docker Help",         "Container troubleshooting & cleanup")
+    _item("29", "SSH Setup",           "Remote access to another computer")
+    _item("30", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
     _item("77", "Install Apps",        "🎁 63 apps: Brave, Signal, Obsidian, Blender, KeePassXC, Arattai…")
