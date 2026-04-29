@@ -358,6 +358,32 @@ case "$1" in
         echo "  Note: anthropic SDK will be installed on first run of tuxgenie." >&2
     fi
 
+    # Ensure tuxgenie-gui launcher exists (older .debs may not have shipped it)
+    if [ ! -x /usr/bin/tuxgenie-gui ]; then
+        cat > /usr/bin/tuxgenie-gui << 'GUISCRIPT'
+#!/bin/bash
+CMD='tuxgenie; read -rp "Press Enter to close..." _'
+command -v xdg-terminal-exec >/dev/null 2>&1 && exec xdg-terminal-exec bash -c "$CMD"
+command -v gnome-terminal    >/dev/null 2>&1 && exec gnome-terminal -- bash -c "$CMD"
+command -v ptyxis            >/dev/null 2>&1 && exec ptyxis -- bash -c "$CMD"
+command -v konsole           >/dev/null 2>&1 && exec konsole --noclose -e bash -c "$CMD"
+command -v xfce4-terminal    >/dev/null 2>&1 && exec xfce4-terminal --hold -e "bash -c '$CMD'"
+command -v mate-terminal     >/dev/null 2>&1 && exec mate-terminal -e "bash -c '$CMD'"
+command -v tilix             >/dev/null 2>&1 && exec tilix -e "bash -c '$CMD'"
+command -v alacritty         >/dev/null 2>&1 && exec alacritty -e bash -c "$CMD"
+command -v kitty             >/dev/null 2>&1 && exec kitty bash -c "$CMD"
+command -v x-terminal-emulator >/dev/null 2>&1 && exec x-terminal-emulator -e "bash -c '$CMD'"
+command -v xterm             >/dev/null 2>&1 && exec xterm -e "bash -c '$CMD'"
+command -v notify-send       >/dev/null 2>&1 && notify-send "TuxGenie" "Cannot find a terminal. Open a terminal and type: tuxgenie" --icon=tuxgenie
+exit 1
+GUISCRIPT
+        chmod +x /usr/bin/tuxgenie-gui
+    fi
+
+    # Point the desktop entry at the robust launcher (fixes Terminal=true problem)
+    sed -i 's|^Exec=.*|Exec=/usr/bin/tuxgenie-gui|' /usr/share/applications/tuxgenie.desktop 2>/dev/null || true
+    sed -i 's|^Terminal=true|Terminal=false|'        /usr/share/applications/tuxgenie.desktop 2>/dev/null || true
+
     # Register icons with the desktop environment
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null || true
@@ -403,42 +429,62 @@ exit 0
 LAUNCHER_GUI = b"""\
 #!/bin/bash
 # TuxGenie GUI launcher - opens tuxgenie in the best available terminal emulator.
-CMD='tuxgenie; echo; read -rp "Press Enter to close..." _; exit'
+CMD='tuxgenie; read -rp "Press Enter to close..." _'
 
-# gnome-terminal / ptyxis use -- to separate terminal args from the command
-for TERM in gnome-terminal ptyxis; do
-    if command -v "$TERM" >/dev/null 2>&1; then
-        exec "$TERM" -- bash -c "$CMD"
-    fi
-done
+# xdg-terminal-exec: the modern standard on Ubuntu 24.04+ / GNOME 47+
+if command -v xdg-terminal-exec >/dev/null 2>&1; then
+    exec xdg-terminal-exec bash -c "$CMD"
+fi
 
-# These terminals use -e 'command'
-for TERM in xfce4-terminal mate-terminal lxterminal tilix alacritty kitty; do
+# gnome-terminal and ptyxis (Ubuntu 24.10+) use -- separator
+if command -v gnome-terminal >/dev/null 2>&1; then
+    exec gnome-terminal -- bash -c "$CMD"
+fi
+if command -v ptyxis >/dev/null 2>&1; then
+    exec ptyxis -- bash -c "$CMD"
+fi
+
+# Detect from running desktop session (catches flatpak/snap terminals)
+SESSION_TERM=""
+if [ -n "$GNOME_TERMINAL_SCREEN" ] || [ -n "$VTE_VERSION" ]; then
+    SESSION_TERM="gnome-terminal"
+fi
+
+# KDE / other desktops
+if command -v konsole >/dev/null 2>&1; then
+    exec konsole --noclose -e bash -c "$CMD"
+fi
+if command -v xfce4-terminal >/dev/null 2>&1; then
+    exec xfce4-terminal --hold -e "bash -c '$CMD'"
+fi
+
+# Other common terminals
+for TERM in mate-terminal lxterminal tilix alacritty kitty wezterm foot; do
     if command -v "$TERM" >/dev/null 2>&1; then
         exec "$TERM" -e "bash -c '$CMD'"
     fi
 done
 
-# konsole (KDE) uses -e and needs the command split
-if command -v konsole >/dev/null 2>&1; then
-    exec konsole -e bash -c "$CMD"
-fi
-
-# xterm as last resort - always present on most X11 systems
-if command -v xterm >/dev/null 2>&1; then
-    exec xterm -e "bash -c '$CMD'"
-fi
-
-# Absolute fallback: try x-terminal-emulator (Debian alternatives system)
+# x-terminal-emulator: Debian alternatives system
 if command -v x-terminal-emulator >/dev/null 2>&1; then
     exec x-terminal-emulator -e "bash -c '$CMD'"
 fi
 
-# Nothing found - show a desktop notification if possible
+# Last resort: xterm (installable on any X11 system)
+if command -v xterm >/dev/null 2>&1; then
+    exec xterm -e "bash -c '$CMD'"
+fi
+
+# Install xterm if we have apt and nothing else worked
+if command -v apt-get >/dev/null 2>&1; then
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "TuxGenie" "Installing xterm terminal emulator..." --icon=tuxgenie
+    fi
+    apt-get install -y xterm -qq 2>/dev/null && exec xterm -e "bash -c '$CMD'"
+fi
+
 if command -v notify-send >/dev/null 2>&1; then
-    notify-send "TuxGenie" "No terminal emulator found. Open a terminal and type: tuxgenie" --icon=tuxgenie
-else
-    echo "TuxGenie: no terminal emulator found. Open a terminal and type: tuxgenie" >&2
+    notify-send "TuxGenie" "Cannot find a terminal. Open a terminal and type: tuxgenie" --icon=tuxgenie
 fi
 exit 1
 """
