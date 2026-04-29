@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.57.0"
+__version__ = "5.58.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3413,6 +3413,131 @@ def feat_updates(backend, bctx, slog):
         sys_p = BASE_SYS + "\nCheck for and apply system updates." + _sys_ctx_block(ctx)
         fix_engine(backend, sys_p, [{"role":"user","content":"Update my system."}], slog)
 
+# ── FEATURE: Upgrade OS to Latest Version ────────────────────────────────────
+def feat_os_upgrade(backend, bctx, slog):
+    hdr("Upgrade OS to Latest Version")
+    pkg = bctx.get('pkg_mgr', 'apt')
+    os_str = bctx.get('os', 'Unknown OS')
+
+    print(f"\n  {BOLD}Current OS:{R} {DIM}{os_str}{R}")
+    print(f"\n  {YELLOW}{BOLD}⚠  This is a MAJOR upgrade — not just package updates.{R}")
+    print(f"  {DIM}It will move your entire OS to the next major version.{R}")
+    print(f"  {DIM}• Can take 30–90 minutes{R}")
+    print(f"  {DIM}• Requires a reboot when done{R}")
+    print(f"  {DIM}• Close all other applications first{R}")
+    print(f"  {DIM}• Keep your laptop plugged in{R}")
+    print(f"  {DIM}• Do NOT interrupt once started{R}")
+
+    try:
+        ch = input(f"\n  {BOLD}Continue? [y/n]:{R} ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if ch not in ('y', 'yes'):
+        return
+
+    sudo_pw = None
+    try:
+        sudo_pw = get_or_cache_sudo_password()
+    except KeyboardInterrupt:
+        return
+
+    if pkg == 'apt':
+        has_release_upgrade = bool(shutil.which('do-release-upgrade'))
+
+        # Step 1 — bring current packages fully up to date first
+        print(f"\n  {CYAN}Step 1/3 — Updating current packages first (required before upgrade)…{R}")
+        print(f"  {YELLOW}⚠  This may take 10–60 minutes. Please wait…{R}")
+        run_cmd_live("sudo apt-get update -q", sudo_password=sudo_pw, timeout=120)
+        run_cmd_live("sudo apt-get upgrade -y", sudo_password=sudo_pw, timeout=3600)
+        run_cmd_live("sudo apt-get dist-upgrade -y", sudo_password=sudo_pw, timeout=3600)
+        run_cmd_live("sudo apt-get autoremove -y", sudo_password=sudo_pw, timeout=300)
+
+        # Step 2 — ensure the upgrade tool is installed
+        print(f"\n  {CYAN}Step 2/3 — Ensuring upgrade tool is installed…{R}")
+        run_cmd_live("sudo apt-get install -y update-manager-core", sudo_password=sudo_pw, timeout=120)
+
+        if has_release_upgrade:
+            # Ubuntu: hand off to do-release-upgrade for a proper interactive upgrade
+            print(f"\n  {CYAN}Step 3/3 — Starting Ubuntu release upgrade…{R}")
+            print(f"  {DIM}TuxGenie will hand off to the Ubuntu upgrade tool.{R}")
+            print(f"  {DIM}Follow the prompts in this terminal window.{R}\n")
+            rc = os.system("sudo do-release-upgrade")
+            if rc == 0:
+                ok("OS upgrade complete! Please reboot your system.")
+                print(f"\n  {BOLD}Run: {CYAN}sudo reboot{R}")
+            else:
+                warn(f"Upgrade finished with code {rc}. Review the output above for details.")
+                print(f"  {DIM}You can retry later with: sudo do-release-upgrade{R}")
+        else:
+            # Debian / non-Ubuntu: sources.list is already at new release after dist-upgrade
+            print(f"\n  {CYAN}Step 3/3 — Applying full distribution upgrade…{R}")
+            print(f"  {YELLOW}⚠  This may take 30–90 minutes. Please wait…{R}")
+            run_cmd_live("sudo apt-get dist-upgrade -y", sudo_password=sudo_pw, timeout=7200)
+            run_cmd_live("sudo apt-get autoremove -y --purge", sudo_password=sudo_pw, timeout=300)
+            ok("Distribution upgrade complete! Please reboot your system.")
+            print(f"\n  {BOLD}Run: {CYAN}sudo reboot{R}")
+
+    elif pkg in ('dnf', 'yum'):
+        rc2, ver_out, _ = run_cmd("rpm -E %fedora 2>/dev/null", timeout=5)
+        try:
+            current_ver = int(ver_out.strip())
+            next_ver = current_ver + 1
+            print(f"\n  {DIM}Fedora {current_ver} → Fedora {next_ver}{R}")
+        except (ValueError, TypeError):
+            current_ver, next_ver = None, None
+
+        # Step 1 — update current system
+        print(f"\n  {CYAN}Step 1/3 — Updating current packages…{R}")
+        run_cmd_live(f"sudo {pkg} upgrade -y", sudo_password=sudo_pw, timeout=3600)
+
+        # Step 2 — install upgrade plugin
+        print(f"\n  {CYAN}Step 2/3 — Installing system-upgrade plugin…{R}")
+        run_cmd_live(f"sudo {pkg} install -y dnf-plugin-system-upgrade", sudo_password=sudo_pw, timeout=300)
+
+        if next_ver:
+            # Step 3 — download new release packages
+            print(f"\n  {CYAN}Step 3/3 — Downloading Fedora {next_ver} packages (2–4 GB)…{R}")
+            print(f"  {YELLOW}⚠  This may take 30–60 minutes. Please wait…{R}")
+            rc3, _, _ = run_cmd_live(
+                f"sudo {pkg} system-upgrade download --releasever={next_ver} -y",
+                sudo_password=sudo_pw, timeout=7200)
+            if rc3 == 0:
+                ok(f"Packages downloaded. System will reboot to apply the upgrade.")
+                try:
+                    ch2 = input(f"\n  {BOLD}Reboot now to complete upgrade? [y/n]:{R} ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if ch2 in ('y', 'yes'):
+                    run_cmd_live(f"sudo {pkg} system-upgrade reboot", sudo_password=sudo_pw, timeout=30)
+                else:
+                    info(f"Run 'sudo {pkg} system-upgrade reboot' when ready.")
+            else:
+                warn("Download failed. Check your internet connection and try again.")
+        else:
+            warn("Could not determine current Fedora version. Try: sudo dnf system-upgrade download --releasever=<version> -y")
+
+    elif pkg == 'pacman':
+        print(f"\n  {DIM}Arch Linux is a rolling release — there is no version upgrade.{R}")
+        print(f"  {DIM}Running a full system sync instead (pacman -Syu).{R}")
+        try:
+            ch3 = input(f"\n  {BOLD}Run full system upgrade? [y/n]:{R} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if ch3 in ('y', 'yes'):
+            print(f"  {YELLOW}⚠  This may take a while. Please wait…{R}")
+            run_cmd_live("sudo pacman -Syu --noconfirm", sudo_password=sudo_pw, timeout=3600)
+            ok("System upgraded. A reboot is recommended.")
+
+    else:
+        sys_p = (BASE_SYS + f"""
+The user wants to upgrade their OS to the latest major version.
+Current OS: {os_str} · pkg: {pkg}
+
+Provide safe, step-by-step commands to upgrade to the latest OS release.
+RETURN ONLY VALID JSON.""")
+        fix_engine(backend, sys_p,
+                   [{"role": "user", "content": "Upgrade my OS to the latest version."}], slog)
+
 # ── FEATURE 11: Script Generator ─────────────────────────────────────────────
 def feat_script(backend, bctx, slog):
     hdr("Script Generator — Natural language → bash script")
@@ -5411,7 +5536,8 @@ MENU_ITEMS = [
     # ── INSTALL & UPDATE ─────────────────────────────────────────
     ("11", "packages",  "Install Software",   "Find & install software by description",         feat_packages),
     ("12", "updates",   "Check for Updates",  "Safe upgrade analysis & ordering",               feat_updates),
-    ("13", "appswitch", "Find Linux App",     "Find Linux equivalents of Windows apps",         feat_appswitch),
+    ("13", "osupgrade", "Upgrade OS Version", "Upgrade Ubuntu/Fedora/Debian to latest release", feat_os_upgrade),
+    ("14", "appswitch", "Find Linux App",     "Find Linux equivalents of Windows apps",         feat_appswitch),
     # ── PROTECT & RECOVER ────────────────────────────────────────
     ("14", "security",  "Security Check",     "Harden firewall, SSH, open ports",               feat_security),
     ("15", "backup",    "Backup Settings",    "Snapshot all system configs to .tar.gz",         feat_backup),
@@ -5472,7 +5598,8 @@ def show_menu():
     _cat(BG_ORANGE, "📦", "INSTALL & UPDATE", "Get software and stay up to date")
     _item("11", "Install Software",    '"I need a video editor" → installed')
     _item("12", "Check for Updates",   "Keep your system safe and current")
-    _item("13", "Find Linux App",      '"What replaces Photoshop / Word / iTunes?"')
+    _item("13", "Upgrade OS Version",  "Move to Ubuntu 26 / Fedora 42 / latest release")
+    _item("14", "Find Linux App",      '"What replaces Photoshop / Word / iTunes?"')
 
     _cat(BG_NAVY, "🛡️ ", "PROTECT & RECOVER", "Stay safe and reversible")
     _item("14", "Security Check",      "Are you protected? Find out now")
