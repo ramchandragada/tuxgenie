@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-create_deb.py — Builds tuxgenie_3.0.0_all.deb without dpkg-deb.
+create_deb.py - Builds tuxgenie_3.0.0_all.deb without dpkg-deb.
 
 A .deb file is an ar archive containing:
-  debian-binary   — version string "2.0"
-  control.tar.gz  — DEBIAN/ metadata (control, postinst, prerm, postrm, md5sums)
-  data.tar.gz     — the actual installed files (/usr/bin/tuxgenie, /usr/lib/..., etc.)
+  debian-binary   - version string "2.0"
+  control.tar.gz  - DEBIAN/ metadata (control, postinst, prerm, postrm, md5sums)
+  data.tar.gz     - the actual installed files (/usr/bin/tuxgenie, /usr/lib/..., etc.)
 
 Run: python3 create_deb.py
 """
@@ -21,7 +21,7 @@ import zlib
 import struct
 import math
 
-# ── Icon generator (pure stdlib — no Pillow needed) ──────────────────────────
+# ── Icon generator (pure stdlib - no Pillow needed) ──────────────────────────
 
 def _generate_tuxgenie_icon(size):
     """
@@ -196,7 +196,7 @@ DEB_OUT = f"{PACKAGE}_{VERSION}_{ARCH}.deb"
 # ── Read the main Python script ───────────────────────────────────────────────
 src = os.path.join(SCRIPT_DIR, "tuxgenie.py")
 if not os.path.exists(src):
-    sys.exit(f"ERROR: {src} not found — run from the ai-terminal directory.")
+    sys.exit(f"ERROR: {src} not found - run from the ai-terminal directory.")
 
 with open(src, "rb") as fh:
     TUXGENIE_PY = fh.read()
@@ -398,6 +398,51 @@ esac
 exit 0
 """
 
+# GUI launcher: detects the best available terminal emulator and opens TuxGenie in it.
+# This is more reliable than Terminal=true which depends on x-terminal-emulator being set.
+LAUNCHER_GUI = b"""\
+#!/bin/bash
+# TuxGenie GUI launcher - opens tuxgenie in the best available terminal emulator.
+CMD='tuxgenie; echo; read -rp "Press Enter to close..." _; exit'
+
+# gnome-terminal / ptyxis use -- to separate terminal args from the command
+for TERM in gnome-terminal ptyxis; do
+    if command -v "$TERM" >/dev/null 2>&1; then
+        exec "$TERM" -- bash -c "$CMD"
+    fi
+done
+
+# These terminals use -e 'command'
+for TERM in xfce4-terminal mate-terminal lxterminal tilix alacritty kitty; do
+    if command -v "$TERM" >/dev/null 2>&1; then
+        exec "$TERM" -e "bash -c '$CMD'"
+    fi
+done
+
+# konsole (KDE) uses -e and needs the command split
+if command -v konsole >/dev/null 2>&1; then
+    exec konsole -e bash -c "$CMD"
+fi
+
+# xterm as last resort - always present on most X11 systems
+if command -v xterm >/dev/null 2>&1; then
+    exec xterm -e "bash -c '$CMD'"
+fi
+
+# Absolute fallback: try x-terminal-emulator (Debian alternatives system)
+if command -v x-terminal-emulator >/dev/null 2>&1; then
+    exec x-terminal-emulator -e "bash -c '$CMD'"
+fi
+
+# Nothing found - show a desktop notification if possible
+if command -v notify-send >/dev/null 2>&1; then
+    notify-send "TuxGenie" "No terminal emulator found. Open a terminal and type: tuxgenie" --icon=tuxgenie
+else
+    echo "TuxGenie: no terminal emulator found. Open a terminal and type: tuxgenie" >&2
+fi
+exit 1
+"""
+
 DESKTOP_ENTRY = b"""\
 [Desktop Entry]
 Version=1.0
@@ -407,8 +452,8 @@ GenericName=AI Linux Assistant
 Comment=AI-powered Linux assistant using Claude - fix any Linux problem in plain English
 Icon=tuxgenie
 TryExec=tuxgenie
-Exec=bash -c "tuxgenie; read -rp 'Press Enter to close...' _"
-Terminal=true
+Exec=/usr/bin/tuxgenie-gui
+Terminal=false
 Categories=System;Administration;Utility;
 Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
 StartupNotify=false
@@ -551,6 +596,8 @@ data_entries = [
     # files
     {"path": "./usr/bin/tuxgenie",
      "type": "file", "data": LAUNCHER,                                   "mode": 0o755},
+    {"path": "./usr/bin/tuxgenie-gui",
+     "type": "file", "data": LAUNCHER_GUI,                               "mode": 0o755},
     {"path": "./usr/bin/tuxgenie-update",
      "type": "file", "data": EMERGENCY_UPDATE,                           "mode": 0o755},
     {"path": "./usr/lib/tuxgenie/tuxgenie.py",
@@ -559,7 +606,7 @@ data_entries = [
      "type": "file", "data": COPYRIGHT,                                  "mode": 0o644},
     {"path": "./usr/share/applications/tuxgenie.desktop",
      "type": "file", "data": DESKTOP_ENTRY,                              "mode": 0o644},
-    # Icons — hicolor theme, 6 sizes
+    # Icons - hicolor theme, 6 sizes
     {"path": "./usr/share/icons/hicolor/16x16/apps/tuxgenie.png",
      "type": "file", "data": ICONS[16],                                  "mode": 0o644},
     {"path": "./usr/share/icons/hicolor/32x32/apps/tuxgenie.png",
@@ -606,7 +653,7 @@ print(f"  Done!  {out_path}  ({size_kb:.1f} KB)")
 install_sh_path = os.path.join(SCRIPT_DIR, "install.sh")
 install_sh = f"""\
 #!/bin/bash
-# TuxGenie Installer — double-click this file in your file manager to install.
+# TuxGenie Installer - double-click this file in your file manager to install.
 # Works on Ubuntu, Debian, Linux Mint, and all Debian-based systems.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -625,13 +672,13 @@ install_tuxgenie() {{
         exit 1
     fi
 
-    # Check if already installed — show upgrade vs fresh install message
+    # Check if already installed - show upgrade vs fresh install message
     OLD_VER=$(dpkg -l tuxgenie 2>/dev/null | awk '/^ii/ {{print $3}}')
     if [ -n "$OLD_VER" ]; then
         echo "  Found existing version: $OLD_VER"
-        echo "  Upgrading to v{VERSION} — your API key and settings will be kept."
+        echo "  Upgrading to v{VERSION} - your API key and settings will be kept."
     else
-        echo "  Fresh install — installing TuxGenie v{VERSION}."
+        echo "  Fresh install - installing TuxGenie v{VERSION}."
     fi
     echo ""
     echo "  You may be asked for your password (this is normal for installing software)."
@@ -661,12 +708,12 @@ install_tuxgenie() {{
     read -p "  Press Enter to close..."
 }}
 
-# Try to open a terminal window for the install — works by double-click
+# Try to open a terminal window for the install - works by double-click
 if [ -t 1 ]; then
     # Already running in a terminal
     install_tuxgenie
 else
-    # Launched from file manager — open a terminal window
+    # Launched from file manager - open a terminal window
     SELF="$(realpath "$0")"
     for term in gnome-terminal x-terminal-emulator xterm konsole xfce4-terminal mate-terminal lxterminal; do
         if command -v "$term" &>/dev/null; then
