@@ -265,7 +265,7 @@ Priority: optional
 Architecture: {ARCH}
 Installed-Size: {INSTALLED_KB}
 Depends: python3 (>= 3.8)
-Recommends: python3-pip
+Recommends: python3-pip, xterm | gnome-terminal | konsole | xfce4-terminal | mate-terminal | lxterminal | ptyxis
 Conflicts: ai-terminal, tuxgenie (<< {VERSION})
 Replaces: ai-terminal, tuxgenie (<< {VERSION})
 Provides: ai-terminal
@@ -358,31 +358,75 @@ case "$1" in
         echo "  Note: anthropic SDK will be installed on first run of tuxgenie." >&2
     fi
 
-    # Ensure tuxgenie-gui launcher exists (older .debs may not have shipped it)
-    if [ ! -x /usr/bin/tuxgenie-gui ]; then
-        cat > /usr/bin/tuxgenie-gui << 'GUISCRIPT'
+    # Always (re)write tuxgenie-gui launcher to keep the terminal-detection
+    # logic in sync with create_deb.py. This is the same script that ships
+    # in /usr/bin/tuxgenie-gui via data.tar.gz; we re-create it on every
+    # install/upgrade so older systems get the latest fixes.
+    cat > /usr/bin/tuxgenie-gui << 'GUISCRIPT'
 #!/bin/bash
-CMD='tuxgenie; read -rp "Press Enter to close..." _'
+# Note: we intentionally avoid x-terminal-emulator (can resolve to Warp on Ubuntu 26.04+).
+CMD='tuxgenie; echo; read -rp "Press Enter to close..." _'
+try_term() {
+    case "$1" in
+        ptyxis)          exec ptyxis -- bash -c "$CMD" ;;
+        gnome-terminal)  exec gnome-terminal -- bash -c "$CMD" ;;
+        konsole)         exec konsole --hold -e bash -c "$CMD" ;;
+        xfce4-terminal)  exec xfce4-terminal --hold --command="bash -c '$CMD'" ;;
+        mate-terminal)   exec mate-terminal -- bash -c "$CMD" ;;
+        lxterminal)      exec lxterminal -e bash -c "$CMD" ;;
+        tilix)           exec tilix -e bash -c "$CMD" ;;
+        terminator)      exec terminator -e "bash -c '$CMD'" ;;
+        alacritty)       exec alacritty -e bash -c "$CMD" ;;
+        kitty)           exec kitty bash -c "$CMD" ;;
+        wezterm)         exec wezterm start --always-new-process bash -c "$CMD" ;;
+        foot)            exec foot bash -c "$CMD" ;;
+        st)              exec st -e bash -c "$CMD" ;;
+        urxvt)           exec urxvt -e bash -c "$CMD" ;;
+        xterm)           exec xterm -e bash -c "$CMD" ;;
+    esac
+}
+for T in ptyxis gnome-terminal konsole xfce4-terminal mate-terminal lxterminal \
+         tilix terminator alacritty kitty wezterm foot st urxvt xterm; do
+    command -v "$T" >/dev/null 2>&1 && try_term "$T"
+done
 command -v xdg-terminal-exec >/dev/null 2>&1 && exec xdg-terminal-exec bash -c "$CMD"
-command -v gnome-terminal    >/dev/null 2>&1 && exec gnome-terminal -- bash -c "$CMD"
-command -v ptyxis            >/dev/null 2>&1 && exec ptyxis -- bash -c "$CMD"
-command -v konsole           >/dev/null 2>&1 && exec konsole --noclose -e bash -c "$CMD"
-command -v xfce4-terminal    >/dev/null 2>&1 && exec xfce4-terminal --hold -e "bash -c '$CMD'"
-command -v mate-terminal     >/dev/null 2>&1 && exec mate-terminal -e "bash -c '$CMD'"
-command -v tilix             >/dev/null 2>&1 && exec tilix -e "bash -c '$CMD'"
-command -v alacritty         >/dev/null 2>&1 && exec alacritty -e bash -c "$CMD"
-command -v kitty             >/dev/null 2>&1 && exec kitty bash -c "$CMD"
-command -v x-terminal-emulator >/dev/null 2>&1 && exec x-terminal-emulator -e "bash -c '$CMD'"
-command -v xterm             >/dev/null 2>&1 && exec xterm -e "bash -c '$CMD'"
-command -v notify-send       >/dev/null 2>&1 && notify-send "TuxGenie" "Cannot find a terminal. Open a terminal and type: tuxgenie" --icon=tuxgenie
+command -v notify-send >/dev/null 2>&1 && notify-send "TuxGenie" "No supported terminal found. Install one with: sudo apt install xterm" --icon=tuxgenie
 exit 1
 GUISCRIPT
-        chmod +x /usr/bin/tuxgenie-gui
-    fi
+    chmod +x /usr/bin/tuxgenie-gui
 
-    # Point the desktop entry at the robust launcher (fixes Terminal=true problem)
-    sed -i 's|^Exec=.*|Exec=/usr/bin/tuxgenie-gui|' /usr/share/applications/tuxgenie.desktop 2>/dev/null || true
-    sed -i 's|^Terminal=true|Terminal=false|'        /usr/share/applications/tuxgenie.desktop 2>/dev/null || true
+    # Make sure the .desktop file exists and points at our robust launcher.
+    # Recreate it from scratch so older installs that lost or never had it
+    # are fixed on this upgrade.
+    cat > /usr/share/applications/tuxgenie.desktop << 'DESKTOPENTRY'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=TuxGenie
+GenericName=AI Linux Assistant
+Comment=AI-powered Linux assistant using Claude - fix any Linux problem in plain English
+Icon=tuxgenie
+TryExec=tuxgenie
+Exec=/usr/bin/tuxgenie-gui
+Terminal=false
+Categories=System;Administration;Utility;
+Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
+StartupNotify=false
+DESKTOPENTRY
+    chmod 644 /usr/share/applications/tuxgenie.desktop
+
+    # If no real terminal is installed, install xterm so the icon click works
+    if ! command -v ptyxis >/dev/null 2>&1 \
+       && ! command -v gnome-terminal >/dev/null 2>&1 \
+       && ! command -v konsole >/dev/null 2>&1 \
+       && ! command -v xfce4-terminal >/dev/null 2>&1 \
+       && ! command -v mate-terminal >/dev/null 2>&1 \
+       && ! command -v lxterminal >/dev/null 2>&1 \
+       && ! command -v xterm >/dev/null 2>&1 \
+       && command -v apt-get >/dev/null 2>&1; then
+        echo "  Installing xterm so the TuxGenie app icon works..." >&2
+        apt-get install -y xterm >/dev/null 2>&1 || true
+    fi
 
     # Register icons with the desktop environment
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
@@ -428,63 +472,50 @@ exit 0
 # This is more reliable than Terminal=true which depends on x-terminal-emulator being set.
 LAUNCHER_GUI = b"""\
 #!/bin/bash
-# TuxGenie GUI launcher - opens tuxgenie in the best available terminal emulator.
-CMD='tuxgenie; read -rp "Press Enter to close..." _'
+# TuxGenie GUI launcher - opens tuxgenie in a real terminal emulator.
+# Note: we intentionally avoid x-terminal-emulator because on Ubuntu 26.04+
+# it can resolve to Warp Terminal, which doesn't accept the standard -e flag.
+CMD='tuxgenie; echo; read -rp "Press Enter to close..." _'
 
-# xdg-terminal-exec: the modern standard on Ubuntu 24.04+ / GNOME 47+
+# Try each known-good terminal in order. Each branch uses the correct CLI
+# syntax for that terminal (some need --, others -e, others nothing).
+try_term() {
+    case "$1" in
+        ptyxis)          exec ptyxis -- bash -c "$CMD" ;;
+        gnome-terminal)  exec gnome-terminal -- bash -c "$CMD" ;;
+        konsole)         exec konsole --hold -e bash -c "$CMD" ;;
+        xfce4-terminal)  exec xfce4-terminal --hold --command="bash -c '$CMD'" ;;
+        mate-terminal)   exec mate-terminal -- bash -c "$CMD" ;;
+        lxterminal)      exec lxterminal -e bash -c "$CMD" ;;
+        tilix)           exec tilix -e bash -c "$CMD" ;;
+        terminator)      exec terminator -e "bash -c '$CMD'" ;;
+        alacritty)       exec alacritty -e bash -c "$CMD" ;;
+        kitty)           exec kitty bash -c "$CMD" ;;
+        wezterm)         exec wezterm start --always-new-process bash -c "$CMD" ;;
+        foot)            exec foot bash -c "$CMD" ;;
+        st)              exec st -e bash -c "$CMD" ;;
+        urxvt)           exec urxvt -e bash -c "$CMD" ;;
+        xterm)           exec xterm -e bash -c "$CMD" ;;
+    esac
+}
+
+# Try terminals in this order (real, well-known ones first; xterm last as universal fallback)
+for T in ptyxis gnome-terminal konsole xfce4-terminal mate-terminal lxterminal \
+         tilix terminator alacritty kitty wezterm foot st urxvt xterm; do
+    if command -v "$T" >/dev/null 2>&1; then
+        try_term "$T"
+    fi
+done
+
+# Try xdg-terminal-exec last (Ubuntu 24.04+ standard but unreliable on some
+# systems where it points to Warp or a misconfigured terminal).
 if command -v xdg-terminal-exec >/dev/null 2>&1; then
     exec xdg-terminal-exec bash -c "$CMD"
 fi
 
-# gnome-terminal and ptyxis (Ubuntu 24.10+) use -- separator
-if command -v gnome-terminal >/dev/null 2>&1; then
-    exec gnome-terminal -- bash -c "$CMD"
-fi
-if command -v ptyxis >/dev/null 2>&1; then
-    exec ptyxis -- bash -c "$CMD"
-fi
-
-# Detect from running desktop session (catches flatpak/snap terminals)
-SESSION_TERM=""
-if [ -n "$GNOME_TERMINAL_SCREEN" ] || [ -n "$VTE_VERSION" ]; then
-    SESSION_TERM="gnome-terminal"
-fi
-
-# KDE / other desktops
-if command -v konsole >/dev/null 2>&1; then
-    exec konsole --noclose -e bash -c "$CMD"
-fi
-if command -v xfce4-terminal >/dev/null 2>&1; then
-    exec xfce4-terminal --hold -e "bash -c '$CMD'"
-fi
-
-# Other common terminals
-for TERM in mate-terminal lxterminal tilix alacritty kitty wezterm foot; do
-    if command -v "$TERM" >/dev/null 2>&1; then
-        exec "$TERM" -e "bash -c '$CMD'"
-    fi
-done
-
-# x-terminal-emulator: Debian alternatives system
-if command -v x-terminal-emulator >/dev/null 2>&1; then
-    exec x-terminal-emulator -e "bash -c '$CMD'"
-fi
-
-# Last resort: xterm (installable on any X11 system)
-if command -v xterm >/dev/null 2>&1; then
-    exec xterm -e "bash -c '$CMD'"
-fi
-
-# Install xterm if we have apt and nothing else worked
-if command -v apt-get >/dev/null 2>&1; then
-    if command -v notify-send >/dev/null 2>&1; then
-        notify-send "TuxGenie" "Installing xterm terminal emulator..." --icon=tuxgenie
-    fi
-    apt-get install -y xterm -qq 2>/dev/null && exec xterm -e "bash -c '$CMD'"
-fi
-
+# Nothing worked. Tell the user via desktop notification.
 if command -v notify-send >/dev/null 2>&1; then
-    notify-send "TuxGenie" "Cannot find a terminal. Open a terminal and type: tuxgenie" --icon=tuxgenie
+    notify-send "TuxGenie" "No supported terminal found. Install one with: sudo apt install xterm  -- then click TuxGenie again." --icon=tuxgenie
 fi
 exit 1
 """
