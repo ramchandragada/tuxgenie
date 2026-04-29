@@ -8,7 +8,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-TuxGenie v4.7 — Your wish is my command 🐧
+TuxGenie — Your wish is my command 🐧
 AI-powered Linux assistant · Powered by Claude · Free forever
 www.tuxgenie.com
 
@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.65.0"
+__version__ = "5.66.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -132,6 +132,9 @@ def _init_light_theme():
     colours — this fills the ENTIRE terminal viewport, not just the cells
     where TuxGenie writes characters. Per-cell `_LBG`/`_LFG` is also written
     as a fallback for terminals that don't honour OSC."""
+    # Skip if stdout isn't a TTY — escape codes pollute pipes / files / log capture.
+    if not sys.stdout.isatty():
+        return
     # OSC 11 = default background, 10 = default foreground, 12 = cursor
     sys.stdout.write("\033]11;#f8f9fc\033\\")
     sys.stdout.write("\033]10;#14192e\033\\")
@@ -622,7 +625,7 @@ def feat_set_api_key(backend):
     if not key:
         warn("No key entered. Nothing changed.")
         return
-    if not key.startswith("sk-ant-") or len(key) < 20:
+    if not re.match(r'^sk-ant-[a-zA-Z0-9_\-]{60,}$', key):
         warn("That doesn't look like a valid Anthropic API key.")
         info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
         try:
@@ -667,7 +670,7 @@ def feat_settings(backend, bctx, slog):
         except (EOFError, KeyboardInterrupt):
             return
         if key:
-            if not key.startswith("sk-ant-") or len(key) < 20:
+            if not re.match(r'^sk-ant-[a-zA-Z0-9_\-]{60,}$', key):
                 warn("That doesn't look like a valid Anthropic key (should start with sk-ant-…).")
                 try:
                     confirm = input("  Save anyway? [y/n]: ").strip().lower()
@@ -1434,15 +1437,26 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 content[-1] = {**content[-1], "cache_control": {"type": "ephemeral"}}
             last["content"] = content
             msgs[-1] = last
-        return backend.client.messages.create(
-            model        = _OPUS_MODEL,
-            max_tokens   = 16000,
-            thinking     = {"type": "adaptive"},
-            output_config= {"effort": "xhigh"},
-            system       = system_blocks,
-            tools        = tools,
-            messages     = msgs,
-        )
+        # Some Anthropic SDK versions don't accept thinking/output_config kwargs.
+        # Try the rich call first, fall back to a basic create() if the SDK rejects them.
+        try:
+            return backend.client.messages.create(
+                model        = _OPUS_MODEL,
+                max_tokens   = 16000,
+                thinking     = {"type": "adaptive"},
+                output_config= {"effort": "xhigh"},
+                system       = system_blocks,
+                tools        = tools,
+                messages     = msgs,
+            )
+        except TypeError:
+            return backend.client.messages.create(
+                model        = _OPUS_MODEL,
+                max_tokens   = 16000,
+                system       = system_blocks,
+                tools        = tools,
+                messages     = msgs,
+            )
 
     try:
         for turn in range(max_turns):
@@ -1674,10 +1688,6 @@ _PASSTHROUGH = [
     (re.compile(r"^\s*sudo\s+poweroff\s*$"),
      "dangerous", "Power off the system"),
 ]
-
-# Session flag: once user presses 'a', all future safe/moderate passthrough
-# commands run without asking. Dangerous commands always ask regardless.
-_passthrough_auto = False
 
 # Commands whose first word is an interactive full-screen app — don't run
 # inside TuxGenie's output stream, just inform the user.
@@ -1926,7 +1936,8 @@ def _run_dist_upgrade():
     print(f"  {DIM}Follow the prompts in the upgrade TUI. TuxGenie resumes when it's done.{R}\n")
 
     # os.system() runs in the same terminal session — do-release-upgrade gets a real TTY
-    rc = os.system("sudo do-release-upgrade -d")
+    # Plain do-release-upgrade only — never -d (would move LTS users to a dev release).
+    rc = os.system("sudo do-release-upgrade")
 
     print()
     if rc == 0:
@@ -2865,7 +2876,6 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
 
         step_outputs = []
         aborted      = False
-        yes_to_all   = False
 
         for i, step in enumerate(steps, 1):
             step_failed       = False
@@ -2922,6 +2932,8 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
             expects_output = False
             empty_output = False
             downloaded_html = False
+            output_has_errors = False
+            exit1_is_ok = False
 
             if is_gui_cmd(cmd):
                 # Launch GUI apps silently in background — never flood the terminal
@@ -2939,22 +2951,38 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 rc, stdout, stderr = run_cmd_live(cmd, sudo_password=sudo_pw)
 
                 # ── Smart success detection ──
-                # Check output for failure patterns even when rc == 0
-                combined_out = (stdout + "\n" + stderr).lower()
-                _FAIL_PATTERNS = [
-                    "error:", "failed", "not found", "no such file",
-                    "permission denied", "unable to locate",
-                    "could not resolve", "404 not found", "403 forbidden",
-                    "connection refused", "E: ", "dpkg: error",
-                    "is not installed", "no candidates",
+                # Check output for failure patterns even when rc == 0.
+                # Patterns are anchored to start-of-line (or after whitespace) so
+                # they don't fire on package descriptions like "firefox/jammy ..."
+                # or on legitimate uses of "is not installed" inside a verification.
+                combined_out = (stdout + "\n" + stderr)
+                _FAIL_RES = [
+                    re.compile(r'(?im)^\s*(?:error|fatal):'),
+                    re.compile(r'(?im)^\s*E:\s'),
+                    re.compile(r'(?im)^\s*dpkg:\s+error'),
+                    re.compile(r'(?im)^\s*\S+:\s+command not found'),
+                    re.compile(r'(?im)^\s*permission denied'),
+                    re.compile(r'(?im)^\s*unable to locate package'),
+                    re.compile(r'(?im)^\s*could not resolve host'),
+                    re.compile(r'(?im)\b404 not found\b'),
+                    re.compile(r'(?im)\b403 forbidden\b'),
+                    re.compile(r'(?im)connection refused'),
+                    re.compile(r'(?im)^\s*no such file or directory'),
+                    re.compile(r'(?im)^\s*failed to fetch'),
                 ]
                 # ── Don't error-check echo payloads in fallback commands ──
                 # e.g. `which foo || echo 'foo is not installed'` — the echo is
                 # intentional confirmation output, not an actual error.
+                # Also: dpkg -s / systemctl is-active routinely print "not installed"
+                # / "inactive" as legitimate result strings, not failures.
+                _result_string_cmds = ("dpkg -s", "dpkg-query", "systemctl is-active",
+                                       "systemctl is-enabled", "snap info")
                 if "|| echo" in cmd and rc == 0:
                     output_has_errors = False
+                elif any(cmd.strip().startswith(c) for c in _result_string_cmds) and rc in (0, 1, 3):
+                    output_has_errors = False
                 else:
-                    output_has_errors = any(p.lower() in combined_out for p in _FAIL_PATTERNS)
+                    output_has_errors = any(r.search(combined_out) for r in _FAIL_RES)
 
                 # ── Empty output detection ──
                 # Commands that produce no output when output was expected
@@ -3013,12 +3041,6 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     print(C(f"  ✗ Exit {rc}", RED))
                     warn("This step had an issue. The AI will look at this and try to fix it.")
                     step_failed = True
-
-                # ── Auto-mode circuit breaker ──
-                # If a step fails, stop auto-running — re-plan is needed
-                if step_failed and yes_to_all:
-                    yes_to_all = False
-                    warn("Auto-mode paused — a step failed. Remaining steps need review.")
 
             step_ok = (exit1_is_ok or (rc == 0 and not output_has_errors
                        and not (expects_output and empty_output)
@@ -3743,6 +3765,37 @@ BACKUP_PATHS = [
 
 def feat_backup(backend, bctx, slog):
     hdr("Config Backup — Snapshot your configs")
+
+    # Many BACKUP_PATHS (e.g. /etc/ssh, /etc/sudoers.d) require root to read.
+    # Without sudo we'd silently skip everything and leave the user with an
+    # almost-empty tarball that looks like a successful backup. Re-exec under
+    # sudo so the snapshot is actually useful.
+    if os.geteuid() != 0:
+        try:
+            warn("Most config files in /etc require root to read.")
+            ans = input(f"  {BOLD}Re-run backup with sudo for a complete snapshot?{R} [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if ans in ("", "y", "yes"):
+            try:
+                sudo_pw = get_or_cache_sudo_password()
+            except KeyboardInterrupt:
+                return
+            if sudo_pw:
+                # Hand off to a sudo'd python that runs the same feature directly.
+                cmd = [
+                    "sudo", "-S", "-p", "",
+                    sys.executable, os.path.abspath(sys.argv[0]),
+                    "--feature", "backup",
+                ]
+                try:
+                    subprocess.run(cmd, input=sudo_pw + "\n", text=True)
+                except Exception as e:
+                    err(f"Sudo re-exec failed: {e}")
+                return
+        warn("Continuing without sudo — protected paths will be skipped.")
+
     ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     # List existing backups
@@ -4391,7 +4444,13 @@ def _try_silent_update(deb_url, deb_name, latest) -> bool:
     fd, tmp_deb = tempfile.mkstemp(suffix=".deb", prefix="tuxgenie_upd_")
     os.close(fd)
     try:
-        urllib.request.urlretrieve(deb_url, tmp_deb)
+        # Use urlopen with timeout — urlretrieve() can hang forever
+        with urllib.request.urlopen(deb_url, timeout=60) as resp, open(tmp_deb, "wb") as out:
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                out.write(chunk)
     except Exception:
         try: os.unlink(tmp_deb)
         except OSError: pass
@@ -4446,12 +4505,23 @@ def _do_update_install(deb_url, deb_name, latest):
     os.close(fd)
     print(f"\n  {CYAN}▶ Downloading v{latest}…{R}", flush=True)
     try:
-        def _progress(count, block, total):
-            if total > 0:
-                pct = min(100, int(count * block * 100 / total))
-                bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
-                print(f"\r  {CYAN}{bar}{R} {pct}%", end="", flush=True)
-        urllib.request.urlretrieve(deb_url, tmp_deb, _progress)
+        # Use urlopen with timeout — urlretrieve() can hang forever
+        with urllib.request.urlopen(deb_url, timeout=60) as resp, open(tmp_deb, "wb") as out:
+            total = int(resp.headers.get("Content-Length", 0) or 0)
+            done = 0
+            last_pct = -1
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                out.write(chunk)
+                done += len(chunk)
+                if total > 0:
+                    pct = min(100, int(done * 100 / total))
+                    if pct != last_pct:
+                        bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+                        print(f"\r  {CYAN}{bar}{R} {pct}%", end="", flush=True)
+                        last_pct = pct
         print()
     except Exception as e:
         try: os.unlink(tmp_deb)
@@ -4814,6 +4884,22 @@ def _crash_guard():
         print(f"  No backup found at {PREV_VER_BAK}.")
         print(f"  Run:  tuxgenie-update   to reinstall the latest version.")
         sys.exit(1)
+
+    # Verify the backup actually compiles before clobbering the current install
+    # — otherwise we trade a crashing version for a syntactically-broken one.
+    try:
+        py_compile_check = subprocess.run(
+            [sys.executable, "-m", "py_compile", PREV_VER_BAK],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        if py_compile_check.returncode != 0:
+            print(f"  Backup at {PREV_VER_BAK} has syntax errors — refusing to roll back.")
+            print(f"  Run:  tuxgenie-update   to reinstall the latest version.")
+            sys.exit(1)
+    except Exception:
+        # If the compile check itself fails, fall through to the rollback —
+        # corrupted python install is its own problem.
+        pass
 
     # Try sudo -n (cached credentials)
     probe = subprocess.run(["sudo", "-n", "true"],
@@ -5288,7 +5374,7 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
         confirm = input(f"\n  {BOLD}Proceed?{R} [y/n]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         return
-    if confirm not in ("y", "yes", ""):
+    if confirm not in ("y", "yes"):
         info("Cancelled — nothing was installed.")
         return
 
@@ -5445,7 +5531,7 @@ def _monitor_daemon():
             pass
 
 
-def feat_monitor():
+def feat_monitor(*_args, **_kwargs):
     """Install / manage the TuxGenie background error monitor (systemd user service)."""
     hdr("Error Monitor — background daemon")
 
@@ -5545,7 +5631,7 @@ WantedBy=default.target
         os.system(f"journalctl --user -u {_MONITOR_SERVICE} -n 30 --no-pager 2>/dev/null")
 
 
-def feat_shell_integration():
+def feat_shell_integration(*_args, **_kwargs):
     """Install the tg() shell function into .bashrc / .zshrc.
     After installation users can type  tg!!  after any failed command
     in any terminal to invoke TuxGenie — command: i"""
@@ -5777,7 +5863,7 @@ def show_help():
       {BLUE}{BOLD}how much disk space do I have{R}
       {BLUE}{BOLD}update everything{R}
 
-  {GREEN}{BOLD}Or pick a number:{R}  Type 1-29, or 77 for Apps, 99 for AI Tools
+  {GREEN}{BOLD}Or pick a number:{R}  Type 1-30, or 77 for Apps, 99 for AI Tools
 
   {GREEN}{BOLD}Safety:{R}
     {GREEN}{BOLD}✓{R} Every command is shown before it runs
@@ -5872,7 +5958,11 @@ def first_run_check():
     except Exception:
         pass
 
+_active_feature = "startup"
+
+
 def main():
+    global _active_feature
     _crash_guard()   # increment crash counter; rolls back if 3 consecutive crashes
     parser = argparse.ArgumentParser(
         prog="tuxgenie",
@@ -6066,7 +6156,6 @@ def main():
     save_session(session_log)
 
 if __name__ == "__main__":
-    _active_feature = "startup"
     try:
         main()
     except SystemExit:

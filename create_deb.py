@@ -337,17 +337,20 @@ case "$1" in
 
     # Strategy 4: create a venv with its own pip, install there, copy to system
     if [ "$SDK_OK" -eq 0 ]; then
-        VENV_DIR="/tmp/.tuxgenie-bootstrap-venv"
-        rm -rf "$VENV_DIR" 2>/dev/null || true
-        apt-get install -y python3-venv >/dev/null 2>&1 || true
-        if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
-            "$VENV_DIR/bin/pip" install anthropic --quiet 2>/dev/null || true
-            # Copy installed packages to the system site-packages
-            SITE=$("$VENV_DIR/bin/python3" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
-            SYS_SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
-            if [ -n "$SITE" ] && [ -n "$SYS_SITE" ] && [ -d "$SITE" ]; then
-                cp -rn "$SITE"/* "$SYS_SITE/" 2>/dev/null || true
-                SDK_OK=1
+        # Use mktemp -d for an unpredictable path - avoids TOCTOU symlink attacks
+        # on the well-known /tmp/.tuxgenie-bootstrap-venv that previous versions used.
+        VENV_DIR=$(mktemp -d /tmp/tuxgenie-bootstrap-XXXXXX 2>/dev/null) || VENV_DIR=""
+        if [ -n "$VENV_DIR" ]; then
+            apt-get install -y python3-venv >/dev/null 2>&1 || true
+            if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
+                "$VENV_DIR/bin/pip" install anthropic --quiet 2>/dev/null || true
+                # Copy installed packages to the system site-packages
+                SITE=$("$VENV_DIR/bin/python3" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+                SYS_SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+                if [ -n "$SITE" ] && [ -n "$SYS_SITE" ] && [ -d "$SITE" ]; then
+                    cp -rn "$SITE"/* "$SYS_SITE/" 2>/dev/null || true
+                    SDK_OK=1
+                fi
             fi
             rm -rf "$VENV_DIR" 2>/dev/null || true
         fi
@@ -785,18 +788,23 @@ install_tuxgenie() {{
     read -p "  Press Enter to close..."
 }}
 
-# Try to open a terminal window for the install - works by double-click
+# Try to open a terminal window for the install - works by double-click.
+# Note: we deliberately avoid x-terminal-emulator because on Ubuntu 26.04+
+# it can resolve to Warp Terminal which doesn't accept the standard -e flag.
 if [ -t 1 ]; then
     # Already running in a terminal
     install_tuxgenie
 else
-    # Launched from file manager - open a terminal window
+    # Launched from file manager - open a terminal window with the right syntax per terminal
     SELF="$(realpath "$0")"
-    for term in gnome-terminal x-terminal-emulator xterm konsole xfce4-terminal mate-terminal lxterminal; do
-        if command -v "$term" &>/dev/null; then
+    for term in ptyxis gnome-terminal konsole xfce4-terminal mate-terminal lxterminal tilix alacritty kitty foot xterm; do
+        if command -v "$term" >/dev/null 2>&1; then
             case "$term" in
-                gnome-terminal) gnome-terminal -- bash "$SELF" --in-terminal ;;
-                *)              "$term" -e "bash '$SELF' --in-terminal" ;;
+                ptyxis|gnome-terminal|mate-terminal) "$term" -- bash "$SELF" --in-terminal ;;
+                konsole)                              konsole --hold -e bash "$SELF" --in-terminal ;;
+                xfce4-terminal)                       xfce4-terminal --hold --command="bash '$SELF' --in-terminal" ;;
+                kitty)                                kitty bash "$SELF" --in-terminal ;;
+                foot|alacritty|tilix|lxterminal|xterm) "$term" -e bash "$SELF" --in-terminal ;;
             esac
             exit 0
         fi
