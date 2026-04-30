@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.67.0"
+__version__ = "5.68.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1321,11 +1321,24 @@ def _handle_tool_call(block, sudo_pw, step_counter):
         if requires_root and not cmd.strip().startswith("sudo"):
             actual_cmd = f"sudo {cmd}"
 
+        # Heavy package-manager / release-upgrade commands need a much longer
+        # timeout than the default — apt upgrade routinely takes 10-60 minutes.
+        # Without this Claude's tool-call would be SIGKILLed at 120s.
+        _HEAVY_RE = re.compile(
+            r'^\s*(?:sudo\s+)?'
+            r'(?:apt(?:-get)?|dnf|yum|pacman|zypper|snap|flatpak)'
+            r'(?:\s+-{1,2}[A-Za-z0-9-]+)*'
+            r'\s+(?:upgrade|full-upgrade|dist-upgrade|install|reinstall|remove|autoremove|'
+            r'purge|update|refresh|-S\b|-Syu\b|system-upgrade|do-release-upgrade)',
+            re.IGNORECASE)
+        _RELEASE_RE = re.compile(r'^\s*(?:sudo\s+)?do-release-upgrade\b', re.IGNORECASE)
+        tool_timeout = 3600 if (_HEAVY_RE.search(actual_cmd) or _RELEASE_RE.search(actual_cmd)) else 300
+
         print(f"  {DIM}▶ Running…{R}")
         rc, stdout, stderr = run_cmd_live(
             actual_cmd,
             sudo_password=sudo_pw if requires_root else None,
-            timeout=120
+            timeout=tool_timeout
         )
         output = (stdout or "") + (stderr or "")
         output = output.strip() or "(no output)"
@@ -1527,6 +1540,14 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
 
                 messages.append({"role": "user", "content": tool_results})
                 continue
+
+            # Any other stop_reason (max_tokens, stop_sequence, refusal, …):
+            # don't keep looping with the same prompt. Bail out with a useful
+            # message so the user knows why we stopped.
+            print(f"\n  {YELLOW}AI stopped: {response.stop_reason}.{R}")
+            if response.stop_reason == "max_tokens":
+                print(f"  {DIM}Response was cut off mid-stream. Try rephrasing your request more concisely.{R}")
+            return
 
         print(f"\n  {YELLOW}Reached {max_turns} steps without completing. "
               f"The problem may need manual investigation.{R}")
@@ -3766,6 +3787,19 @@ BACKUP_PATHS = [
 def feat_backup(backend, bctx, slog):
     hdr("Config Backup — Snapshot your configs")
 
+    # When running as root via sudo re-exec, save the backup to the original
+    # user's home, not /root/. SUDO_USER is set by sudo to the invoking user.
+    backup_dir = BACKUPS_DIR
+    if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+        try:
+            import pwd
+            sudo_user = os.environ["SUDO_USER"]
+            user_home = pwd.getpwnam(sudo_user).pw_dir
+            backup_dir = os.path.join(user_home, ".config", "tuxgenie", "data", "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+        except Exception:
+            backup_dir = BACKUPS_DIR  # fall back to root's home if SUDO_USER lookup fails
+
     # Many BACKUP_PATHS (e.g. /etc/ssh, /etc/sudoers.d) require root to read.
     # Without sudo we'd silently skip everything and leave the user with an
     # almost-empty tarball that looks like a successful backup. Re-exec under
@@ -3784,9 +3818,13 @@ def feat_backup(backend, bctx, slog):
                 return
             if sudo_pw:
                 # Hand off to a sudo'd python that runs the same feature directly.
+                # Use sys.executable + actual .py file so this works under both .deb
+                # and pip installs (sys.argv[0] under pip is an entry-point script,
+                # not the Python source file).
+                py_file = os.path.abspath(__file__)
                 cmd = [
                     "sudo", "-S", "-p", "",
-                    sys.executable, os.path.abspath(sys.argv[0]),
+                    sys.executable, py_file,
                     "--feature", "backup",
                 ]
                 try:
@@ -3799,18 +3837,21 @@ def feat_backup(backend, bctx, slog):
     ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
     # List existing backups
-    existing = sorted([
-        f for f in os.listdir(BACKUPS_DIR) if f.endswith(".tar.gz")
-    ], reverse=True)
+    try:
+        existing = sorted([
+            f for f in os.listdir(backup_dir) if f.endswith(".tar.gz")
+        ], reverse=True)
+    except FileNotFoundError:
+        existing = []
     if existing:
         section("Existing backups")
         for b in existing[:5]:
-            path = os.path.join(BACKUPS_DIR, b)
+            path = os.path.join(backup_dir, b)
             size = os.path.getsize(path)
             info(f"{b}  ({size//1024} KB)")
 
     section("Creating new backup")
-    archive = os.path.join(BACKUPS_DIR, f"tuxgenie_backup_{ts}.tar.gz")
+    archive = os.path.join(backup_dir, f"tuxgenie_backup_{ts}.tar.gz")
     backed  = []
     skipped = []
 
@@ -3826,6 +3867,16 @@ def feat_backup(backend, bctx, slog):
                     skipped.append(f"{expanded} ({e})")
             else:
                 skipped.append(f"{expanded} (not found)")
+
+    # If we're running as root via sudo, chown the archive back to the
+    # original user so they can read/delete it from their normal session.
+    if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+        try:
+            import pwd
+            pw = pwd.getpwnam(os.environ["SUDO_USER"])
+            os.chown(archive, pw.pw_uid, pw.pw_gid)
+        except Exception:
+            pass
 
     size_kb = os.path.getsize(archive) // 1024
     ok(f"Backup saved: {archive}  ({size_kb} KB)")
