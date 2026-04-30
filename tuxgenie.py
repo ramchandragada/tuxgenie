@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.66.0"
+__version__ = "5.67.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4882,6 +4882,7 @@ def _crash_guard():
 
     if not os.path.exists(PREV_VER_BAK):
         print(f"  No backup found at {PREV_VER_BAK}.")
+        _crash_write({"version": __version__, "crashes": 0})   # prevent infinite loop
         print(f"  Run:  tuxgenie-update   to reinstall the latest version.")
         sys.exit(1)
 
@@ -4895,6 +4896,7 @@ def _crash_guard():
         if py_compile_check.returncode != 0:
             print(f"  Backup at {PREV_VER_BAK} has syntax errors — refusing to roll back.")
             print(f"  Run:  tuxgenie-update   to reinstall the latest version.")
+            _crash_write({"version": __version__, "crashes": 0})   # prevent infinite loop
             sys.exit(1)
     except Exception:
         # If the compile check itself fails, fall through to the rollback —
@@ -4915,7 +4917,11 @@ def _crash_guard():
             print(f"  ✓  Rolled back. Restarting TuxGenie…\n")
             os.execv(sys.executable, [sys.executable] + sys.argv)
 
-    # sudo not available — give the user the manual command
+    # sudo not available — give the user the manual command.
+    # Reset the crash counter so next run gets a clean start — otherwise
+    # the guard would fire again immediately and tuxgenie would be permanently
+    # locked out on machines without cached sudo credentials.
+    _crash_write({"version": __version__, "crashes": 0})
     print(f"  Could not auto-rollback (sudo credentials not cached).")
     print(f"  Run this to fix it:")
     print(f"\n    sudo cp {PREV_VER_BAK} {_SYSTEM_PY}\n")
