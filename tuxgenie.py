@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.69.0"
+__version__ = "5.70.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5353,6 +5353,7 @@ APP_CATALOG = [
     {"id": 17, "name": "Thunderbird",         "cat": "Office & Notes", "prompt": "Install Mozilla Thunderbird email client via apt on Debian/Ubuntu, dnf on Fedora, or flatpak from Flathub",                     "desc": "Full-featured email client"},
     {"id": 18, "name": "Obsidian",            "cat": "Office & Notes", "prompt": "Install Obsidian notes app — download the latest .deb from https://obsidian.md or use flatpak from Flathub",                   "desc": "Markdown notes / second brain"},
     {"id": 19, "name": "Joplin",              "cat": "Office & Notes", "prompt": "Install Joplin encrypted note-taking app using the official installer script from joplinapp.org",                               "desc": "Encrypted, cross-device note-taking"},
+    {"id": 64, "name": "Zoho Mail",           "cat": "Office & Notes", "prompt": "Install Zoho Mail on Linux. Zoho does not ship an official native Linux desktop app, so install it as a PWA / web app: detect the user's installed browser (prefer Brave or Chrome, then Vivaldi/Ulaa, then Firefox), use Chromium-based --app=https://mail.zoho.com to create a standalone window, and write a /usr/share/applications/zoho-mail.desktop launcher with the Zoho Mail icon (download from https://www.zoho.com/mail/img/favicon.ico if no icon is bundled) so it appears in the application menu. Skip cleanly if no supported browser is installed.", "desc": "Zoho's professional email — installed as a PWA"},
     # ── Media ────────────────────────────────────────────────────────────────
     {"id": 20, "name": "VLC Media Player",    "cat": "Media",          "prompt": "Install VLC media player",                                                                                                      "desc": "Plays virtually any video/audio format"},
     {"id": 21, "name": "MPV",                 "cat": "Media",          "prompt": "Install MPV media player",                                                                                                      "desc": "Lightweight scriptable video player"},
@@ -5494,7 +5495,7 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
 
 
 def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — 63-app catalog covering browsers, communication,
+    """Quick app installer — 64-app catalog covering browsers, communication,
     office, media, graphics, developer tools, system tools, files & sync,
     and utilities. Each entry maps to a natural-language install prompt;
     the agentic engine picks the right method (apt / snap / flatpak / vendor
@@ -5864,7 +5865,7 @@ MENU_ITEMS = [
     ("29", "ssh",       "SSH Setup",          "Set up & harden SSH securely",                   feat_ssh),
     ("30", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "63-app catalog (Brave, Signal, Obsidian, Blender…)", feat_install_apps),
+    ("77", "apps",      "Install Apps",       "64-app catalog (Brave, Signal, Obsidian, Blender, Zoho Mail…)", feat_install_apps),
     ("99", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
     ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
@@ -5931,7 +5932,7 @@ def show_menu():
     _item("30", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
-    _item("77", "Install Apps",        "🎁 63 apps: Brave, Signal, Obsidian, Blender, KeePassXC, Arattai…")
+    _item("77", "Install Apps",        "🎁 64 apps: Brave, Signal, Obsidian, Blender, KeePassXC, Arattai, Zoho Mail…")
     _item("99", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
 
     print(f"""
