@@ -319,9 +319,16 @@ case "$1" in
         _install_sdk && SDK_OK=1
     fi
 
+    # Compute version-specific venv package (e.g. python3.12-venv) - on minimal
+    # Debian/Ubuntu images this is sometimes the only resolvable name.
+    PY_VER=$(python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
+    PY_VENV_PKG="python${PY_VER}-venv"
+
     # Strategy 2: install python3-pip via apt
     if [ "$SDK_OK" -eq 0 ]; then
-        apt-get install -y python3-pip >/dev/null 2>&1 || true
+        apt-get install -y python3-pip >/dev/null 2>&1 \
+          || { apt-get update >/dev/null 2>&1; apt-get install -y python3-pip >/dev/null 2>&1; } \
+          || true
         if python3 -m pip --version >/dev/null 2>&1; then
             _install_sdk && SDK_OK=1
         fi
@@ -341,7 +348,13 @@ case "$1" in
         # on the well-known /tmp/.tuxgenie-bootstrap-venv that previous versions used.
         VENV_DIR=$(mktemp -d /tmp/tuxgenie-bootstrap-XXXXXX 2>/dev/null) || VENV_DIR=""
         if [ -n "$VENV_DIR" ]; then
-            apt-get install -y python3-venv >/dev/null 2>&1 || true
+            # Try the version-specific venv package first, then the meta-package.
+            # Refresh apt cache and retry once if both fail (common on minimal images).
+            apt-get install -y "$PY_VENV_PKG" >/dev/null 2>&1 \
+              || apt-get install -y python3-venv >/dev/null 2>&1 \
+              || { apt-get update >/dev/null 2>&1; \
+                   apt-get install -y "$PY_VENV_PKG" python3-venv >/dev/null 2>&1; } \
+              || true
             if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
                 "$VENV_DIR/bin/pip" install anthropic --quiet 2>/dev/null || true
                 # Copy installed packages to the system site-packages

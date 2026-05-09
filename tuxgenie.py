@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.68.0"
+__version__ = "5.69.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -296,6 +296,48 @@ def _can_import_anthropic():
     except ImportError:
         return False
 
+def _apt_install(packages, label=None):
+    """Install the first package in `packages` that apt accepts.
+    Output is shown (not captured) so the user sees progress and any errors.
+    If every attempt fails, runs `apt-get update` once and retries.
+    Returns True if any package installed cleanly."""
+    if label:
+        print(f"  {DIM}Installing {label} (sudo may prompt for password)…{R}")
+    def _try(pkgs):
+        for pkg in pkgs:
+            try:
+                rc = subprocess.run(
+                    ["sudo", "apt-get", "install", "-y", "-q", pkg],
+                    timeout=300,
+                ).returncode
+                if rc == 0:
+                    return True
+            except Exception:
+                continue
+        return False
+    if _try(packages):
+        return True
+    print(f"  {DIM}Refreshing apt package index…{R}")
+    try:
+        subprocess.run(["sudo", "apt-get", "update", "-q"], timeout=180)
+    except Exception:
+        pass
+    return _try(packages)
+
+def _venv_can_create():
+    """Check whether `python3 -m venv` can actually create a venv with pip on
+    this system. Returns True only if a throwaway venv builds cleanly."""
+    import tempfile
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            r = subprocess.run(
+                [sys.executable, "-m", "venv", os.path.join(td, "probe")],
+                capture_output=True, timeout=60,
+            )
+            return r.returncode == 0
+    except Exception:
+        return False
+
 def _bootstrap_anthropic_sdk():
     """Install the anthropic SDK using every strategy available.
     Tries: existing pip → --user install → apt install pip → ensurepip → venv fallback.
@@ -312,8 +354,7 @@ def _bootstrap_anthropic_sdk():
 
     # Strategy 2: install python3-pip via apt, then retry
     print(f"  {DIM}pip not found — installing python3-pip…{R}")
-    subprocess.run(["sudo", "apt-get", "install", "-y", "python3-pip"],
-                   capture_output=True)
+    _apt_install(["python3-pip"])
     if _try_pip_install() and _can_import_anthropic():
         return True
 
@@ -328,17 +369,18 @@ def _bootstrap_anthropic_sdk():
         pass
 
     # Strategy 4: create a temporary venv (has its own pip), install there,
-    # then add the venv's site-packages to sys.path so we can import
+    # then add the venv's site-packages to sys.path so we can import.
     print(f"  {DIM}Trying venv fallback…{R}")
+    # On Debian/Ubuntu, ensurepip is split into a separate package. The
+    # version-specific name (python3.12-venv) is sometimes the only one apt can
+    # resolve on minimal images, so try both.
+    py_ver_pkg = f"python{sys.version_info.major}.{sys.version_info.minor}-venv"
+    if not _venv_can_create():
+        _apt_install([py_ver_pkg, "python3-venv"], label="python3-venv")
+
     import importlib
     venv_dir = os.path.join(os.path.expanduser("~"), ".local", "share",
                             "tuxgenie", ".bootstrap-venv")
-    try:
-        # Ensure python3-venv is available
-        subprocess.run(["sudo", "apt-get", "install", "-y", "python3-venv"],
-                       capture_output=True, timeout=120)
-    except Exception:
-        pass
     try:
         import venv as _venv_mod
         _venv_mod.create(venv_dir, with_pip=True, clear=True)
@@ -387,11 +429,13 @@ class AnthropicBackend:
         global _anthropic
         if _anthropic is None:
             if not _bootstrap_anthropic_sdk():
+                py_ver_pkg = f"python{sys.version_info.major}.{sys.version_info.minor}-venv"
                 print(f"\n  {RED}{BOLD}Could not install the anthropic SDK.{R}")
                 print(f"  TuxGenie will try to fix this automatically…\n")
-                print(f"  {CYAN}Running: sudo apt install -y python3-pip python3-venv{R}")
+                print(f"  {CYAN}Running: sudo apt update && sudo apt install -y python3-pip {py_ver_pkg} python3-venv{R}")
+                subprocess.run(["sudo", "apt-get", "update", "-q"])
                 subprocess.run(["sudo", "apt-get", "install", "-y",
-                                "python3-pip", "python3-venv"])
+                                "python3-pip", py_ver_pkg, "python3-venv"])
                 print(f"\n  {CYAN}Running: pip3 install anthropic{R}")
                 subprocess.run([sys.executable, "-m", "pip", "install",
                                 "anthropic", "--break-system-packages"])
@@ -401,7 +445,8 @@ class AnthropicBackend:
                 except ImportError:
                     print(f"\n  {RED}{BOLD}Still could not import anthropic.{R}")
                     print(f"  Please run these commands and restart tuxgenie:\n")
-                    print(f"    {CYAN}sudo apt install -y python3-pip python3-venv{R}")
+                    print(f"    {CYAN}sudo apt update{R}")
+                    print(f"    {CYAN}sudo apt install -y python3-pip {py_ver_pkg} python3-venv{R}")
                     print(f"    {CYAN}pip3 install anthropic --break-system-packages{R}\n")
                     input(f"  Press Enter to close...")
                     sys.exit(1)
