@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "Community-contributed fixes that ship with every TuxGenie release. Curated from `share-fix` submissions by the maintainer. Each entry is matched against the user's problem via keyword score; on a strong match TuxGenie offers to apply the saved steps before falling back to the AI.",
+  "entries": []
+}

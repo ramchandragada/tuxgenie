@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.70.0"
+__version__ = "5.71.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -215,6 +215,11 @@ HISTORY_FILE = os.path.join(CFG_DIR, "history.json")   # user prompts
 ACTIONS_FILE = os.path.join(CFG_DIR, "actions.json")   # commands run by AI
 FINGERPRINT_FILE = os.path.join(CFG_DIR, "fingerprint.json")  # cached system info
 MEMORY_FILE  = os.path.join(CFG_DIR, "memory.json")    # cross-session solved issues
+COMMUNITY_FIXES_PATHS = [                                # read-only fixes shipped with the .deb
+    "/usr/share/tuxgenie/community_fixes.json",
+    "/usr/local/share/tuxgenie/community_fixes.json",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "community_fixes.json"),
+]
 DIGEST_FILE  = os.path.join(CFG_DIR, "digest.json")    # weekly health digest last-run
 CRASH_FILE   = os.path.join(CFG_DIR, "crash.json")     # crash guard counter
 PREV_VER_BAK = os.path.join(CFG_DIR, "tuxgenie.bak")   # last-known-good backup
@@ -2448,6 +2453,84 @@ def feat_feedback(backend=None, bctx=None, slog=None):
     _open_github_issue(f"[Feature Request] {idea[:70]}", body, labels="enhancement")
     ok("Review your request and click 'Submit new issue' — thank you! 🐧")
 
+def feat_share_fix(backend=None, bctx=None, slog=None):
+    """Let the user contribute their most recent verified fix back to the
+    community knowledge base. The maintainer reviews each submission and
+    appends accepted ones to community_fixes.json, which ships in every .deb."""
+    hdr("Share a Fix — make TuxGenie smarter for everyone")
+    data = _mem_load()
+    solved = data.get("solved", [])
+    if not solved:
+        info("No saved fixes on this machine yet. Solve a problem first, then come back.")
+        return
+    # Show the most recent 5; user picks one (default = latest).
+    recent = solved[-5:][::-1]
+    print(f"\n  {DIM}Your most recent saved fixes:{R}\n")
+    for i, e in enumerate(recent, 1):
+        prob = e.get("problem", "")[:70]
+        ts   = e.get("ts", "")
+        print(f"  {C(str(i), CYAN, BOLD)}. [{ts}] {prob}")
+    try:
+        pick = _safe_input(f"\n  Which one to share? [1-{len(recent)}, Enter for 1] ").strip() or "1"
+    except (EOFError, KeyboardInterrupt):
+        return
+    try:
+        idx = int(pick) - 1
+        chosen = recent[idx]
+    except (ValueError, IndexError):
+        warn("Invalid choice."); return
+
+    print(f"\n  {BOLD}This is what will be shared (review before submitting):{R}\n")
+    print(f"  {DIM}Problem:{R}     {chosen.get('problem','')}")
+    if chosen.get("failing_cmd"):
+        print(f"  {DIM}Failing cmd:{R} {chosen['failing_cmd']}")
+    if chosen.get("error"):
+        print(f"  {DIM}Error:{R}       {chosen['error'][:200]}")
+    print(f"  {DIM}Fix steps:{R}")
+    for c in chosen.get("steps", []):
+        print(f"    $ {c}")
+    print(f"\n  {YELLOW}Nothing is sent until YOU click 'Submit' on the GitHub page.{R}")
+    print(f"  {DIM}A maintainer reviews each submission before it ships in the next release.{R}")
+    try:
+        ans = _safe_input(f"\n  Open GitHub to submit this fix? [{C('y',GREEN,BOLD)}/{C('n',DIM)}] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if ans not in ("y", "yes"):
+        info("Cancelled — nothing was shared.")
+        return
+
+    body_lines = [
+        "## Community Fix Submission",
+        "",
+        "*Submitted from inside TuxGenie via `share-fix`. A maintainer will review "
+        "this and (if accepted) bundle it into `community_fixes.json` in the next release.*",
+        "",
+        f"**Problem:** {chosen.get('problem','')}",
+    ]
+    if chosen.get("failing_cmd"):
+        body_lines += ["", f"**Failing command:** `{chosen['failing_cmd']}`"]
+    if chosen.get("error"):
+        body_lines += ["", "**Error excerpt:**", "```", chosen["error"][:600], "```"]
+    body_lines += ["", "**Working fix:**", "```bash"]
+    body_lines += chosen.get("steps", [])
+    body_lines += ["```", "", f"**TuxGenie version:** {__version__}",
+                   "",
+                   "### Proposed JSON entry",
+                   "```json",
+                   json.dumps({
+                       "problem": chosen.get("problem", ""),
+                       "failing_cmd": chosen.get("failing_cmd", ""),
+                       "error": chosen.get("error", ""),
+                       "steps": chosen.get("steps", []),
+                   }, indent=2),
+                   "```"]
+    _open_github_issue(
+        f"[Community Fix] {chosen.get('problem','')[:60]}",
+        "\n".join(body_lines),
+        labels="community-fix",
+    )
+    ok("Opening GitHub — review and click 'Submit new issue'. Thank you for teaching the Genie! 🧞")
+
 # GUI launcher commands — these open windows and must not flood the terminal
 _GUI_LAUNCHERS = (
     "xdg-open", "gnome-open", "gio open",
@@ -2877,6 +2960,12 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
 
     # ── Smart model routing: start with Haiku, escalate on failure ──
     user_text = messages[0].get("content", "") if messages else ""
+
+    # ── Genie Memory: try a saved fix first (zero API cost when it works) ──
+    recalled = _mem_recall(user_text)
+    if recalled and _mem_apply_recalled(recalled):
+        return
+
     backend.select_model_for_task(user_text, round_num=1)
     print(f"\n  {CYAN}{BOLD}⚡ AI: {backend.label()}{R}")
 
@@ -3167,7 +3256,13 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     info(sc)
                 print(f"  {DIM}Long live Linux! 🐧{R}")
                 _ask_rating()
-                _mem_record_fix(user_text, [s.get("command", "") for s in step_outputs if s.get("success")])
+                _failed_for_mem = next((s for s in step_outputs if not s.get("success", True) and not s.get("skipped")), {})
+                _mem_record_fix(
+                    user_text,
+                    [s.get("command", "") for s in step_outputs if s.get("success")],
+                    failing_cmd=_failed_for_mem.get("command", ""),
+                    error_excerpt=(_failed_for_mem.get("stderr") or _failed_for_mem.get("stdout") or "")[:400],
+                )
                 return
             else:
                 if v_is_weak:
@@ -3189,7 +3284,13 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 _synthesize_findings(backend, user_text, step_outputs)
                 print(f"  {DIM}Long live Linux! 🐧{R}")
                 _ask_rating()
-                _mem_record_fix(user_text, [s.get("command", "") for s in step_outputs if s.get("success")])
+                _failed_for_mem = next((s for s in step_outputs if not s.get("success", True) and not s.get("skipped")), {})
+                _mem_record_fix(
+                    user_text,
+                    [s.get("command", "") for s in step_outputs if s.get("success")],
+                    failing_cmd=_failed_for_mem.get("command", ""),
+                    error_excerpt=(_failed_for_mem.get("stderr") or _failed_for_mem.get("stdout") or "")[:400],
+                )
                 return
             if sc:
                 print(f"\n  {CYAN}{BOLD}How to check if it worked:{R} {sc}")
@@ -3205,7 +3306,13 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 print(f"\n  {GREEN}{BOLD}🎉 Great! Glad it's working now!{R}")
                 print(f"  {DIM}Long live Linux! 🐧{R}")
                 _ask_rating()
-                _mem_record_fix(user_text, [s.get("command", "") for s in step_outputs if s.get("success")])
+                _failed_for_mem = next((s for s in step_outputs if not s.get("success", True) and not s.get("skipped")), {})
+                _mem_record_fix(
+                    user_text,
+                    [s.get("command", "") for s in step_outputs if s.get("success")],
+                    failing_cmd=_failed_for_mem.get("command", ""),
+                    error_excerpt=(_failed_for_mem.get("stderr") or _failed_for_mem.get("stdout") or "")[:400],
+                )
                 return
 
         if rnd >= max_rounds:
@@ -5152,9 +5259,12 @@ def _mem_save(data: dict):
     except Exception:
         pass
 
-def _mem_record_fix(problem: str, successful_steps: list):
+def _mem_record_fix(problem: str, successful_steps: list,
+                    failing_cmd: str = "", error_excerpt: str = ""):
     """Save a successfully resolved issue to cross-session memory.
-    Called after the user confirms a fix worked (or verify_command passes)."""
+    Called after the user confirms a fix worked (or verify_command passes).
+    failing_cmd / error_excerpt help future signature matching when the user
+    phrases the same problem differently."""
     if load_cfg().get("disable_history"):
         return
     if not problem or not successful_steps:
@@ -5164,13 +5274,137 @@ def _mem_record_fix(problem: str, successful_steps: list):
     p_lower = problem.lower().strip()
     # Remove any previous entry for the same problem (keep the latest fix)
     solved  = [s for s in solved if s.get("problem", "").lower() != p_lower]
-    solved.append({
+    entry = {
         "ts":      datetime.datetime.now().strftime("%Y-%m-%d"),
         "problem": problem.strip()[:120],
         "steps":   [s for s in successful_steps if s][:5],
-    })
+        "hit_count": 1,
+        "verified": True,
+    }
+    if failing_cmd:
+        entry["failing_cmd"] = failing_cmd.strip()[:200]
+    if error_excerpt:
+        entry["error"] = error_excerpt.strip()[:400]
+    solved.append(entry)
     data["solved"] = solved[-100:]   # cap at 100 resolved issues
     _mem_save(data)
+
+def _community_fixes_load() -> list:
+    """Load read-only community fixes bundled with the .deb. Never raises."""
+    for p in COMMUNITY_FIXES_PATHS:
+        try:
+            if os.path.exists(p):
+                doc = json.loads(open(p).read())
+                fixes = doc.get("entries") or doc.get("solved") or []
+                return [f for f in fixes if isinstance(f, dict)]
+        except Exception:
+            continue
+    return []
+
+def _mem_recall(problem: str):
+    """Look up a strong match for `problem` across local + community memory.
+    Returns the best entry if score >= 3 (or exact text match), else None.
+    The caller offers to re-apply the saved fix before paying for a Claude call."""
+    if load_cfg().get("disable_history"):
+        return None
+    if not problem:
+        return None
+    p_lower = problem.lower().strip()
+    _STOP  = {"the","this","my","your","not","working","please","how","can",
+              "why","what","make","get","run","fix","help","need","want",
+              "have","been","is","are","was","it","on","in","to","a","an"}
+    q_words = set(re.findall(r'\b\w{3,}\b', p_lower)) - _STOP
+    if not q_words:
+        return None
+    local     = _mem_load().get("solved", [])
+    community = _community_fixes_load()
+    # Local entries win on tie — user's own machine knows its quirks best.
+    candidates = [("local", e) for e in local] + [("community", e) for e in community]
+    # Threshold scales with query length so a short query like "wifi broken"
+    # (1–2 content words after stop-word removal) can still match, while a
+    # long query needs a strong overlap to avoid false positives.
+    threshold = min(3, max(1, len(q_words)))
+    best = None
+    best_score = 0
+    for source, e in candidates:
+        prob = (e.get("problem") or "").lower().strip()
+        if not prob or not e.get("steps"):
+            continue
+        if prob == p_lower:
+            return {"source": source, "entry": e, "score": 999}
+        e_text = prob + " " + " ".join(e.get("steps", []))
+        e_words = set(re.findall(r'\b\w{3,}\b', e_text.lower()))
+        score = len(q_words & e_words)
+        if score > best_score:
+            best_score = score
+            best = {"source": source, "entry": e, "score": score}
+    return best if best and best_score >= threshold else None
+
+def _mem_apply_recalled(recalled: dict) -> bool:
+    """Run the steps from a recalled fix. Returns True if every step exits 0.
+    On failure we fall back to the normal Claude-driven loop in fix_engine."""
+    entry  = recalled["entry"]
+    source = recalled["source"]
+    steps  = [s for s in entry.get("steps", []) if s]
+    if not steps:
+        return False
+    src_label = "your own past fix" if source == "local" else "the community knowledge base"
+    print(f"\n  {GOLD}{BOLD}🧞 Genie Memory{R}")
+    print(f"  {DIM}I've solved a similar problem before (from {src_label}).{R}")
+    print(f"  {DIM}Saved fix:{R}")
+    for i, c in enumerate(steps, 1):
+        print(f"    {DIM}{i}. $ {c}{R}")
+    try:
+        ans = _safe_input(f"\n  Apply this saved fix? [{C('Y',GREEN,BOLD)}/n] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    if ans in ("n", "no"):
+        info("Skipping saved fix — asking the AI fresh.")
+        return False
+
+    sudo_pw = None
+    all_ok = True
+    for i, cmd in enumerate(steps, 1):
+        if cmd.strip().startswith("sudo") and sudo_pw is None:
+            try:
+                sudo_pw = get_or_cache_sudo_password()
+            except KeyboardInterrupt:
+                return False
+        print(f"\n  {CYAN}▶ [{i}/{len(steps)}] $ {cmd}{R}")
+        rc, _, _ = run_cmd_live(cmd, sudo_password=sudo_pw)
+        if rc != 0:
+            warn(f"Saved step failed (exit {rc}) — letting the AI take over.")
+            all_ok = False
+            break
+    if all_ok:
+        # Bump hit_count on the local copy so we can see which fixes pay off.
+        if source == "local":
+            try:
+                data = _mem_load()
+                for s in data.get("solved", []):
+                    if s.get("problem") == entry.get("problem"):
+                        s["hit_count"] = int(s.get("hit_count", 1)) + 1
+                        s["last_used"] = datetime.datetime.now().strftime("%Y-%m-%d")
+                        break
+                _mem_save(data)
+            except Exception:
+                pass
+        # Cache the last successful recall so `share-fix` knows what to share.
+        try:
+            cfg = load_cfg()
+            cfg["last_applied_fix"] = {
+                "problem": entry.get("problem", ""),
+                "steps":   steps,
+                "source":  source,
+                "ts":      datetime.datetime.now().strftime("%Y-%m-%d"),
+            }
+            save_cfg(cfg)
+        except Exception:
+            pass
+        print(f"\n  {GREEN}{BOLD}✓ Fixed using saved memory — no AI call needed.{R}")
+        print(f"  {DIM}Long live Linux! 🐧{R}")
+        return True
+    return False
 
 def _mem_search(query: str, n: int = 3) -> list:
     """Keyword search in solved issues. Returns up to n relevant matches."""
@@ -5975,12 +6209,13 @@ def show_help():
     {GREEN}{BOLD}✓{R} Press {BOLD}Ctrl-C{R} anytime to stop
 
   {GREEN}{BOLD}Commands:{R}
-    {BLUE}{BOLD}help{R}     Show this help
-    {BLUE}{BOLD}menu{R}     Show the feature menu
-    {BMAGENTA}{BOLD}h{R}        Show recent history (last 10 tasks)
-    {BLUE}{BOLD}k{R}        Add / change API key (needed for AI features)
-    {BLUE}{BOLD}u{R}        Update TuxGenie to latest version
-    {RED}{BOLD}q{R}        Quit TuxGenie
+    {BLUE}{BOLD}help{R}      Show this help
+    {BLUE}{BOLD}menu{R}      Show the feature menu
+    {BMAGENTA}{BOLD}h{R}         Show recent history (last 10 tasks)
+    {BLUE}{BOLD}k{R}         Add / change API key (needed for AI features)
+    {BLUE}{BOLD}u{R}         Update TuxGenie to latest version
+    {GOLD}{BOLD}share-fix{R} Contribute a saved fix to the community 🧞
+    {RED}{BOLD}q{R}         Quit TuxGenie
 """)
 
 def first_run_check():
@@ -6145,6 +6380,9 @@ def main():
 
     # ── One-shot mode: tuxgenie "describe problem" ────────────────────────────
     if args.issue:
+        if args.issue.lower() in ("share-fix", "sharefix"):
+            feat_share_fix()
+            return
         if not try_passthrough(args.issue, session_log, backend, bctx):
             agentic_engine(backend, args.issue, bctx, session_log)
         save_session(session_log)
@@ -6206,6 +6444,8 @@ def main():
             feat_set_api_key(backend); continue
         if choice.lower() in ("f", "feedback", "feature", "suggest"):
             feat_feedback(); continue
+        if choice.lower() in ("share-fix", "sharefix", "share"):
+            feat_share_fix(); continue
         if choice.lower() in ("i", "shell", "shellsetup", "integrate"):
             feat_shell_integration(); continue
         if choice.lower() in ("m", "monitor"):

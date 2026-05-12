@@ -201,6 +201,14 @@ if not os.path.exists(src):
 with open(src, "rb") as fh:
     TUXGENIE_PY = fh.read()
 
+# ── Read the community fixes JSON (ships with every release) ─────────────────
+_community_path = os.path.join(SCRIPT_DIR, "community_fixes.json")
+if os.path.exists(_community_path):
+    with open(_community_path, "rb") as fh:
+        COMMUNITY_FIXES = fh.read()
+else:
+    COMMUNITY_FIXES = b'{"version": 1, "entries": []}\n'
+
 # ── Generate icons at standard hicolor sizes ─────────────────────────────────
 print("  Generating icons ", end="", flush=True)
 ICONS = {}
@@ -209,7 +217,7 @@ for _sz in (16, 32, 48, 64, 128, 256):
     print(".", end="", flush=True)
 print(f" done ({sum(len(v) for v in ICONS.values())//1024} KB total)")
 
-INSTALLED_KB = max(1, (len(TUXGENIE_PY) + sum(len(v) for v in ICONS.values()) + 1023) // 1024 + 8)
+INSTALLED_KB = max(1, (len(TUXGENIE_PY) + sum(len(v) for v in ICONS.values()) + len(COMMUNITY_FIXES) + 1023) // 1024 + 8)
 
 # ── File contents (all in-memory) ─────────────────────────────────────────────
 
@@ -672,6 +680,7 @@ data_entries = [
     {"path": "./usr/share/doc/",                         "type": "dir",  "data": None,          "mode": 0o755},
     {"path": f"./usr/share/doc/{PACKAGE}/",              "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/applications/",                "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/tuxgenie/",                    "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/icons/",                       "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/icons/hicolor/",               "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/icons/hicolor/16x16/",         "type": "dir",  "data": None,          "mode": 0o755},
@@ -699,6 +708,8 @@ data_entries = [
      "type": "file", "data": COPYRIGHT,                                  "mode": 0o644},
     {"path": "./usr/share/applications/tuxgenie.desktop",
      "type": "file", "data": DESKTOP_ENTRY,                              "mode": 0o644},
+    {"path": "./usr/share/tuxgenie/community_fixes.json",
+     "type": "file", "data": COMMUNITY_FIXES,                            "mode": 0o644},
     # Icons - hicolor theme, 6 sizes
     {"path": "./usr/share/icons/hicolor/16x16/apps/tuxgenie.png",
      "type": "file", "data": ICONS[16],                                  "mode": 0o644},
