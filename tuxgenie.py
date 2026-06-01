@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.71.0"
+__version__ = "5.72.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -261,7 +261,7 @@ _COMPLEX_KEYWORDS = [
 ]
 _HAIKU_MODEL  = "claude-haiku-4-5-20251001"
 _SONNET_MODEL = "claude-sonnet-4-6"
-_OPUS_MODEL   = "claude-opus-4-7"
+_OPUS_MODEL   = "claude-opus-4-8"
 
 
 def _try_pip_install():
@@ -551,7 +551,7 @@ class AnthropicBackend:
         """Return estimated session cost based on tracked tokens."""
         # Pricing per million tokens (approximate, as of 2026)
         model_prices = {
-            "claude-opus-4-7":          (5.0, 25.0),    # input, output per 1M tokens
+            "claude-opus-4-8":          (5.0, 25.0),    # input, output per 1M tokens
             "claude-sonnet-4-6":        (3.0, 15.0),
             "claude-haiku-4-5-20251001":(0.80, 4.0),
         }
@@ -659,7 +659,7 @@ def load_backend():
 AVAILABLE_MODELS = [
     ("claude-haiku-4-5-20251001", "Fast & cheapest — handles 90% of tasks perfectly (recommended)"),
     ("claude-sonnet-4-6",   "Smarter — for complex debugging (auto-escalates when needed)"),
-    ("claude-opus-4-7",     "Most capable — for the hardest problems (costs ~6x more)"),
+    ("claude-opus-4-8",     "Most capable — for the hardest problems (costs ~6x more)"),
 ]
 
 def feat_set_api_key(backend):
