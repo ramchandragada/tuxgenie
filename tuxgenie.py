@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.72.0"
+__version__ = "5.73.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -298,7 +298,10 @@ def _can_import_anthropic():
     try:
         importlib.import_module("anthropic")
         return True
-    except ImportError:
+    except Exception:
+        # Catch broader than ImportError: a partial/corrupt install can raise
+        # AttributeError or other errors deep in dependency init. Treat any
+        # failure as "not importable" so the bootstrap continues to recover.
         return False
 
 def _apt_install(packages, label=None):
@@ -433,8 +436,8 @@ class AnthropicBackend:
         """Bootstrap SDK and create Anthropic client."""
         global _anthropic
         if _anthropic is None:
+            py_ver_pkg = f"python{sys.version_info.major}.{sys.version_info.minor}-venv"
             if not _bootstrap_anthropic_sdk():
-                py_ver_pkg = f"python{sys.version_info.major}.{sys.version_info.minor}-venv"
                 print(f"\n  {RED}{BOLD}Could not install the anthropic SDK.{R}")
                 print(f"  TuxGenie will try to fix this automatically…\n")
                 print(f"  {CYAN}Running: sudo apt update && sudo apt install -y python3-pip {py_ver_pkg} python3-venv{R}")
@@ -444,20 +447,22 @@ class AnthropicBackend:
                 print(f"\n  {CYAN}Running: pip3 install anthropic{R}")
                 subprocess.run([sys.executable, "-m", "pip", "install",
                                 "anthropic", "--break-system-packages"])
-                try:
-                    import anthropic as _anth
-                    _anthropic = _anth
-                except ImportError:
-                    print(f"\n  {RED}{BOLD}Still could not import anthropic.{R}")
-                    print(f"  Please run these commands and restart tuxgenie:\n")
-                    print(f"    {CYAN}sudo apt update{R}")
-                    print(f"    {CYAN}sudo apt install -y python3-pip {py_ver_pkg} python3-venv{R}")
-                    print(f"    {CYAN}pip3 install anthropic --break-system-packages{R}\n")
-                    input(f"  Press Enter to close...")
-                    sys.exit(1)
-            if _anthropic is None:
+            # Single guarded import path. Both bootstrap-succeeded and
+            # bootstrap-failed-then-sudo-fallback flows end here. The probe
+            # inside _bootstrap_anthropic_sdk can return True under sys.path
+            # mutations that don't fully carry over, so we must not assume
+            # the import will succeed unconditionally.
+            try:
                 import anthropic as _anth
                 _anthropic = _anth
+            except Exception:
+                print(f"\n  {RED}{BOLD}Could not import the anthropic SDK.{R}")
+                print(f"  Please run these commands and restart tuxgenie:\n")
+                print(f"    {CYAN}sudo apt update{R}")
+                print(f"    {CYAN}sudo apt install -y python3-pip {py_ver_pkg} python3-venv{R}")
+                print(f"    {CYAN}pip3 install anthropic --break-system-packages{R}\n")
+                input(f"  Press Enter to close...")
+                sys.exit(1)
         self.client  = _anthropic.Anthropic(api_key=api_key)
         self.api_key = api_key
         self._no_key = False
