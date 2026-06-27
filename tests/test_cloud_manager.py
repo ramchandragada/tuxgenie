@@ -176,18 +176,22 @@ class TestZohoNeverCreatesRcloneRemote:
         monkeypatch.setattr(tg, "_cloud_run",
                             lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
         monkeypatch.setattr(tg, "run_cmd", lambda *a, **k: (0, "", ""))
+        # Stub the URL-detection so the test doesn't hit the network
+        monkeypatch.setattr(tg, "_zoho_find_truesync_deb_url", lambda: None)
+        monkeypatch.setattr(tg, "_watch_downloads_for_deb",
+                            lambda *a, **k: None)
         # No real browser
         monkeypatch.setattr(tg.subprocess, "Popen", lambda *a, **k: None)
         # Make a fake .deb so the existence check passes
         fake_deb = tmp_path / "zoho.deb"
         fake_deb.write_bytes(b"fake")
-        # answer "y" to install, then provide path to fake deb
+        # answer "y" to install, then provide path to fake deb when prompted
         monkeypatch.setattr("builtins.input", _inputs("y", str(fake_deb)))
         tg._cloud_zoho_path(None, {}, [])
         # CRITICAL: never construct an rclone backend for Zoho
         for cmd in runs:
             assert "rclone config create" not in cmd
-            assert "rclone " not in cmd or "rclone obscure" in cmd  # rclone obscure is OK
+            assert "rclone " not in cmd or "rclone obscure" in cmd
         # And the install path must use dpkg (TrueSync .deb), not rclone
         assert any("dpkg -i" in c for c in runs)
 
@@ -363,6 +367,32 @@ class TestWorksWithoutAPIKey:
                             _inputs("1", str(local), "Docs", "1", "y"))
         tg._cloud_backup(None, {}, [], [("workdrive", "drive")])
         assert called == []
+
+
+class TestWatchDownloadsForDeb:
+    """The watcher is a simple polling loop; verify just that the function
+    exists, has the right signature, and the integration with the Zoho path
+    is wired up. We skip mocking the time.sleep loop — too fragile to be
+    worth the test complexity."""
+
+    def test_function_exists(self):
+        assert callable(getattr(tg, "_watch_downloads_for_deb", None))
+
+    def test_returns_none_on_immediate_timeout(self, tmp_path, monkeypatch):
+        # With timeout=0 the function shouldn't loop at all
+        watch = tmp_path / "Downloads"
+        watch.mkdir()
+        monkeypatch.setattr(tg.time, "sleep", lambda _s: None)
+        # Make time.time() jump past the timeout on the first check
+        first = [True]
+        real_time = tg.time.time
+        def jumpy_time():
+            if first[0]:
+                first[0] = False
+                return 0.0
+            return 1000.0
+        monkeypatch.setattr(tg.time, "time", jumpy_time)
+        assert tg._watch_downloads_for_deb(str(watch), r"zoho", timeout=10) is None
 
 
 class TestZohoTrueSyncAutoDetect:

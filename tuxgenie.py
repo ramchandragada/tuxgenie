@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.77.0"
+__version__ = "5.78.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -6441,6 +6441,64 @@ def _zoho_find_truesync_deb_url():
             return url
     return None
 
+def _watch_downloads_for_deb(watch_dir, name_re, timeout=600):
+    """Watch a directory for a new .deb matching name_re. Returns its full
+    path once the file is fully written (size stable for several ticks), or
+    None if the user cancels or we time out.
+
+    This is how the Zoho install stays "no typing required" even when we
+    can't auto-detect the URL — the user clicks Download in the browser
+    and TuxGenie pounces on the file the moment it lands."""
+    try:
+        os.makedirs(watch_dir, exist_ok=True)
+        baseline = set(os.listdir(watch_dir))
+    except Exception:
+        baseline = set()
+    print(f"\n  {YELLOW}{BOLD}⏳  Watching {watch_dir} for the .deb to appear…{R}")
+    print(f"  {DIM}As soon as it finishes downloading, TuxGenie will install it.{R}")
+    print(f"  {DIM}Press Ctrl-C to skip and type the path manually.{R}\n")
+    pat = re.compile(name_re, re.IGNORECASE)
+    spinner = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    start = time.time()
+    try:
+        i = 0
+        while time.time() - start < timeout:
+            try:
+                current = os.listdir(watch_dir)
+            except Exception:
+                current = []
+            new_debs = [f for f in current
+                        if f.endswith(".deb") and f not in baseline and pat.search(f)]
+            if new_debs:
+                new_debs.sort(key=lambda f: -os.path.getmtime(os.path.join(watch_dir, f)))
+                target = os.path.join(watch_dir, new_debs[0])
+                print(f"\r  {GREEN}{BOLD}✔  Found: {new_debs[0]}{R}" + " " * 30)
+                print(f"  {DIM}Waiting for download to finish writing…{R}")
+                last_size, stable = -1, 0
+                while stable < 3:
+                    try:
+                        sz = os.path.getsize(target)
+                    except OSError:
+                        sz = -1
+                    if sz == last_size and sz > 0:
+                        stable += 1
+                    else:
+                        stable = 0
+                        last_size = sz
+                    time.sleep(0.5)
+                return target
+            elapsed = int(time.time() - start)
+            print(f"\r  {CYAN}{spinner[i % len(spinner)]}{R}  Waiting for download… ({elapsed}s)  ",
+                  end="", flush=True)
+            i += 1
+            time.sleep(0.4)
+    except KeyboardInterrupt:
+        print(f"\n  {YELLOW}Cancelled watching.{R}")
+        return None
+    print(f"\n  {YELLOW}Timed out after {timeout//60} min.{R}")
+    return None
+
+
 def _cloud_zoho_download_deb(url, dest):
     """Stream-download with a progress bar. Returns True on success."""
     try:
@@ -6484,28 +6542,31 @@ def _cloud_zoho_path(backend, bctx, slog):
     print(f"  {DIM}Probing Zoho's CDN…{R}")
     deb_url = _zoho_find_truesync_deb_url()
     if not deb_url:
-        err("Couldn't locate a working Zoho TrueSync .deb URL automatically.")
-        warn("Zoho's download page is JS-rendered and Zoho doesn't publish a")
-        warn("stable direct-download URL. We'll fall back to opening the page.")
+        info("Auto-detect didn't find the .deb URL (Zoho's page is JS-rendered).")
+        info("Opening the download page in your browser instead — just click the")
+        info("Linux .deb button. TuxGenie will spot the file and install it for you.")
         try:
             subprocess.Popen(["xdg-open", "https://www.zoho.com/workdrive/desktop-sync.html"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
         except Exception:
             pass
-        print(f"\n  {BOLD}Browser opened.{R} Download the .deb, then either:")
-        print(f"    {CYAN}•{R}  Re-run menu {BOLD}88 → Zoho WorkDrive{R} and paste the path, or")
-        print(f"    {CYAN}•{R}  Install it manually:  {BOLD}sudo dpkg -i ~/Downloads/<file>.deb{R}")
-        try:
-            deb = input(f"\n  {BOLD}Path to the downloaded .deb{R} "
-                        f"(or Enter to skip):\n  ❯ ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print(); return
-        if not deb:
-            return
-        deb_path = os.path.expanduser(deb)
-        if not os.path.isfile(deb_path):
-            warn(f"File not found: {deb_path}"); return
+        watch_dir = os.path.expanduser("~/Downloads")
+        deb_path = _watch_downloads_for_deb(
+            watch_dir, name_re=r"(zoho|truesync|workdrive)", timeout=600,
+        )
+        if not deb_path:
+            # Final escape hatch: ask for an explicit path
+            try:
+                deb = input(f"\n  {BOLD}Type the path to the downloaded .deb "
+                            f"(or Enter to cancel):{R}\n  ❯ ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print(); return
+            if not deb:
+                return
+            deb_path = os.path.expanduser(deb)
+            if not os.path.isfile(deb_path):
+                warn(f"File not found: {deb_path}"); return
     else:
         ok(f"Found: {deb_url}")
         section("Step 2 — Downloading TrueSync")
