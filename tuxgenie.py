@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.76.0"
+__version__ = "5.77.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -6373,50 +6373,173 @@ def _cloud_remove(backend, bctx, slog, remotes):
     _cloud_run(f"rclone config delete {shlex.quote(name)}",
                what=f"Delete '{name}' from rclone config.", timeout=15)
 
+_ZOHO_DOWNLOAD_PAGES = (
+    "https://www.zoho.com/workdrive/desktop-sync.html",
+    "https://www.zoho.com/workdrive/desktop-sync-app.html",
+)
+
+def _url_is_alive(url, timeout=10):
+    """HEAD-check a URL. Returns True for 2xx/3xx."""
+    try:
+        req = urllib.request.Request(url, method="HEAD",
+                                     headers={"User-Agent": "Mozilla/5.0 (TuxGenie)"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return 200 <= r.status < 400
+    except Exception:
+        return False
+
+def _zoho_find_truesync_deb_url():
+    """Scrape Zoho's TrueSync download page for the current .deb URL.
+
+    Best-effort: Zoho's page rendering varies (some markup is JS-injected),
+    so we look in BOTH the HTML and the linked JS bundles. If we still can't
+    find anything, return None and the caller falls back to opening the page
+    in a browser."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
+        "Accept": "text/html,application/xhtml+xml",
+    }
+    def _fetch(url):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.read().decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    pool = []   # candidate URLs to try
+    for page in _ZOHO_DOWNLOAD_PAGES:
+        html = _fetch(page)
+        if not html:
+            continue
+        # 1. Direct .deb links in the HTML
+        for m in re.finditer(r'https?://[^\s"\'<>()]+\.deb\b', html):
+            pool.append(m.group(0))
+        # 2. Walk linked JS bundles — Zoho often hides the real URL there
+        for js_url in re.findall(r'src=["\'](https?://[^"\']+\.js)["\']', html)[:8]:
+            js = _fetch(js_url)
+            for m in re.finditer(r'https?://[^\s"\'<>()]+\.deb\b', js):
+                pool.append(m.group(0))
+
+    # Prefer URLs that look related to Zoho + TrueSync, then probe live-ness
+    seen = set()
+    ranked = []
+    for url in pool:
+        if url in seen:
+            continue
+        seen.add(url)
+        score = 0
+        u = url.lower()
+        if "zoho"     in u: score += 3
+        if "truesync" in u: score += 2
+        if "workdrive"in u: score += 2
+        if "linux"    in u or "amd64" in u or "x86_64" in u: score += 1
+        ranked.append((score, url))
+    ranked.sort(reverse=True)
+    for _score, url in ranked:
+        if _url_is_alive(url):
+            return url
+    return None
+
+def _cloud_zoho_download_deb(url, dest):
+    """Stream-download with a progress bar. Returns True on success."""
+    try:
+        with urllib.request.urlopen(url, timeout=120) as resp, open(dest, "wb") as out:
+            total = int(resp.headers.get("Content-Length", 0) or 0)
+            done, last_pct = 0, -1
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                out.write(chunk)
+                done += len(chunk)
+                if total > 0:
+                    pct = min(100, int(done * 100 / total))
+                    if pct != last_pct:
+                        bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+                        print(f"\r  {CYAN}{bar}{R} {pct}%  "
+                              f"{done//1024//1024} MB / {total//1024//1024} MB",
+                              end="", flush=True)
+                        last_pct = pct
+        print()
+        return True
+    except Exception as e:
+        err(f"Download failed: {e}")
+        return False
+
 def _cloud_zoho_path(backend, bctx, slog):
     hdr("Zoho WorkDrive — TrueSync app")
     print(f"  {YELLOW}rclone doesn't have a Zoho WorkDrive backend.{R}")
     print(f"  But Zoho ships their own desktop sync app called {BOLD}TrueSync{R}.")
-    print(f"  It runs in the background like Dropbox.\n")
-    print(f"  {DIM}Officially supported: Ubuntu LTS 22.04 / 24.04 (.deb installer){R}\n")
+    print(f"  TuxGenie will download and install it for you — no browser needed.\n")
+    print(f"  {DIM}Officially supported: Ubuntu LTS 22.04 / 24.04 (.deb installer){R}")
     try:
-        ans = input(f"  {BOLD}Install Zoho WorkDrive TrueSync?{R} [y/n]: ").strip().lower()
+        ans = input(f"\n  {BOLD}Install Zoho WorkDrive TrueSync?{R} [y/n]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         print(); return
     if ans not in ("y", "yes"):
         return
-    section("Step 1 — Open the Zoho TrueSync download page")
-    print(f"  {DIM}Opening https://www.zoho.com/workdrive/desktop-sync.html in your browser.{R}")
-    print(f"  {DIM}Pick the Ubuntu .deb that matches your system (22.04 or 24.04).{R}")
-    print(f"  {DIM}Save it to ~/Downloads/.{R}")
-    try:
-        subprocess.Popen(["xdg-open", "https://www.zoho.com/workdrive/desktop-sync.html"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
-    except Exception:
-        pass
-    try:
-        deb = input(f"\n  {BOLD}Path to the downloaded .deb{R} [~/Downloads/zohoworkdrive-truesync.deb]:\n  ❯ ").strip() \
-              or "~/Downloads/zohoworkdrive-truesync.deb"
-    except (EOFError, KeyboardInterrupt):
-        print(); return
-    deb = os.path.expanduser(deb)
-    if not os.path.isfile(deb):
-        warn(f"File not found: {deb}")
-        info("Re-open menu 88 → Zoho once you've downloaded the .deb.")
-        return
-    section("Step 2 — Install the .deb")
-    _cloud_run(f"sudo dpkg -i {shlex.quote(deb)}",
-               what="Install the Zoho TrueSync .deb you downloaded.",
-               sudo=True, timeout=300)
-    _cloud_run("sudo apt install -f -y",
-               what="Fix any missing dependencies dpkg flagged.",
-               sudo=True, timeout=600)
+
+    section("Step 1 — Finding the latest TrueSync .deb")
+    print(f"  {DIM}Probing Zoho's CDN…{R}")
+    deb_url = _zoho_find_truesync_deb_url()
+    if not deb_url:
+        err("Couldn't locate a working Zoho TrueSync .deb URL automatically.")
+        warn("Zoho's download page is JS-rendered and Zoho doesn't publish a")
+        warn("stable direct-download URL. We'll fall back to opening the page.")
+        try:
+            subprocess.Popen(["xdg-open", "https://www.zoho.com/workdrive/desktop-sync.html"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        except Exception:
+            pass
+        print(f"\n  {BOLD}Browser opened.{R} Download the .deb, then either:")
+        print(f"    {CYAN}•{R}  Re-run menu {BOLD}88 → Zoho WorkDrive{R} and paste the path, or")
+        print(f"    {CYAN}•{R}  Install it manually:  {BOLD}sudo dpkg -i ~/Downloads/<file>.deb{R}")
+        try:
+            deb = input(f"\n  {BOLD}Path to the downloaded .deb{R} "
+                        f"(or Enter to skip):\n  ❯ ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print(); return
+        if not deb:
+            return
+        deb_path = os.path.expanduser(deb)
+        if not os.path.isfile(deb_path):
+            warn(f"File not found: {deb_path}"); return
+    else:
+        ok(f"Found: {deb_url}")
+        section("Step 2 — Downloading TrueSync")
+        import tempfile
+        fd, deb_path = tempfile.mkstemp(suffix=".deb", prefix="zoho_truesync_")
+        os.close(fd)
+        if not _cloud_zoho_download_deb(deb_url, deb_path):
+            try: os.unlink(deb_path)
+            except OSError: pass
+            return
+        ok(f"Downloaded to {deb_path}")
+
+    section("Installing TrueSync")
+    rc, _, _ = _cloud_run(
+        f"sudo dpkg -i {shlex.quote(deb_path)}",
+        what="Install the Zoho TrueSync .deb.",
+        sudo=True, timeout=300,
+    )
+    if rc != 0:
+        info("dpkg flagged missing dependencies — running apt to fix them…")
+        _cloud_run("sudo apt install -f -y",
+                   what="Pull in any libraries TrueSync needs.",
+                   sudo=True, timeout=600)
+
+    # Clean up the temp download (best effort)
+    if deb_url:   # only delete if WE downloaded it; keep user-provided files
+        try: os.unlink(deb_path)
+        except OSError: pass
+
     rc, _, _ = run_cmd("which truesync || ls /opt/Zoho* 2>/dev/null")
     if rc == 0:
-        ok("Zoho TrueSync installed. Look for 'TrueSync' in your app menu.")
+        ok("Zoho TrueSync installed! Look for 'TrueSync' in your app menu.")
     else:
-        warn("Couldn't find the TrueSync binary. Check your app menu manually.")
+        warn("Couldn't auto-detect the TrueSync binary. Check your app menu manually.")
 
 def feat_cloud_manager(backend, bctx, slog):
     """Cloud Drive Manager — guided rclone wrapper for non-technical users.

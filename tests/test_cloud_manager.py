@@ -365,6 +365,64 @@ class TestWorksWithoutAPIKey:
         assert called == []
 
 
+class TestZohoTrueSyncAutoDetect:
+    def test_finds_deb_url_in_html(self, monkeypatch):
+        # The page returns one direct .deb link in raw HTML
+        html = ('<html><body>'
+                '<a href="https://downloads.zohocdn.com/x/ZohoWorkDrive-TrueSync_amd64.deb">Linux 64-bit</a>'
+                '</body></html>')
+        class FakeResp:
+            def read(self): return html.encode("utf-8")
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        monkeypatch.setattr(tg.urllib.request, "urlopen",
+                            lambda *a, **k: FakeResp())
+        # All HEAD checks succeed
+        monkeypatch.setattr(tg, "_url_is_alive", lambda url, timeout=10: True)
+        found = tg._zoho_find_truesync_deb_url()
+        assert found == "https://downloads.zohocdn.com/x/ZohoWorkDrive-TrueSync_amd64.deb"
+
+    def test_returns_none_when_page_has_no_deb_link(self, monkeypatch):
+        html = "<html><body>No links here</body></html>"
+        class FakeResp:
+            def read(self): return html.encode("utf-8")
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        monkeypatch.setattr(tg.urllib.request, "urlopen",
+                            lambda *a, **k: FakeResp())
+        monkeypatch.setattr(tg, "_url_is_alive", lambda url, timeout=10: True)
+        assert tg._zoho_find_truesync_deb_url() is None
+
+    def test_ranks_zoho_truesync_url_highest(self, monkeypatch):
+        # Page links a generic .deb AND a Zoho TrueSync one — TrueSync wins
+        html = ('<html>'
+                '<a href="https://example.com/random.deb">Other</a>'
+                '<a href="https://zoho.com/workdrive/truesync_linux_amd64.deb">TrueSync</a>'
+                '</html>')
+        class FakeResp:
+            def read(self): return html.encode("utf-8")
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        monkeypatch.setattr(tg.urllib.request, "urlopen",
+                            lambda *a, **k: FakeResp())
+        monkeypatch.setattr(tg, "_url_is_alive", lambda url, timeout=10: True)
+        found = tg._zoho_find_truesync_deb_url()
+        assert "truesync" in found.lower()
+        assert "random" not in found.lower()
+
+    def test_falls_back_when_url_is_dead(self, monkeypatch):
+        # The HTML lists a .deb but it 404s — function should return None
+        html = '<html><a href="https://zoho.com/truesync.deb">x</a></html>'
+        class FakeResp:
+            def read(self): return html.encode("utf-8")
+            def __enter__(self): return self
+            def __exit__(self, *a): pass
+        monkeypatch.setattr(tg.urllib.request, "urlopen",
+                            lambda *a, **k: FakeResp())
+        monkeypatch.setattr(tg, "_url_is_alive", lambda url, timeout=10: False)
+        assert tg._zoho_find_truesync_deb_url() is None
+
+
 class TestFeatureRegistered:
     def test_in_menu_items(self):
         keys = [row[0] for row in tg.MENU_ITEMS]
