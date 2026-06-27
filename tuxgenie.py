@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.75.0"
+__version__ = "5.76.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -6015,11 +6015,58 @@ def _cloud_add_drive(backend, bctx, slog):
     elif prov["auth"] == "s3":
         _cloud_add_s3(backend, bctx, slog, name, prov)
 
+def _run_oauth_with_browser_open(cmd, prov_name, timeout=600):
+    """Stream rclone's OAuth flow, auto-open the localhost callback URL in a
+    browser the moment rclone prints it, and keep the user informed about
+    what's happening. Without this, users see "Waiting for code…" and think
+    the app has hung — when in fact rclone is patiently waiting for them to
+    finish sign-in in a browser they may not have noticed.
+    """
+    print(f"\n  {CYAN}▶ Running rclone — watch for the sign-in link below…{R}\n")
+    proc = subprocess.Popen(
+        cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    opened_url = None
+    url_re = re.compile(r'(http://127\.0\.0\.1:\d+/auth\?[^\s]+)')
+    start = time.time()
+    try:
+        for line in iter(proc.stdout.readline, ''):
+            print(f"  {DIM}{line.rstrip()}{R}")
+            if not opened_url:
+                m = url_re.search(line)
+                if m:
+                    opened_url = m.group(1)
+                    print(f"\n  {BG_GREEN}{BWHITE}{BOLD}  ★  Sign-in URL detected — opening your browser…  {R}")
+                    print(f"  {DIM}If it doesn't open, copy this into a browser yourself:{R}")
+                    print(f"  {BOLD}{BLUE}{opened_url}{R}\n")
+                    try:
+                        subprocess.Popen(
+                            ["xdg-open", opened_url],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            start_new_session=True,
+                        )
+                    except Exception:
+                        pass
+                    print(f"  {YELLOW}{BOLD}⏳  Waiting for you to finish sign-in in the browser…{R}")
+                    print(f"  {DIM}(Press Ctrl-C here to cancel.){R}\n")
+            if time.time() - start > timeout:
+                proc.terminate()
+                warn(f"Timed out after {timeout//60} minutes waiting for sign-in.")
+                return -1
+        proc.wait()
+        return proc.returncode
+    except KeyboardInterrupt:
+        proc.terminate()
+        print(f"\n  {YELLOW}Cancelled — sign-in aborted.{R}")
+        return -1
+
+
 def _cloud_add_oauth(backend, bctx, slog, name, prov):
     if _cloud_is_headless():
         section("Headless session detected")
-        print(f"  No graphical browser available. To sign in:")
-        print(f"    {CYAN}1.{R}  On a desktop machine, run:  "
+        print(f"  No graphical browser available here. To sign in:")
+        print(f"    {CYAN}1.{R}  On a desktop machine with a browser, run:  "
               f"{BOLD}rclone authorize \"{prov['type']}\"{R}")
         print(f"    {CYAN}2.{R}  Sign in to {prov['name']} when the browser opens")
         print(f"    {CYAN}3.{R}  Copy the JSON token printed in the terminal")
@@ -6030,16 +6077,33 @@ def _cloud_add_oauth(backend, bctx, slog, name, prov):
         if not tok:
             return
         cmd = f"rclone config create {shlex.quote(name)} {prov['type']} token={shlex.quote(tok)}"
+        _cloud_run(cmd, what=f"Add {prov['name']} drive '{name}' to rclone.", timeout=60)
     else:
-        section("Browser sign-in")
-        print(f"  Your browser will open to sign in to {prov['name']}. Approve the")
-        print(f"  access request, then come back here.\n")
+        section(f"Sign in to {prov['name']}")
+        print(f"  {BG_NAVY}{BWHITE}{BOLD}  Here's what's about to happen:  {R}")
+        print(f"    {CYAN}1.{R}  rclone will print a sign-in URL like {DIM}http://127.0.0.1:...{R}")
+        print(f"    {CYAN}2.{R}  TuxGenie will open it in your browser automatically.")
+        print(f"    {CYAN}3.{R}  You sign in to {prov['name']} and click {BOLD}Allow{R}.")
+        print(f"    {CYAN}4.{R}  This screen will finish on its own — no need to come back here.")
+        print(f"\n  {DIM}If anything stalls, press Ctrl-C to cancel and try again.{R}")
         cmd = f"rclone config create {shlex.quote(name)} {prov['type']}"
-    _cloud_run(cmd, what=f"Add {prov['name']} drive '{name}' to rclone.", timeout=300)
+        print(f"\n  {DIM}$ {cmd}{R}")
+        try:
+            ans = input(f"  {BOLD}Start sign-in?{R} {C('[y]',GREEN,BOLD)} yes  "
+                        f"{C('[n]',RED,BOLD)} no: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print(); return
+        if ans not in ("y", "yes", ""):
+            info("Cancelled."); return
+        rc = _run_oauth_with_browser_open(cmd, prov['name'], timeout=600)
+        if rc == 0:
+            ok("Sign-in complete.")
+        else:
+            warn("Sign-in didn't finish. Try again or use the headless paste flow.")
     if _cloud_verify_remote(name):
         ok(f"Drive '{name}' added and verified.")
     else:
-        warn(f"Drive '{name}' was created but verification failed. Try Browse to test it.")
+        warn(f"Drive '{name}' was not verified. Try Browse to test it.")
 
 def _cloud_add_webdav(backend, bctx, slog, name, prov):
     import getpass as _gp

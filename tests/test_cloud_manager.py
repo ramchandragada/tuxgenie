@@ -230,10 +230,13 @@ class TestObscure:
 class TestAddOauthCommand:
     def test_desktop_session_uses_browser_flow(self, monkeypatch):
         runs = []
-        monkeypatch.setattr(tg, "_cloud_run",
-                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
+        # Desktop OAuth goes through the streaming helper, not _cloud_run
+        monkeypatch.setattr(tg, "_run_oauth_with_browser_open",
+                            lambda cmd, prov_name, timeout=600: runs.append(cmd) or 0)
         monkeypatch.setattr(tg, "_cloud_is_headless", lambda: False)
         monkeypatch.setattr(tg, "_cloud_verify_remote", lambda _n: True)
+        # User says yes to "Start sign-in?"
+        monkeypatch.setattr("builtins.input", _inputs("y"))
         tg._cloud_add_oauth(None, {}, [], "workdrive",
                             {"name": "Google Drive", "type": "drive", "auth": "oauth"})
         assert len(runs) == 1
