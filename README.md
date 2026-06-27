@@ -106,6 +106,9 @@ Get a free API key at [console.anthropic.com](https://console.anthropic.com).
 | 14 | **SSH Diagnostics** | Key auth, config issues, connectivity debugging |
 | 15 | **Process Manager** | Find CPU/memory hogs, diagnose runaway processes |
 | 16 | **Config Backup** | Safe backup of system configs before changes |
+| 77 | **Install Apps** | One-tap catalog of 64 popular Linux apps — Brave, Signal, Obsidian, … |
+| 88 | **Cloud Sync** | Guided rclone wrapper — Google Drive, Dropbox, OneDrive, S3, WebDAV from a single menu |
+| 99 | **AI Tools** | One-tap installer for Ollama, Claude Code, ChatGPT, Whisper and a local-AI starter pack |
 | u | **Self-Update** | Type `u` to check for and install the latest TuxGenie |
 
 ---

@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.73.0"
+__version__ = "5.74.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5770,6 +5770,569 @@ AI_CATALOG = [
 ]
 
 
+# ── FEATURE 88: Cloud Drive Manager ──────────────────────────────────────────
+# Guided rclone wrapper for non-technical users. Persistent dashboard with a
+# provider picker, browse, backup/sync, mount, encrypt, remove. Every
+# state-changing rclone command is routed through agentic_engine() so the
+# existing per-command approval flow stays the safety boundary. Passwords are
+# never printed or logged — always piped through `rclone obscure` first.
+
+CLOUD_MOUNTS_FILE = os.path.join(CFG_DIR, "cloud-mounts.json")
+
+CLOUD_PROVIDERS = [
+    {"id": 1, "name": "Google Drive",            "type": "drive",    "auth": "oauth"},
+    {"id": 2, "name": "Dropbox",                 "type": "dropbox",  "auth": "oauth"},
+    {"id": 3, "name": "OneDrive",                "type": "onedrive", "auth": "oauth"},
+    {"id": 4, "name": "Box",                     "type": "box",      "auth": "oauth"},
+    {"id": 5, "name": "pCloud",                  "type": "pcloud",   "auth": "oauth"},
+    {"id": 6, "name": "Nextcloud / WebDAV",      "type": "webdav",   "auth": "creds"},
+    {"id": 7, "name": "Amazon S3 / S3-compatible","type": "s3",      "auth": "s3"},
+]
+
+_PRETTY_TYPE = {
+    "drive": "Google Drive", "dropbox": "Dropbox", "onedrive": "OneDrive",
+    "box": "Box", "pcloud": "pCloud", "webdav": "WebDAV / Nextcloud",
+    "s3": "Amazon S3 / S3-compat", "crypt": "Encrypted overlay",
+}
+
+def _cloud_pretty_type(t): return _PRETTY_TYPE.get(t, t)
+
+def _cloud_rclone_installed():
+    return shutil.which("rclone") is not None
+
+def _cloud_is_headless():
+    """Best-effort headless detection — no GUI session or active SSH."""
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return True
+    return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+def _cloud_load_mounts():
+    try:
+        return json.loads(open(CLOUD_MOUNTS_FILE).read())
+    except Exception:
+        return []
+
+def _cloud_save_mounts(mounts):
+    try:
+        with open(CLOUD_MOUNTS_FILE, "w") as f:
+            json.dump(mounts, f)
+    except Exception:
+        pass
+
+def _cloud_list_remotes():
+    """Return [(name, type), ...] from `rclone listremotes` + `config dump`."""
+    rc, out, _ = run_cmd("rclone listremotes")
+    if rc != 0:
+        return []
+    names = [ln.rstrip(":").strip() for ln in out.splitlines() if ln.strip()]
+    types = {}
+    rc, out, _ = run_cmd("rclone config dump")
+    if rc == 0:
+        try:
+            for nm, conf in json.loads(out).items():
+                types[nm] = conf.get("type", "?")
+        except Exception:
+            pass
+    return [(n, types.get(n, "?")) for n in names]
+
+def _cloud_obscure(plain):
+    """Run `rclone obscure` on a plaintext password — never log/print the result."""
+    try:
+        r = subprocess.run(["rclone", "obscure", plain],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return ""
+
+def _cloud_verify_remote(name):
+    rc, _, _ = run_cmd(f"rclone lsd {shlex.quote(name)}: --max-depth 1", timeout=30)
+    return rc == 0
+
+def _cloud_render_dashboard(remotes):
+    hdr("Cloud Sync — your drives in one place")
+    section(f"Your cloud drives  ({len(remotes)})")
+    if not remotes:
+        print(f"    {DIM}No cloud drives connected yet.{R}")
+        print(f"    {DIM}Press [1] below to add your first one (takes ~1 minute).{R}")
+    else:
+        for i, (name, t) in enumerate(remotes, 1):
+            print(f"    {BLUE}{BOLD}{i}.{R}  {BOLD}{name.ljust(20)}{R}  "
+                  f"{DIM}{_cloud_pretty_type(t).ljust(22)}{R}  {GREEN}{BOLD}✔ connected{R}")
+    print(f"\n  {BOLD}What would you like to do?{R}")
+    rows = [
+        ("1", "Add a cloud drive",   "Google Drive · Dropbox · OneDrive · …"),
+        ("2", "Browse a drive",      "Walk folders without opening a browser"),
+        ("3", "Backup to a drive",   "One-way copy — safe, never deletes"),
+        ("4", "Two-way sync",        "Keep a folder in sync both ways"),
+        ("5", "Mount as a folder",   "Appears in your file manager"),
+        ("6", "Encrypt a drive",     "Filenames + contents encrypted"),
+        ("7", "Remove a drive",      "Disconnect this drive from TuxGenie"),
+        ("8", "Zoho WorkDrive",      "Special path — uses Zoho's own app"),
+    ]
+    for n, label, tip in rows:
+        print(f"    {BLUE}{BOLD}[{n}]{R}  {BOLD}{label.ljust(22)}{R}  {DIM}{tip}{R}")
+    print(f"\n    {BLUE}{BOLD}[q]{R}  {BOLD}Back to main menu{R}")
+
+def _cloud_ensure_rclone(backend, bctx, slog):
+    if _cloud_rclone_installed():
+        return True
+    hdr("Cloud Sync — rclone not installed")
+    print(f"  {YELLOW}{BOLD}⚠{R}  rclone isn't installed yet. TuxGenie needs it to talk to your")
+    print(f"     cloud drives. It's a single ~50 MB binary from rclone.org.\n")
+    print(f"    {BLUE}{BOLD}[1]{R}  {BOLD}Install rclone (recommended){R}")
+    print(f"    {BLUE}{BOLD}[q]{R}  {BOLD}Back to main menu{R}")
+    try:
+        ans = input(f"\n  ❯ ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if ans != "1":
+        return False
+    agentic_engine(
+        backend,
+        "Install rclone using the official installer. Run exactly this command "
+        "and only this command: curl https://rclone.org/install.sh | sudo bash. "
+        "Then verify it worked with: rclone version",
+        bctx, slog
+    )
+    return _cloud_rclone_installed()
+
+def _cloud_pick_remote(remotes, prompt_text):
+    if not remotes:
+        warn("No cloud drives yet. Use [1] Add a cloud drive first.")
+        return None
+    print(f"\n  {BOLD}{prompt_text}{R}")
+    for i, (name, t) in enumerate(remotes, 1):
+        print(f"    {BLUE}{BOLD}[{i}]{R}  {BOLD}{name}{R}  {DIM}({_cloud_pretty_type(t)}){R}")
+    print(f"    {BLUE}{BOLD}[q]{R}  Cancel")
+    try:
+        sel = input(f"\n  ❯ ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return None
+    if sel in ("q", "back", "", "quit"):
+        return None
+    try:
+        idx = int(sel) - 1
+        if 0 <= idx < len(remotes):
+            return remotes[idx][0]
+    except ValueError:
+        pass
+    warn("Invalid choice.")
+    return None
+
+def _cloud_add_drive(backend, bctx, slog):
+    hdr("Add a cloud drive")
+    print(f"  {BOLD}Which cloud drive do you want to add?{R}\n")
+    for p in CLOUD_PROVIDERS:
+        print(f"    {BLUE}{BOLD}[{p['id']}]{R}  {BOLD}{p['name']}{R}")
+    print(f"\n    {BLUE}{BOLD}[q]{R}  Cancel")
+    try:
+        sel = input(f"\n  ❯ ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return
+    if sel in ("q", "", "back"):
+        return
+    try:
+        prov = next(p for p in CLOUD_PROVIDERS if p["id"] == int(sel))
+    except (StopIteration, ValueError):
+        warn("Invalid choice."); return
+    default_name = re.sub(r'\W+', '', prov['name'].lower().split()[0])
+    try:
+        raw_name = input(f"\n  {BOLD}Name for this drive (lowercase, no spaces) "
+                         f"[{default_name}]:{R}\n  ❯ ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    name = re.sub(r'\W+', '', raw_name) or default_name
+    if prov["auth"] == "oauth":
+        _cloud_add_oauth(backend, bctx, slog, name, prov)
+    elif prov["auth"] == "creds":
+        _cloud_add_webdav(backend, bctx, slog, name, prov)
+    elif prov["auth"] == "s3":
+        _cloud_add_s3(backend, bctx, slog, name, prov)
+
+def _cloud_add_oauth(backend, bctx, slog, name, prov):
+    if _cloud_is_headless():
+        section("Headless session detected")
+        print(f"  No graphical browser available. To sign in:")
+        print(f"    {CYAN}1.{R}  On a desktop machine, run:  "
+              f"{BOLD}rclone authorize \"{prov['type']}\"{R}")
+        print(f"    {CYAN}2.{R}  Sign in to {prov['name']} when the browser opens")
+        print(f"    {CYAN}3.{R}  Copy the JSON token printed in the terminal")
+        try:
+            tok = input(f"\n  {BOLD}Paste the token (or Enter to cancel):{R}\n  ❯ ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print(); return
+        if not tok:
+            return
+        cmd = f"rclone config create {shlex.quote(name)} {prov['type']} token={shlex.quote(tok)}"
+    else:
+        section("Browser sign-in")
+        print(f"  Your browser will open to sign in to {prov['name']}. Approve the")
+        print(f"  access request, then come back here.\n")
+        cmd = f"rclone config create {shlex.quote(name)} {prov['type']}"
+    agentic_engine(
+        backend,
+        f"Run exactly this command and only this command, do not improvise or add flags:\n"
+        f"{cmd}\n"
+        f"After it completes, verify with: rclone lsd {shlex.quote(name)}: --max-depth 1",
+        bctx, slog
+    )
+    if _cloud_verify_remote(name):
+        ok(f"Drive '{name}' added and verified.")
+    else:
+        warn(f"Drive '{name}' was created but verification failed. Try Browse to test it.")
+
+def _cloud_add_webdav(backend, bctx, slog, name, prov):
+    import getpass as _gp
+    try:
+        url = input(f"\n  {BOLD}WebDAV URL{R}\n  "
+                    f"{DIM}(Nextcloud: https://your-server/remote.php/dav/files/USERNAME){R}\n  ❯ ").strip()
+        user = input(f"  {BOLD}Username:{R}\n  ❯ ").strip()
+        pw = _gp.getpass(f"  Password (won't be shown): ")
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    if not url or not user or not pw:
+        warn("URL, username and password are all required."); return
+    obscured = _cloud_obscure(pw)
+    if not obscured:
+        err("Could not obscure the password. Is rclone working?"); return
+    cmd = (f"rclone config create {shlex.quote(name)} webdav "
+           f"url={shlex.quote(url)} user={shlex.quote(user)} "
+           f"pass={shlex.quote(obscured)} vendor=nextcloud")
+    print(f"\n  {DIM}Configuring with the URL, username and an obscured password…{R}")
+    agentic_engine(
+        backend,
+        f"Run exactly this command. Do not print the pass= value when reporting "
+        f"the result; it is an already-obscured token.\n{cmd}\n"
+        f"Then verify with: rclone lsd {shlex.quote(name)}: --max-depth 1",
+        bctx, slog
+    )
+    if _cloud_verify_remote(name):
+        ok(f"Drive '{name}' added and verified.")
+    else:
+        warn(f"Drive '{name}' created but verification failed. Check the URL/credentials.")
+
+def _cloud_add_s3(backend, bctx, slog, name, prov):
+    import getpass as _gp
+    print(f"\n  {BOLD}S3 provider:{R}  [1] AWS  [2] Backblaze B2  [3] Wasabi  "
+          f"[4] DigitalOcean Spaces  [5] Other")
+    try:
+        sp = input(f"  ❯ ").strip()
+        access_key = input(f"  {BOLD}Access Key ID:{R}\n  ❯ ").strip()
+        secret = _gp.getpass(f"  Secret Access Key (won't be shown): ")
+        region = input(f"  {BOLD}Region (e.g. us-east-1, blank for default):{R}\n  ❯ ").strip()
+        endpoint = input(f"  {BOLD}Custom endpoint URL (blank if AWS):{R}\n  ❯ ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    if not access_key or not secret:
+        warn("Access key and secret are required."); return
+    provider_map = {"1": "AWS", "2": "Other", "3": "Wasabi", "4": "DigitalOcean", "5": "Other"}
+    provider_str = provider_map.get(sp, "AWS")
+    parts = [
+        "rclone config create", shlex.quote(name), "s3",
+        f"provider={provider_str}",
+        f"access_key_id={shlex.quote(access_key)}",
+        f"secret_access_key={shlex.quote(secret)}",
+    ]
+    if region:   parts.append(f"region={shlex.quote(region)}")
+    if endpoint: parts.append(f"endpoint={shlex.quote(endpoint)}")
+    cmd = " ".join(parts)
+    agentic_engine(
+        backend,
+        f"Run exactly this command. Do NOT echo the secret_access_key value "
+        f"when reporting the result.\n{cmd}\n"
+        f"Then verify with: rclone lsd {shlex.quote(name)}: --max-depth 1",
+        bctx, slog
+    )
+    if _cloud_verify_remote(name):
+        ok(f"Drive '{name}' added and verified.")
+    else:
+        warn(f"Drive '{name}' created but verification failed. Check the credentials/endpoint.")
+
+def _cloud_browse(remotes):
+    name = _cloud_pick_remote(remotes, "Which drive do you want to browse?")
+    if not name:
+        return
+    path = ""
+    while True:
+        section(f"Browsing  {name}:/{path}")
+        rclone_path = f"{shlex.quote(name)}:{shlex.quote(path)}" if path else f"{shlex.quote(name)}:"
+        rc, out, _ = run_cmd(f"rclone lsjson {rclone_path} --dirs-only", timeout=30)
+        if rc != 0:
+            err("Could not list folders."); return
+        try:
+            items = json.loads(out)
+        except Exception:
+            items = []
+        if not items:
+            print(f"  {DIM}(no folders here){R}")
+        else:
+            for i, it in enumerate(items, 1):
+                print(f"    {BLUE}{BOLD}[{i}]{R}  \U0001F4C1 {it.get('Name', '?')}")
+        print(f"\n    {BLUE}{BOLD}[u]{R}  Up one level    {BLUE}{BOLD}[q]{R}  Done")
+        try:
+            sel = input(f"\n  ❯ ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print(); return
+        if sel in ("q", ""):
+            return
+        if sel == "u":
+            path = path.rsplit("/", 1)[0] if "/" in path else ""
+            continue
+        try:
+            idx = int(sel) - 1
+            if 0 <= idx < len(items):
+                folder = items[idx].get("Name") or items[idx].get("Path")
+                path = f"{path}/{folder}" if path else folder
+        except ValueError:
+            warn("Invalid choice.")
+
+def _cloud_backup(backend, bctx, slog, remotes):
+    name = _cloud_pick_remote(remotes, "Backup TO which drive?")
+    if not name:
+        return
+    try:
+        local = input(f"\n  {BOLD}Which local folder?{R} [~/Documents]\n  ❯ ").strip() \
+                or "~/Documents"
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    local = os.path.expanduser(local)
+    if not os.path.isdir(local):
+        warn(f"Folder '{local}' doesn't exist."); return
+    try:
+        remote_path = input(f"  {BOLD}Save it on the drive as what?{R} "
+                            f"[{os.path.basename(local)}]\n  ❯ ").strip() \
+                      or os.path.basename(local)
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    print(f"\n  {BOLD}Mode:{R}")
+    print(f"    {BLUE}{BOLD}[1]{R}  {GREEN}Copy{R}  "
+          f"= upload new/changed files. {BOLD}NEVER deletes anything on the cloud.{R}")
+    print(f"    {BLUE}{BOLD}[2]{R}  {YELLOW}Sync{R}  "
+          f"= mirror exactly. {BOLD}Files deleted locally WILL be deleted on the cloud.{R}")
+    try:
+        mode = input(f"\n  ❯ ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    if mode not in ("1", "2"):
+        warn("Invalid choice."); return
+    verb = "copy" if mode == "1" else "sync"
+    target = f"{shlex.quote(name)}:{shlex.quote(remote_path)}"
+    dry  = f"rclone {verb} {shlex.quote(local)} {target} --dry-run"
+    real = f"rclone {verb} {shlex.quote(local)} {target} -P"
+    section("Step 1/2 — Dry run (nothing will be changed)")
+    agentic_engine(
+        backend,
+        f"Run exactly this dry-run command and summarise for the user how many "
+        f"files would be uploaded/updated/deleted. Do not improvise.\n{dry}",
+        bctx, slog
+    )
+    if verb == "sync":
+        print(f"\n  {BG_RED}{BOLD}  ⚠  SYNC will delete cloud files that are not present locally.  {R}")
+    try:
+        confirm = input(f"\n  {BOLD}Proceed with the real run?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    if confirm not in ("y", "yes"):
+        info("Cancelled. Nothing was changed."); return
+    section("Step 2/2 — Real run")
+    agentic_engine(
+        backend,
+        f"Run exactly this command and show live progress to the user. Do not improvise.\n{real}",
+        bctx, slog
+    )
+
+def _cloud_bisync(backend, bctx, slog, remotes):
+    name = _cloud_pick_remote(remotes, "Two-way sync with which drive?")
+    if not name:
+        return
+    try:
+        local = input(f"\n  {BOLD}Which local folder?{R}\n  ❯ ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    local = os.path.expanduser(local)
+    if not os.path.isdir(local):
+        warn(f"Folder '{local}' doesn't exist."); return
+    try:
+        remote_path = input(f"  {BOLD}Remote folder name on {name}:{R} "
+                            f"[{os.path.basename(local)}]\n  ❯ ").strip() \
+                      or os.path.basename(local)
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    target = f"{shlex.quote(name)}:{shlex.quote(remote_path)}"
+    print(f"\n  {BG_RED}{BOLD}  ⚠  Two-way sync makes BOTH sides match.  {R}")
+    print(f"  {YELLOW}Files deleted on either side may be deleted on the other.{R}")
+    print(f"  {YELLOW}First-time setup needs --resync to baseline both sides.{R}")
+    try:
+        first = input(f"\n  {BOLD}Is this the first time syncing this pair?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    cmd = (f"rclone bisync {shlex.quote(local)} {target} --resync -P"
+           if first in ("y", "yes")
+           else f"rclone bisync {shlex.quote(local)} {target} -P")
+    agentic_engine(
+        backend,
+        f"Run exactly this command and show progress. Do not improvise.\n{cmd}",
+        bctx, slog
+    )
+
+def _cloud_mount(backend, bctx, slog, remotes):
+    mounts = _cloud_load_mounts()
+    active = [m for m in mounts if os.path.ismount(m.get("mountpoint", ""))]
+    if active:
+        section("Active mounts")
+        for i, m in enumerate(active, 1):
+            print(f"    {BLUE}{BOLD}[u{i}]{R}  Unmount  {BOLD}{m['mountpoint']}{R}  "
+                  f"{DIM}({m['remote']}){R}")
+        print(f"    {DIM}— or pick a drive below to add another mount —{R}")
+    name = _cloud_pick_remote(remotes, "Mount which drive?")
+    if not name:
+        # User may have typed u1/u2 to unmount; check active list
+        return
+    default_mp = os.path.expanduser(f"~/cloud-{name}")
+    try:
+        mp = input(f"\n  {BOLD}Mount it at which folder?{R} [{default_mp}]\n  ❯ ").strip() \
+             or default_mp
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    mp = os.path.expanduser(mp)
+    try:
+        os.makedirs(mp, exist_ok=True)
+    except Exception as e:
+        err(f"Could not create mountpoint: {e}"); return
+    cmd = f"rclone mount {shlex.quote(name)}: {shlex.quote(mp)} --vfs-cache-mode full --daemon"
+    print(f"\n  {DIM}This will run in the background. Open your file manager and look for{R} {BOLD}{mp}{R}")
+    agentic_engine(
+        backend,
+        f"Run exactly this command (it runs as a background daemon):\n{cmd}\n"
+        f"Then verify the mount with: mount | grep {shlex.quote(mp)}",
+        bctx, slog
+    )
+    mounts = _cloud_load_mounts()
+    mounts.append({"remote": name, "mountpoint": mp, "started": time.time()})
+    _cloud_save_mounts(mounts)
+
+def _cloud_encrypt(backend, bctx, slog, remotes):
+    name = _cloud_pick_remote(remotes, "Add encryption ON TOP OF which existing drive?")
+    if not name:
+        return
+    import getpass as _gp
+    print(f"\n  {BG_RED}{BOLD}  ⚠  IMPORTANT: if you lose this password, the data is gone forever.  {R}")
+    print(f"  TuxGenie cannot recover it. Anthropic cannot recover it. Nobody can.")
+    print(f"  Write it down somewhere safe (or save it in your password manager).\n")
+    try:
+        confirm = input(f"  {BOLD}Understood?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    if confirm not in ("y", "yes"):
+        info("Cancelled."); return
+    try:
+        pw  = _gp.getpass(f"  Choose an encryption password (won't be shown): ")
+        pw2 = _gp.getpass(f"  Repeat it: ")
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    if pw != pw2:
+        err("Passwords don't match. Try again."); return
+    if len(pw) < 12:
+        warn("Password is short. Strongly recommend 16+ characters.")
+        try:
+            ok_short = input(f"  Use it anyway? [y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if ok_short not in ("y", "yes"):
+            return
+    obscured = _cloud_obscure(pw)
+    if not obscured:
+        err("Could not obscure the password."); return
+    enc_name = f"{name}-encrypted"
+    cmd = (f"rclone config create {shlex.quote(enc_name)} crypt "
+           f"remote={shlex.quote(name + ':')} "
+           f"password={shlex.quote(obscured)} "
+           f"filename_encryption=standard")
+    print(f"\n  {DIM}Creating encrypted overlay '{enc_name}' over '{name}:'…{R}")
+    agentic_engine(
+        backend,
+        f"Run exactly this command. The password value is already obscured — "
+        f"do NOT print it when reporting the result.\n{cmd}\n"
+        f"Then verify with: rclone lsd {shlex.quote(enc_name)}: --max-depth 1",
+        bctx, slog
+    )
+
+def _cloud_remove(backend, bctx, slog, remotes):
+    name = _cloud_pick_remote(remotes, "Remove which drive?")
+    if not name:
+        return
+    print(f"\n  {YELLOW}This only disconnects '{name}' from TuxGenie. Your cloud data stays.{R}")
+    try:
+        confirm = input(f"  {BOLD}Really remove '{name}'?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    if confirm not in ("y", "yes"):
+        info("Cancelled."); return
+    agentic_engine(
+        backend,
+        f"Run exactly this command: rclone config delete {shlex.quote(name)}",
+        bctx, slog
+    )
+
+def _cloud_zoho_path(backend, bctx, slog):
+    hdr("Zoho WorkDrive — TrueSync app")
+    print(f"  {YELLOW}rclone doesn't have a Zoho WorkDrive backend.{R}")
+    print(f"  But Zoho ships their own desktop sync app called {BOLD}TrueSync{R}.")
+    print(f"  It runs in the background like Dropbox.\n")
+    print(f"  {DIM}Officially supported: Ubuntu LTS 22.04 / 24.04 (.deb installer){R}\n")
+    try:
+        ans = input(f"  {BOLD}Install Zoho WorkDrive TrueSync?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    if ans not in ("y", "yes"):
+        return
+    agentic_engine(
+        backend,
+        "Install Zoho WorkDrive TrueSync (this is NOT an rclone backend — it is "
+        "Zoho's own sync app). Download the latest TrueSync .deb from "
+        "https://www.zoho.com/workdrive/desktop-sync.html and install with "
+        "sudo dpkg -i. If apt complains about missing dependencies afterwards, "
+        "run: sudo apt install -f -y. Then verify the binary exists with: "
+        "which truesync || ls /opt/Zoho* 2>/dev/null. Note: only Ubuntu 22.04 "
+        "and 24.04 are officially supported by Zoho.",
+        bctx, slog
+    )
+
+def feat_cloud_manager(backend, bctx, slog):
+    """Cloud Drive Manager — guided rclone wrapper for non-technical users.
+    Persistent dashboard with provider picker, browse, backup, sync, mount, encrypt, remove."""
+    while True:
+        if not _cloud_ensure_rclone(backend, bctx, slog):
+            return
+        remotes = _cloud_list_remotes()
+        _cloud_render_dashboard(remotes)
+        try:
+            choice = input(f"\n  ❯ ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return
+        if choice in ("q", "quit", "back", "exit", ""):
+            return
+        try:
+            if   choice == "1": _cloud_add_drive(backend, bctx, slog)
+            elif choice == "2": _cloud_browse(remotes)
+            elif choice == "3": _cloud_backup(backend, bctx, slog, remotes)
+            elif choice == "4": _cloud_bisync(backend, bctx, slog, remotes)
+            elif choice == "5": _cloud_mount(backend, bctx, slog, remotes)
+            elif choice == "6": _cloud_encrypt(backend, bctx, slog, remotes)
+            elif choice == "7": _cloud_remove(backend, bctx, slog, remotes)
+            elif choice == "8": _cloud_zoho_path(backend, bctx, slog)
+            else: warn("Invalid choice.")
+        except KeyboardInterrupt:
+            print(f"\n  {YELLOW}Cancelled — back to Cloud Sync menu.{R}")
+        _history_append("Cloud Sync", "cloud")
+
+
 def feat_install_ai_tools(backend, bctx, slog):
     """Quick AI-tools installer — categorised list of popular AI apps.
     Same UX as Install Apps: numbers, ranges, multi-select, confirm.
@@ -6105,6 +6668,7 @@ MENU_ITEMS = [
     ("30", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
     ("77", "apps",      "Install Apps",       "64-app catalog (Brave, Signal, Obsidian, Blender, Zoho Mail…)", feat_install_apps),
+    ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
     ("99", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
     ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
@@ -6172,6 +6736,7 @@ def show_menu():
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
     _item("77", "Install Apps",        "🎁 64 apps: Brave, Signal, Obsidian, Blender, KeePassXC, Arattai, Zoho Mail…")
+    _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
     _item("99", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
 
     print(f"""
