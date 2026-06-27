@@ -141,54 +141,63 @@ class TestHeadless:
 # ── _cloud_remove (confirmation gating) ──────────────────────────────────────
 
 class TestRemoveRequiresConfirm:
-    def test_no_confirm_no_agentic_call(self, monkeypatch):
-        called = []
-        monkeypatch.setattr(tg, "agentic_engine",
-                            lambda *a, **k: called.append(a))
-        # First input picks drive 1, second declines the confirmation
+    def test_no_confirm_no_command_runs(self, monkeypatch):
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda *a, **k: runs.append(a) or (0, "", ""))
+        # First input picks drive 1, second declines the in-feature confirmation
         monkeypatch.setattr("builtins.input", _inputs("1", "n"))
         tg._cloud_remove(None, {}, [], [("workdrive", "drive")])
-        assert called == []   # nothing ran
+        assert runs == []   # nothing ran
 
-    def test_confirm_calls_agentic_with_right_command(self, monkeypatch):
-        prompts = []
-        monkeypatch.setattr(tg, "agentic_engine",
-                            lambda backend, prompt, bctx, slog: prompts.append(prompt))
+    def test_confirm_runs_right_command(self, monkeypatch):
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
         monkeypatch.setattr("builtins.input", _inputs("1", "y"))
         tg._cloud_remove(None, {}, [], [("workdrive", "drive")])
-        assert len(prompts) == 1
-        # The prompt must instruct the engine to run `rclone config delete <name>`
-        assert "rclone config delete workdrive" in prompts[0]
+        assert len(runs) == 1
+        assert "rclone config delete workdrive" in runs[0]
 
     def test_pick_cancel_does_nothing(self, monkeypatch):
-        called = []
-        monkeypatch.setattr(tg, "agentic_engine", lambda *a, **k: called.append(a))
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda *a, **k: runs.append(a) or (0, "", ""))
         monkeypatch.setattr("builtins.input", _inputs("q"))
         tg._cloud_remove(None, {}, [], [("workdrive", "drive")])
-        assert called == []
+        assert runs == []
 
 
 # ── Zoho path never creates an rclone remote ────────────────────────────────
 
 class TestZohoNeverCreatesRcloneRemote:
-    def test_zoho_install_does_not_call_rclone_config_create(self, monkeypatch):
-        prompts = []
-        monkeypatch.setattr(tg, "agentic_engine",
-                            lambda backend, prompt, bctx, slog: prompts.append(prompt))
-        monkeypatch.setattr("builtins.input", _inputs("y"))
+    def test_zoho_install_never_creates_rclone_remote(self, monkeypatch, tmp_path):
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
+        monkeypatch.setattr(tg, "run_cmd", lambda *a, **k: (0, "", ""))
+        # No real browser
+        monkeypatch.setattr(tg.subprocess, "Popen", lambda *a, **k: None)
+        # Make a fake .deb so the existence check passes
+        fake_deb = tmp_path / "zoho.deb"
+        fake_deb.write_bytes(b"fake")
+        # answer "y" to install, then provide path to fake deb
+        monkeypatch.setattr("builtins.input", _inputs("y", str(fake_deb)))
         tg._cloud_zoho_path(None, {}, [])
-        assert len(prompts) == 1
-        # CRITICAL: never pretend Zoho is an rclone backend.
-        assert "rclone config create" not in prompts[0]
-        # And the install hint must mention TrueSync (Zoho's actual app).
-        assert "TrueSync" in prompts[0]
+        # CRITICAL: never construct an rclone backend for Zoho
+        for cmd in runs:
+            assert "rclone config create" not in cmd
+            assert "rclone " not in cmd or "rclone obscure" in cmd  # rclone obscure is OK
+        # And the install path must use dpkg (TrueSync .deb), not rclone
+        assert any("dpkg -i" in c for c in runs)
 
     def test_zoho_decline_does_nothing(self, monkeypatch):
-        called = []
-        monkeypatch.setattr(tg, "agentic_engine", lambda *a, **k: called.append(a))
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda *a, **k: runs.append(a) or (0, "", ""))
         monkeypatch.setattr("builtins.input", _inputs("n"))
         tg._cloud_zoho_path(None, {}, [])
-        assert called == []
+        assert runs == []
 
 
 # ── _cloud_obscure ───────────────────────────────────────────────────────────
@@ -220,67 +229,65 @@ class TestObscure:
 
 class TestAddOauthCommand:
     def test_desktop_session_uses_browser_flow(self, monkeypatch):
-        prompts = []
-        monkeypatch.setattr(tg, "agentic_engine",
-                            lambda backend, prompt, bctx, slog: prompts.append(prompt))
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
         monkeypatch.setattr(tg, "_cloud_is_headless", lambda: False)
         monkeypatch.setattr(tg, "_cloud_verify_remote", lambda _n: True)
         tg._cloud_add_oauth(None, {}, [], "workdrive",
                             {"name": "Google Drive", "type": "drive", "auth": "oauth"})
-        assert len(prompts) == 1
+        assert len(runs) == 1
         # On desktop we use the browser-opening form (no token=)
-        assert "rclone config create workdrive drive" in prompts[0]
-        assert "token=" not in prompts[0]
+        assert "rclone config create workdrive drive" in runs[0]
+        assert "token=" not in runs[0]
 
     def test_headless_session_uses_paste_flow(self, monkeypatch):
-        prompts = []
-        monkeypatch.setattr(tg, "agentic_engine",
-                            lambda backend, prompt, bctx, slog: prompts.append(prompt))
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
         monkeypatch.setattr(tg, "_cloud_is_headless", lambda: True)
         monkeypatch.setattr(tg, "_cloud_verify_remote", lambda _n: True)
         # Token paste
         monkeypatch.setattr("builtins.input", _inputs('{"access_token":"abc"}'))
         tg._cloud_add_oauth(None, {}, [], "workdrive",
                             {"name": "Google Drive", "type": "drive", "auth": "oauth"})
-        assert len(prompts) == 1
-        assert "token=" in prompts[0]
-        assert "rclone config create workdrive drive" in prompts[0]
+        assert len(runs) == 1
+        assert "token=" in runs[0]
+        assert "rclone config create workdrive drive" in runs[0]
 
 
 # ── Backup runs dry-run BEFORE the real copy ────────────────────────────────
 
 class TestBackupDryRunFirst:
     def test_copy_mode_runs_dry_run_first_then_real(self, tmp_path, monkeypatch):
-        prompts = []
-        monkeypatch.setattr(tg, "agentic_engine",
-                            lambda backend, prompt, bctx, slog: prompts.append(prompt))
-        # Make a real local folder so the existence check passes
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
         local = tmp_path / "Docs"
         local.mkdir()
         # Pick drive 1, local path, remote path, mode=1 (copy), confirm=y
         monkeypatch.setattr("builtins.input",
                             _inputs("1", str(local), "Docs", "1", "y"))
         tg._cloud_backup(None, {}, [], [("workdrive", "drive")])
-        # Two engine invocations: dry-run then real
-        assert len(prompts) == 2
-        assert "--dry-run" in prompts[0]
-        assert "--dry-run" not in prompts[1]
-        # Both invocations target the chosen remote
-        assert "workdrive:" in prompts[0]
-        assert "workdrive:" in prompts[1]
+        # Two runs: dry-run then real
+        assert len(runs) == 2
+        assert "--dry-run" in runs[0]
+        assert "--dry-run" not in runs[1]
+        assert "workdrive:" in runs[0]
+        assert "workdrive:" in runs[1]
 
     def test_decline_after_dry_run_skips_real(self, tmp_path, monkeypatch):
-        prompts = []
-        monkeypatch.setattr(tg, "agentic_engine",
-                            lambda backend, prompt, bctx, slog: prompts.append(prompt))
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
         local = tmp_path / "Docs"
         local.mkdir()
         monkeypatch.setattr("builtins.input",
                             _inputs("1", str(local), "Docs", "1", "n"))
         tg._cloud_backup(None, {}, [], [("workdrive", "drive")])
         # Only the dry-run ran; user declined the real run
-        assert len(prompts) == 1
-        assert "--dry-run" in prompts[0]
+        assert len(runs) == 1
+        assert "--dry-run" in runs[0]
 
 
 # ── Browse uses lsjson and routes folder picks ──────────────────────────────
@@ -318,6 +325,42 @@ class TestProviderCatalog:
 
 
 # ── Feature is registered in the menu ───────────────────────────────────────
+
+class TestWorksWithoutAPIKey:
+    """The whole Cloud Sync feature must work even when the user has no API
+    credits. We achieved this by routing through _cloud_run (direct execution
+    with an approval prompt) instead of agentic_engine. This test guards that
+    by asserting no cloud helper calls agentic_engine."""
+
+    def test_install_rclone_does_not_call_agentic_engine(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(tg, "agentic_engine", lambda *a, **k: called.append(a))
+        monkeypatch.setattr(tg, "_cloud_run", lambda *a, **k: (0, "", ""))
+        monkeypatch.setattr(tg, "_cloud_rclone_installed", lambda: False)
+        # User picks [1] Install rclone
+        monkeypatch.setattr("builtins.input", _inputs("1"))
+        tg._cloud_ensure_rclone(None, {}, [])
+        assert called == []
+
+    def test_remove_does_not_call_agentic_engine(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(tg, "agentic_engine", lambda *a, **k: called.append(a))
+        monkeypatch.setattr(tg, "_cloud_run", lambda *a, **k: (0, "", ""))
+        monkeypatch.setattr("builtins.input", _inputs("1", "y"))
+        tg._cloud_remove(None, {}, [], [("workdrive", "drive")])
+        assert called == []
+
+    def test_backup_does_not_call_agentic_engine(self, monkeypatch, tmp_path):
+        called = []
+        monkeypatch.setattr(tg, "agentic_engine", lambda *a, **k: called.append(a))
+        monkeypatch.setattr(tg, "_cloud_run", lambda *a, **k: (0, "", ""))
+        local = tmp_path / "Docs"
+        local.mkdir()
+        monkeypatch.setattr("builtins.input",
+                            _inputs("1", str(local), "Docs", "1", "y"))
+        tg._cloud_backup(None, {}, [], [("workdrive", "drive")])
+        assert called == []
+
 
 class TestFeatureRegistered:
     def test_in_menu_items(self):

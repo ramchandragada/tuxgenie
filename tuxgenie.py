@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.74.0"
+__version__ = "5.75.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5773,9 +5773,11 @@ AI_CATALOG = [
 # ── FEATURE 88: Cloud Drive Manager ──────────────────────────────────────────
 # Guided rclone wrapper for non-technical users. Persistent dashboard with a
 # provider picker, browse, backup/sync, mount, encrypt, remove. Every
-# state-changing rclone command is routed through agentic_engine() so the
-# existing per-command approval flow stays the safety boundary. Passwords are
-# never printed or logged — always piped through `rclone obscure` first.
+# state-changing rclone command goes through _cloud_run(), which shows the
+# command, asks y/n/skip, then runs it directly via run_cmd_live — so this
+# whole feature works even when the user has no API credits (deterministic
+# tasks shouldn't need Claude). Passwords are read via getpass, piped through
+# `rclone obscure`, and the plaintext never leaves the local function.
 
 CLOUD_MOUNTS_FILE = os.path.join(CFG_DIR, "cloud-mounts.json")
 
@@ -5850,6 +5852,67 @@ def _cloud_verify_remote(name):
     rc, _, _ = run_cmd(f"rclone lsd {shlex.quote(name)}: --max-depth 1", timeout=30)
     return rc == 0
 
+def _cloud_run(cmd, what="", sudo=False, timeout=120, capture=False, hide_in_print=()):
+    """Approval-gated direct command runner for the Cloud Sync feature.
+
+    Replaces routing through agentic_engine for deterministic rclone commands —
+    works without an API key and never asks Claude to interpret what we asked
+    for. Mirrors the existing safety model: shows the command, asks for y/n/s,
+    runs it with sudo if needed.
+
+    Args:
+        cmd:    the command to run (shell string).
+        what:   plain-English description shown above the command.
+        sudo:   if True, ensures sudo_pw is fetched even if cmd doesn't start with sudo.
+        timeout: seconds before SIGKILL.
+        capture: if True, returns stdout/stderr without printing them (for verifies).
+        hide_in_print: substrings of `cmd` to redact when SHOWING the command
+                       (so obscured passwords or tokens don't appear on screen).
+
+    Returns:
+        (rc, stdout, stderr). rc=-1 means user skipped/cancelled.
+    """
+    display_cmd = cmd
+    for h in hide_in_print:
+        if h:
+            display_cmd = display_cmd.replace(h, "***")
+    if what:
+        print(f"\n  {CYAN}▶{R} {BOLD}{what}{R}")
+    print(f"  {DIM}$ {display_cmd}{R}")
+    try:
+        ans = input(f"  {BOLD}Run it?{R} {C('[y]',GREEN,BOLD)} yes  "
+                    f"{C('[n]',RED,BOLD)} no  {C('[s]',YELLOW,BOLD)} skip: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return -1, "", "Cancelled"
+    if ans in ("n", "no"):
+        info("Cancelled."); return -1, "", "Cancelled by user"
+    if ans in ("s", "skip"):
+        info("Skipped."); return -1, "", "Skipped by user"
+    if ans not in ("y", "yes", ""):
+        info("Cancelled."); return -1, "", "Cancelled"
+
+    sudo_pw = None
+    if sudo or cmd.strip().startswith("sudo"):
+        try:
+            sudo_pw = get_or_cache_sudo_password()
+        except KeyboardInterrupt:
+            return -1, "", "Cancelled"
+
+    if capture:
+        rc, stdout, stderr = run_cmd(cmd, timeout=timeout)
+    else:
+        print(f"  {CYAN}▶ Running…{R}")
+        rc, stdout, stderr = run_cmd_live(cmd, sudo_password=sudo_pw, timeout=timeout)
+    if rc == 0:
+        ok("Done.")
+    elif rc == -1:
+        warn(f"Cancelled or timed out after {timeout}s.")
+    else:
+        warn(f"Exit {rc}.")
+    return rc, stdout, stderr
+
+
 def _cloud_render_dashboard(remotes):
     hdr("Cloud Sync — your drives in one place")
     section(f"Your cloud drives  ({len(remotes)})")
@@ -5890,12 +5953,10 @@ def _cloud_ensure_rclone(backend, bctx, slog):
         return False
     if ans != "1":
         return False
-    agentic_engine(
-        backend,
-        "Install rclone using the official installer. Run exactly this command "
-        "and only this command: curl https://rclone.org/install.sh | sudo bash. "
-        "Then verify it worked with: rclone version",
-        bctx, slog
+    _cloud_run(
+        "curl https://rclone.org/install.sh | sudo bash",
+        what="Download and install rclone from the official site (~50 MB).",
+        sudo=True, timeout=600,
     )
     return _cloud_rclone_installed()
 
@@ -5974,13 +6035,7 @@ def _cloud_add_oauth(backend, bctx, slog, name, prov):
         print(f"  Your browser will open to sign in to {prov['name']}. Approve the")
         print(f"  access request, then come back here.\n")
         cmd = f"rclone config create {shlex.quote(name)} {prov['type']}"
-    agentic_engine(
-        backend,
-        f"Run exactly this command and only this command, do not improvise or add flags:\n"
-        f"{cmd}\n"
-        f"After it completes, verify with: rclone lsd {shlex.quote(name)}: --max-depth 1",
-        bctx, slog
-    )
+    _cloud_run(cmd, what=f"Add {prov['name']} drive '{name}' to rclone.", timeout=300)
     if _cloud_verify_remote(name):
         ok(f"Drive '{name}' added and verified.")
     else:
@@ -6003,13 +6058,9 @@ def _cloud_add_webdav(backend, bctx, slog, name, prov):
     cmd = (f"rclone config create {shlex.quote(name)} webdav "
            f"url={shlex.quote(url)} user={shlex.quote(user)} "
            f"pass={shlex.quote(obscured)} vendor=nextcloud")
-    print(f"\n  {DIM}Configuring with the URL, username and an obscured password…{R}")
-    agentic_engine(
-        backend,
-        f"Run exactly this command. Do not print the pass= value when reporting "
-        f"the result; it is an already-obscured token.\n{cmd}\n"
-        f"Then verify with: rclone lsd {shlex.quote(name)}: --max-depth 1",
-        bctx, slog
+    _cloud_run(
+        cmd, what=f"Add WebDAV drive '{name}' (password is already obscured).",
+        timeout=120, hide_in_print=(shlex.quote(obscured),),
     )
     if _cloud_verify_remote(name):
         ok(f"Drive '{name}' added and verified.")
@@ -6041,12 +6092,9 @@ def _cloud_add_s3(backend, bctx, slog, name, prov):
     if region:   parts.append(f"region={shlex.quote(region)}")
     if endpoint: parts.append(f"endpoint={shlex.quote(endpoint)}")
     cmd = " ".join(parts)
-    agentic_engine(
-        backend,
-        f"Run exactly this command. Do NOT echo the secret_access_key value "
-        f"when reporting the result.\n{cmd}\n"
-        f"Then verify with: rclone lsd {shlex.quote(name)}: --max-depth 1",
-        bctx, slog
+    _cloud_run(
+        cmd, what=f"Add S3 drive '{name}'.", timeout=120,
+        hide_in_print=(shlex.quote(secret),),
     )
     if _cloud_verify_remote(name):
         ok(f"Drive '{name}' added and verified.")
@@ -6125,12 +6173,8 @@ def _cloud_backup(backend, bctx, slog, remotes):
     dry  = f"rclone {verb} {shlex.quote(local)} {target} --dry-run"
     real = f"rclone {verb} {shlex.quote(local)} {target} -P"
     section("Step 1/2 — Dry run (nothing will be changed)")
-    agentic_engine(
-        backend,
-        f"Run exactly this dry-run command and summarise for the user how many "
-        f"files would be uploaded/updated/deleted. Do not improvise.\n{dry}",
-        bctx, slog
-    )
+    _cloud_run(dry, what="Preview what would change. No files will be modified.",
+               timeout=600)
     if verb == "sync":
         print(f"\n  {BG_RED}{BOLD}  ⚠  SYNC will delete cloud files that are not present locally.  {R}")
     try:
@@ -6140,11 +6184,8 @@ def _cloud_backup(backend, bctx, slog, remotes):
     if confirm not in ("y", "yes"):
         info("Cancelled. Nothing was changed."); return
     section("Step 2/2 — Real run")
-    agentic_engine(
-        backend,
-        f"Run exactly this command and show live progress to the user. Do not improvise.\n{real}",
-        bctx, slog
-    )
+    _cloud_run(real, what="Run the actual transfer with live progress.",
+               timeout=86400)
 
 def _cloud_bisync(backend, bctx, slog, remotes):
     name = _cloud_pick_remote(remotes, "Two-way sync with which drive?")
@@ -6174,11 +6215,10 @@ def _cloud_bisync(backend, bctx, slog, remotes):
     cmd = (f"rclone bisync {shlex.quote(local)} {target} --resync -P"
            if first in ("y", "yes")
            else f"rclone bisync {shlex.quote(local)} {target} -P")
-    agentic_engine(
-        backend,
-        f"Run exactly this command and show progress. Do not improvise.\n{cmd}",
-        bctx, slog
-    )
+    what = ("Initial two-way sync — baselines both sides."
+            if first in ("y", "yes")
+            else "Two-way sync — propagates changes both directions.")
+    _cloud_run(cmd, what=what, timeout=86400)
 
 def _cloud_mount(backend, bctx, slog, remotes):
     mounts = _cloud_load_mounts()
@@ -6206,15 +6246,12 @@ def _cloud_mount(backend, bctx, slog, remotes):
         err(f"Could not create mountpoint: {e}"); return
     cmd = f"rclone mount {shlex.quote(name)}: {shlex.quote(mp)} --vfs-cache-mode full --daemon"
     print(f"\n  {DIM}This will run in the background. Open your file manager and look for{R} {BOLD}{mp}{R}")
-    agentic_engine(
-        backend,
-        f"Run exactly this command (it runs as a background daemon):\n{cmd}\n"
-        f"Then verify the mount with: mount | grep {shlex.quote(mp)}",
-        bctx, slog
-    )
-    mounts = _cloud_load_mounts()
-    mounts.append({"remote": name, "mountpoint": mp, "started": time.time()})
-    _cloud_save_mounts(mounts)
+    rc, _, _ = _cloud_run(cmd, what=f"Mount '{name}:' at {mp} as a background daemon.",
+                          timeout=30)
+    if rc == 0:
+        mounts = _cloud_load_mounts()
+        mounts.append({"remote": name, "mountpoint": mp, "started": time.time()})
+        _cloud_save_mounts(mounts)
 
 def _cloud_encrypt(backend, bctx, slog, remotes):
     name = _cloud_pick_remote(remotes, "Add encryption ON TOP OF which existing drive?")
@@ -6253,13 +6290,9 @@ def _cloud_encrypt(backend, bctx, slog, remotes):
            f"remote={shlex.quote(name + ':')} "
            f"password={shlex.quote(obscured)} "
            f"filename_encryption=standard")
-    print(f"\n  {DIM}Creating encrypted overlay '{enc_name}' over '{name}:'…{R}")
-    agentic_engine(
-        backend,
-        f"Run exactly this command. The password value is already obscured — "
-        f"do NOT print it when reporting the result.\n{cmd}\n"
-        f"Then verify with: rclone lsd {shlex.quote(enc_name)}: --max-depth 1",
-        bctx, slog
+    _cloud_run(
+        cmd, what=f"Create encrypted overlay '{enc_name}' over '{name}:'.",
+        timeout=60, hide_in_print=(shlex.quote(obscured),),
     )
 
 def _cloud_remove(backend, bctx, slog, remotes):
@@ -6273,11 +6306,8 @@ def _cloud_remove(backend, bctx, slog, remotes):
         print(); return
     if confirm not in ("y", "yes"):
         info("Cancelled."); return
-    agentic_engine(
-        backend,
-        f"Run exactly this command: rclone config delete {shlex.quote(name)}",
-        bctx, slog
-    )
+    _cloud_run(f"rclone config delete {shlex.quote(name)}",
+               what=f"Delete '{name}' from rclone config.", timeout=15)
 
 def _cloud_zoho_path(backend, bctx, slog):
     hdr("Zoho WorkDrive — TrueSync app")
@@ -6291,17 +6321,38 @@ def _cloud_zoho_path(backend, bctx, slog):
         print(); return
     if ans not in ("y", "yes"):
         return
-    agentic_engine(
-        backend,
-        "Install Zoho WorkDrive TrueSync (this is NOT an rclone backend — it is "
-        "Zoho's own sync app). Download the latest TrueSync .deb from "
-        "https://www.zoho.com/workdrive/desktop-sync.html and install with "
-        "sudo dpkg -i. If apt complains about missing dependencies afterwards, "
-        "run: sudo apt install -f -y. Then verify the binary exists with: "
-        "which truesync || ls /opt/Zoho* 2>/dev/null. Note: only Ubuntu 22.04 "
-        "and 24.04 are officially supported by Zoho.",
-        bctx, slog
-    )
+    section("Step 1 — Open the Zoho TrueSync download page")
+    print(f"  {DIM}Opening https://www.zoho.com/workdrive/desktop-sync.html in your browser.{R}")
+    print(f"  {DIM}Pick the Ubuntu .deb that matches your system (22.04 or 24.04).{R}")
+    print(f"  {DIM}Save it to ~/Downloads/.{R}")
+    try:
+        subprocess.Popen(["xdg-open", "https://www.zoho.com/workdrive/desktop-sync.html"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except Exception:
+        pass
+    try:
+        deb = input(f"\n  {BOLD}Path to the downloaded .deb{R} [~/Downloads/zohoworkdrive-truesync.deb]:\n  ❯ ").strip() \
+              or "~/Downloads/zohoworkdrive-truesync.deb"
+    except (EOFError, KeyboardInterrupt):
+        print(); return
+    deb = os.path.expanduser(deb)
+    if not os.path.isfile(deb):
+        warn(f"File not found: {deb}")
+        info("Re-open menu 88 → Zoho once you've downloaded the .deb.")
+        return
+    section("Step 2 — Install the .deb")
+    _cloud_run(f"sudo dpkg -i {shlex.quote(deb)}",
+               what="Install the Zoho TrueSync .deb you downloaded.",
+               sudo=True, timeout=300)
+    _cloud_run("sudo apt install -f -y",
+               what="Fix any missing dependencies dpkg flagged.",
+               sudo=True, timeout=600)
+    rc, _, _ = run_cmd("which truesync || ls /opt/Zoho* 2>/dev/null")
+    if rc == 0:
+        ok("Zoho TrueSync installed. Look for 'TrueSync' in your app menu.")
+    else:
+        warn("Couldn't find the TrueSync binary. Check your app menu manually.")
 
 def feat_cloud_manager(backend, bctx, slog):
     """Cloud Drive Manager — guided rclone wrapper for non-technical users.
