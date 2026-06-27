@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.78.0"
+__version__ = "5.79.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -6441,20 +6441,26 @@ def _zoho_find_truesync_deb_url():
             return url
     return None
 
-def _watch_downloads_for_deb(watch_dir, name_re, timeout=600):
-    """Watch a directory for a new .deb matching name_re. Returns its full
+def _watch_downloads_for_deb(watch_dir, name_re, timeout=600, extensions=None):
+    """Watch a directory for a new package matching name_re. Returns its full
     path once the file is fully written (size stable for several ticks), or
     None if the user cancels or we time out.
 
-    This is how the Zoho install stays "no typing required" even when we
-    can't auto-detect the URL — the user clicks Download in the browser
-    and TuxGenie pounces on the file the moment it lands."""
+    extensions: tuple of acceptable suffixes (default: .deb, .tar.gz, .tgz).
+    Zoho TrueSync for Linux ships as a .tar.gz, not a .deb — so we accept
+    either and the caller routes by suffix.
+
+    The name kept its "_deb" suffix for backwards compatibility with tests
+    that already monkeypatch it; the docstring is the source of truth."""
+    if extensions is None:
+        extensions = (".deb", ".tar.gz", ".tgz")
     try:
         os.makedirs(watch_dir, exist_ok=True)
         baseline = set(os.listdir(watch_dir))
     except Exception:
         baseline = set()
-    print(f"\n  {YELLOW}{BOLD}⏳  Watching {watch_dir} for the .deb to appear…{R}")
+    pretty_exts = " / ".join(extensions)
+    print(f"\n  {YELLOW}{BOLD}⏳  Watching {watch_dir} for {pretty_exts}…{R}")
     print(f"  {DIM}As soon as it finishes downloading, TuxGenie will install it.{R}")
     print(f"  {DIM}Press Ctrl-C to skip and type the path manually.{R}\n")
     pat = re.compile(name_re, re.IGNORECASE)
@@ -6467,12 +6473,16 @@ def _watch_downloads_for_deb(watch_dir, name_re, timeout=600):
                 current = os.listdir(watch_dir)
             except Exception:
                 current = []
-            new_debs = [f for f in current
-                        if f.endswith(".deb") and f not in baseline and pat.search(f)]
-            if new_debs:
-                new_debs.sort(key=lambda f: -os.path.getmtime(os.path.join(watch_dir, f)))
-                target = os.path.join(watch_dir, new_debs[0])
-                print(f"\r  {GREEN}{BOLD}✔  Found: {new_debs[0]}{R}" + " " * 30)
+            matches = [
+                f for f in current
+                if f not in baseline
+                and any(f.lower().endswith(ext) for ext in extensions)
+                and pat.search(f)
+            ]
+            if matches:
+                matches.sort(key=lambda f: -os.path.getmtime(os.path.join(watch_dir, f)))
+                target = os.path.join(watch_dir, matches[0])
+                print(f"\r  {GREEN}{BOLD}✔  Found: {matches[0]}{R}" + " " * 30)
                 print(f"  {DIM}Waiting for download to finish writing…{R}")
                 last_size, stable = -1, 0
                 while stable < 3:
@@ -6497,6 +6507,69 @@ def _watch_downloads_for_deb(watch_dir, name_re, timeout=600):
         return None
     print(f"\n  {YELLOW}Timed out after {timeout//60} min.{R}")
     return None
+
+
+def _zoho_install_tarball(tar_path):
+    """Install a Zoho TrueSync .tar.gz: extract → run install.sh if present,
+    otherwise copy contents to /opt/zoho-truesync/ and symlink the binary
+    into /usr/local/bin/."""
+    import tempfile, tarfile
+    extract_to = tempfile.mkdtemp(prefix="zoho_truesync_")
+    print(f"  {DIM}Extracting to {extract_to}…{R}")
+    try:
+        with tarfile.open(tar_path, "r:*") as tf:
+            tf.extractall(extract_to)
+    except Exception as e:
+        err(f"Could not extract tarball: {e}")
+        return False
+
+    # Find the top-level extracted directory
+    entries = [os.path.join(extract_to, e) for e in os.listdir(extract_to)]
+    dirs = [e for e in entries if os.path.isdir(e)]
+    pkg_root = dirs[0] if len(dirs) == 1 else extract_to
+
+    # Look for an installer script first — Zoho ships one for desktop sync
+    installer = None
+    for name in ("install.sh", "setup.sh", "TrueSync.sh", "install"):
+        p = os.path.join(pkg_root, name)
+        if os.path.isfile(p):
+            installer = p
+            break
+
+    if installer:
+        info(f"Found installer: {os.path.basename(installer)}")
+        os.chmod(installer, 0o755)
+        rc, _, _ = _cloud_run(
+            f"sudo bash {shlex.quote(installer)}",
+            what=f"Run Zoho's bundled installer ({os.path.basename(installer)}).",
+            sudo=True, timeout=600,
+        )
+        return rc == 0
+
+    # No installer — copy the package contents to /opt/zoho-truesync/
+    info("No installer script in the tarball; copying contents to /opt/zoho-truesync/.")
+    rc, _, _ = _cloud_run(
+        f"sudo rm -rf /opt/zoho-truesync && sudo mkdir -p /opt/zoho-truesync && "
+        f"sudo cp -r {shlex.quote(pkg_root)}/* /opt/zoho-truesync/",
+        what="Copy Zoho TrueSync into /opt/zoho-truesync/.",
+        sudo=True, timeout=120,
+    )
+    if rc != 0:
+        return False
+
+    # Symlink any obvious binary into /usr/local/bin so the user can run it
+    for binname in ("truesync", "TrueSync", "ZohoWorkDriveTrueSync",
+                    "zohoworkdrive-truesync", "WorkDriveTrueSync"):
+        candidate = f"/opt/zoho-truesync/{binname}"
+        rc, _, _ = run_cmd(f"test -f {shlex.quote(candidate)}", timeout=5)
+        if rc == 0:
+            _cloud_run(
+                f"sudo ln -sf {shlex.quote(candidate)} /usr/local/bin/{binname}",
+                what=f"Add 'truesync' to your PATH.",
+                sudo=True, timeout=10,
+            )
+            break
+    return True
 
 
 def _cloud_zoho_download_deb(url, dest):
@@ -6529,8 +6602,8 @@ def _cloud_zoho_path(backend, bctx, slog):
     hdr("Zoho WorkDrive — TrueSync app")
     print(f"  {YELLOW}rclone doesn't have a Zoho WorkDrive backend.{R}")
     print(f"  But Zoho ships their own desktop sync app called {BOLD}TrueSync{R}.")
-    print(f"  TuxGenie will download and install it for you — no browser needed.\n")
-    print(f"  {DIM}Officially supported: Ubuntu LTS 22.04 / 24.04 (.deb installer){R}")
+    print(f"  TuxGenie will install it for you — no manual extraction needed.\n")
+    print(f"  {DIM}Distributed as a Linux .tar.gz from zoho.com/workdrive/desktop-sync.html{R}")
     try:
         ans = input(f"\n  {BOLD}Install Zoho WorkDrive TrueSync?{R} [y/n]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
@@ -6538,13 +6611,15 @@ def _cloud_zoho_path(backend, bctx, slog):
     if ans not in ("y", "yes"):
         return
 
-    section("Step 1 — Finding the latest TrueSync .deb")
+    section("Step 1 — Finding the TrueSync download")
     print(f"  {DIM}Probing Zoho's CDN…{R}")
-    deb_url = _zoho_find_truesync_deb_url()
-    if not deb_url:
-        info("Auto-detect didn't find the .deb URL (Zoho's page is JS-rendered).")
-        info("Opening the download page in your browser instead — just click the")
-        info("Linux .deb button. TuxGenie will spot the file and install it for you.")
+    download_url = _zoho_find_truesync_deb_url()   # function name kept for back-compat; matches .deb OR .tar.gz
+    pkg_path = None
+    we_downloaded = False
+    if not download_url:
+        info("Auto-detect didn't find a direct URL (Zoho's page is JS-rendered).")
+        info("Opening the download page in your browser — just click the Linux button.")
+        info("TuxGenie will spot the file in ~/Downloads and install it automatically.")
         try:
             subprocess.Popen(["xdg-open", "https://www.zoho.com/workdrive/desktop-sync.html"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -6552,55 +6627,68 @@ def _cloud_zoho_path(backend, bctx, slog):
         except Exception:
             pass
         watch_dir = os.path.expanduser("~/Downloads")
-        deb_path = _watch_downloads_for_deb(
+        pkg_path = _watch_downloads_for_deb(
             watch_dir, name_re=r"(zoho|truesync|workdrive)", timeout=600,
+            extensions=(".deb", ".tar.gz", ".tgz"),
         )
-        if not deb_path:
-            # Final escape hatch: ask for an explicit path
+        if not pkg_path:
             try:
-                deb = input(f"\n  {BOLD}Type the path to the downloaded .deb "
-                            f"(or Enter to cancel):{R}\n  ❯ ").strip()
+                p = input(f"\n  {BOLD}Type the path to the downloaded file "
+                          f"(.deb or .tar.gz, or Enter to cancel):{R}\n  ❯ ").strip()
             except (EOFError, KeyboardInterrupt):
                 print(); return
-            if not deb:
+            if not p:
                 return
-            deb_path = os.path.expanduser(deb)
-            if not os.path.isfile(deb_path):
-                warn(f"File not found: {deb_path}"); return
+            pkg_path = os.path.expanduser(p)
+            if not os.path.isfile(pkg_path):
+                warn(f"File not found: {pkg_path}"); return
     else:
-        ok(f"Found: {deb_url}")
+        ok(f"Found: {download_url}")
         section("Step 2 — Downloading TrueSync")
         import tempfile
-        fd, deb_path = tempfile.mkstemp(suffix=".deb", prefix="zoho_truesync_")
+        # Pick the suffix from the URL so the extractor can route correctly
+        suffix = ".tar.gz" if download_url.lower().endswith((".tar.gz", ".tgz")) else ".deb"
+        fd, pkg_path = tempfile.mkstemp(suffix=suffix, prefix="zoho_truesync_")
         os.close(fd)
-        if not _cloud_zoho_download_deb(deb_url, deb_path):
-            try: os.unlink(deb_path)
+        if not _cloud_zoho_download_deb(download_url, pkg_path):
+            try: os.unlink(pkg_path)
             except OSError: pass
             return
-        ok(f"Downloaded to {deb_path}")
+        we_downloaded = True
+        ok(f"Downloaded to {pkg_path}")
 
     section("Installing TrueSync")
-    rc, _, _ = _cloud_run(
-        f"sudo dpkg -i {shlex.quote(deb_path)}",
-        what="Install the Zoho TrueSync .deb.",
-        sudo=True, timeout=300,
-    )
-    if rc != 0:
-        info("dpkg flagged missing dependencies — running apt to fix them…")
-        _cloud_run("sudo apt install -f -y",
-                   what="Pull in any libraries TrueSync needs.",
-                   sudo=True, timeout=600)
+    if pkg_path.lower().endswith((".tar.gz", ".tgz")):
+        # Tarball flow: extract + run install.sh or copy to /opt
+        success = _zoho_install_tarball(pkg_path)
+    else:
+        # .deb flow
+        rc, _, _ = _cloud_run(
+            f"sudo dpkg -i {shlex.quote(pkg_path)}",
+            what="Install the Zoho TrueSync .deb.",
+            sudo=True, timeout=300,
+        )
+        if rc != 0:
+            info("dpkg flagged missing dependencies — running apt to fix them…")
+            _cloud_run("sudo apt install -f -y",
+                       what="Pull in any libraries TrueSync needs.",
+                       sudo=True, timeout=600)
+        success = (rc == 0)
 
-    # Clean up the temp download (best effort)
-    if deb_url:   # only delete if WE downloaded it; keep user-provided files
-        try: os.unlink(deb_path)
+    # Only clean up files WE downloaded; never delete user-provided files
+    if we_downloaded:
+        try: os.unlink(pkg_path)
         except OSError: pass
 
-    rc, _, _ = run_cmd("which truesync || ls /opt/Zoho* 2>/dev/null")
+    rc, _, _ = run_cmd(
+        "which truesync || ls /opt/Zoho* 2>/dev/null || ls /opt/zoho-truesync 2>/dev/null"
+    )
     if rc == 0:
         ok("Zoho TrueSync installed! Look for 'TrueSync' in your app menu.")
+    elif success:
+        info("Installer ran. If TrueSync doesn't appear in your menu, log out and back in.")
     else:
-        warn("Couldn't auto-detect the TrueSync binary. Check your app menu manually.")
+        warn("Installation didn't complete cleanly. Check the output above.")
 
 def feat_cloud_manager(backend, bctx, slog):
     """Cloud Drive Manager — guided rclone wrapper for non-technical users.

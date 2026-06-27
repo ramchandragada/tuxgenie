@@ -371,21 +371,30 @@ class TestWorksWithoutAPIKey:
 
 class TestWatchDownloadsForDeb:
     """The watcher is a simple polling loop; verify just that the function
-    exists, has the right signature, and the integration with the Zoho path
-    is wired up. We skip mocking the time.sleep loop — too fragile to be
-    worth the test complexity."""
+    exists, accepts the right extensions, and times out cleanly. We skip
+    mocking the time.sleep loop — too fragile to be worth the test complexity."""
 
     def test_function_exists(self):
         assert callable(getattr(tg, "_watch_downloads_for_deb", None))
 
+    def test_accepts_extensions_kwarg(self):
+        # The function signature must accept extensions= so the Zoho path
+        # can pass (.deb, .tar.gz, .tgz)
+        import inspect
+        sig = inspect.signature(tg._watch_downloads_for_deb)
+        assert "extensions" in sig.parameters
+        # And the default must include both .deb and .tar.gz
+        default = sig.parameters["extensions"].default
+        # default is None — actual tuple is built inside; just confirm the
+        # body covers tar.gz by reading its source
+        src = inspect.getsource(tg._watch_downloads_for_deb)
+        assert ".tar.gz" in src
+
     def test_returns_none_on_immediate_timeout(self, tmp_path, monkeypatch):
-        # With timeout=0 the function shouldn't loop at all
         watch = tmp_path / "Downloads"
         watch.mkdir()
         monkeypatch.setattr(tg.time, "sleep", lambda _s: None)
-        # Make time.time() jump past the timeout on the first check
         first = [True]
-        real_time = tg.time.time
         def jumpy_time():
             if first[0]:
                 first[0] = False
@@ -393,6 +402,57 @@ class TestWatchDownloadsForDeb:
             return 1000.0
         monkeypatch.setattr(tg.time, "time", jumpy_time)
         assert tg._watch_downloads_for_deb(str(watch), r"zoho", timeout=10) is None
+
+
+class TestZohoInstallTarball:
+    """Verify the .tar.gz extraction flow without running it as root."""
+
+    def _make_tarball(self, tmp_path, with_install_sh=False, with_binary=False):
+        """Create a fake TrueSync tarball at <tmp>/zoho.tar.gz."""
+        import tarfile
+        src = tmp_path / "src" / "ZohoWorkDriveTrueSync"
+        src.mkdir(parents=True)
+        if with_install_sh:
+            (src / "install.sh").write_text("#!/bin/bash\necho ok\n")
+        if with_binary:
+            (src / "truesync").write_text("#!/bin/bash\nexec true\n")
+        tar = tmp_path / "zoho.tar.gz"
+        with tarfile.open(tar, "w:gz") as tf:
+            tf.add(src, arcname="ZohoWorkDriveTrueSync")
+        return tar
+
+    def test_runs_install_sh_when_present(self, tmp_path, monkeypatch):
+        tar = self._make_tarball(tmp_path, with_install_sh=True)
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
+        monkeypatch.setattr(tg, "run_cmd", lambda *a, **k: (0, "", ""))
+        ok = tg._zoho_install_tarball(str(tar))
+        assert ok
+        # Must run the install.sh via bash, not dpkg
+        assert any("install.sh" in c for c in runs)
+        assert not any("dpkg" in c for c in runs)
+
+    def test_falls_back_to_opt_copy_when_no_installer(self, tmp_path, monkeypatch):
+        tar = self._make_tarball(tmp_path, with_binary=True)
+        runs = []
+        monkeypatch.setattr(tg, "_cloud_run",
+                            lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
+        # run_cmd is used to test for binary existence — return 0 for truesync
+        monkeypatch.setattr(tg, "run_cmd",
+                            lambda cmd, *a, **k: (0 if "truesync" in cmd else 1, "", ""))
+        ok = tg._zoho_install_tarball(str(tar))
+        assert ok
+        # Must copy to /opt and create the symlink
+        assert any("/opt/zoho-truesync" in c for c in runs)
+        assert any("ln -sf" in c for c in runs)
+
+    def test_returns_false_on_bad_tarball(self, tmp_path, monkeypatch):
+        bad = tmp_path / "not-a-tar.tar.gz"
+        bad.write_bytes(b"this is not a tarball")
+        monkeypatch.setattr(tg, "_cloud_run", lambda *a, **k: (0, "", ""))
+        monkeypatch.setattr(tg, "run_cmd", lambda *a, **k: (1, "", ""))
+        assert tg._zoho_install_tarball(str(bad)) is False
 
 
 class TestZohoTrueSyncAutoDetect:
