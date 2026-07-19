@@ -178,15 +178,41 @@ You never *have* to pick a number — just type what you need in plain English. 
 
 ## Safety first
 
-TuxGenie **never runs a command without your explicit approval.**
+TuxGenie **never changes your system without your OK.**
 
-Every step shows:
-- **Risk level** — `SAFE`, `MODERATE`, or `DANGEROUS` (colour-coded)
-- **[SUDO NEEDED]** badge when root is required
-- A red warning banner for destructive commands
-- Prompt: `[y / n / skip / abort]` — you are always in control
+- **Read-only steps run automatically.** Diagnostics that only *look* at your
+  system (`systemctl status`, `journalctl`, `ls`, `df`, `ip addr`, …) run
+  without interrupting you, so troubleshooting stays fast.
+- **Anything that changes your system asks first.** Installs, service
+  restarts, config edits, package removals — each is shown with its command
+  and risk level, then prompts:
+  `[y = yes · n = skip · a = abort · A = yes to all]`. You're always in control.
+- Every step shows a **risk badge** (`SAFE` / `MODERATE` / `DANGEROUS`), a
+  **[SUDO NEEDED]** badge when root is required, and a red banner for
+  destructive commands.
 
-Commands matching dangerous patterns (`rm -rf /`, `dd if=`, `mkfs`, `fdisk`, `wipefs`, `shred`, `chmod 777 /`, fork bombs) are flagged **regardless** of what the AI says about them.
+**Dangerous commands are hard-blocked** regardless of what the AI says — and the
+filter reasons about the *actual command*, not just text patterns, so
+reorderings and disguises are caught too:
+
+- `rm -rf /`, `rm -rf /*`, `rm -Rf /`, `rm --recursive --force /`, and recursive
+  deletes of any system directory (`/etc`, `/usr`, `/boot`, `/var`, …)
+- `dd` writing to a raw disk (`of=/dev/sda`), `mkfs`, `fdisk`, `wipefs`, `shred`
+- `chmod`/`chown` on `/` or system dirs, `find / -delete`, `tee` to a device
+- fork bombs, `sudo` shells, `--no-preserve-root`
+
+Ordinary work under your home directory (`rm -rf ~/project/node_modules`, writing
+a disk image to a file, `chmod -R` on your own app) is **not** blocked.
+
+> **Power users:** prefer the old fully-autonomous flow? Turn on
+> **Settings → Auto-approve** to run AI commands without the per-step prompt
+> (genuinely dangerous commands are still blocked).
+
+### Safe updates
+
+When you update with `u`, the downloaded `.deb` is checked for completeness and
+verified against the release's published **SHA-256 digest** before installation —
+a corrupted or tampered download is refused, never installed.
 
 ---
 
