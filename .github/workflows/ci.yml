@@ -28,7 +28,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Lint with ruff
-        run: ruff check tuxgenie.py --select E,F,W --ignore E501
+        # Rule selection lives in pyproject.toml [tool.ruff.lint] — single source of truth.
+        run: ruff check tuxgenie.py
 
       - name: Check syntax
         run: python -c "import ast; ast.parse(open('tuxgenie.py').read()); print('Syntax OK')"
