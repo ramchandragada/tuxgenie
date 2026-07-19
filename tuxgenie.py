@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.80.0"
+__version__ = "5.81.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -424,6 +424,7 @@ class AnthropicBackend:
         self.base_model = model
         self.auto_model = True
         self.expert_mode = False   # compact output — skip beginner explanations
+        self.auto_approve = False  # when True, run AI commands without per-step approval
         self.client     = None
         self._session_input_tokens         = 0
         self._session_output_tokens        = 0
@@ -647,6 +648,7 @@ def load_backend():
         model = cfg.get("model", "claude-haiku-4-5-20251001")
         b = AnthropicBackend(api_key=key, model=model)
         b.expert_mode = bool(cfg.get("expert_mode", False))
+        b.auto_approve = bool(cfg.get("auto_approve", False))
         return b
 
     # 2. First run — ask for a key
@@ -659,6 +661,7 @@ def load_backend():
         save_cfg({"backend": "none"})
         b = AnthropicBackend(api_key=_NO_KEY)
     b.expert_mode = bool(cfg.get("expert_mode", False))
+    b.auto_approve = bool(cfg.get("auto_approve", False))
     return b
 
 AVAILABLE_MODELS = [
@@ -700,12 +703,14 @@ def feat_settings(backend, bctx, slog):
     info(f"Backend: {backend.label()}")
     auto_tag    = C(" ON", GREEN)  if backend.auto_model  else C(" OFF", YELLOW)
     expert_tag  = C(" ON", GREEN)  if backend.expert_mode else C(" OFF", DIM)
+    approve_tag = C(" ON", YELLOW) if backend.auto_approve else C(" OFF", GREEN)
     cfg         = load_cfg()
     history_on  = not cfg.get("disable_history", False)
     history_tag = C(" ON", GREEN) if history_on else C(" OFF", YELLOW)
     print(f"  {DIM}Smart model routing:{R}{auto_tag}")
     print(f"  {DIM}Expert mode (compact output):{R}{expert_tag}")
     print(f"  {DIM}Cross-session memory:{R}{history_tag}")
+    print(f"  {DIM}Auto-approve AI commands (skip per-step confirm):{R}{approve_tag}")
     if backend._session_input_tokens > 0:
         print(f"  {DIM}{backend.session_cost_estimate()}{R}")
     print(f"\n  {C('[1]',CYAN)} Change API key")
@@ -714,6 +719,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[4]',CYAN)} Toggle expert mode  {DIM}(compact output — skip beginner explanations){R}")
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
+    print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -794,6 +800,13 @@ def feat_settings(backend, bctx, slog):
             ok("Stored memory wiped.")
         else:
             info("Cancelled — nothing was wiped.")
+    elif ch == "7":
+        backend.auto_approve = not backend.auto_approve
+        save_cfg({"auto_approve": backend.auto_approve})
+        if backend.auto_approve:
+            warn("Auto-approve ON — AI commands run without asking (dangerous ones are still blocked).")
+        else:
+            ok("Auto-approve OFF — you'll be asked before any command that changes your system.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 3 — SYSTEM CONTEXT COLLECTORS
@@ -1352,11 +1365,13 @@ def _display_tool_call(cmd, description, risk, requires_root, step_num):
         print(f"\n  {BG_RED}{BOLD}  ⚠  DESTRUCTIVE — review carefully  {R}")
 
 
-def _handle_tool_call(block, sudo_pw, step_counter):
+def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=None):
     """Execute a single tool call from the agentic engine.
     Uses run_cmd_live for real-time streaming output and proper sudo handling."""
     name = block.name
     inp  = block.input
+    if approve_state is None:
+        approve_state = {}
 
     if name == "run_command":
         cmd           = inp["command"]
@@ -1370,6 +1385,13 @@ def _handle_tool_call(block, sudo_pw, step_counter):
         if is_dangerous(cmd):
             print(f"  {RED}✗  Blocked by TuxGenie safety filter.{R}")
             return "BLOCKED by TuxGenie safety filter — command matches a dangerous pattern."
+
+        # Ask before running anything that could change the system (read-only
+        # commands run automatically). _AbortSession propagates to the engine.
+        if not _approval_gate(cmd, requires_root, backend, approve_state):
+            print(f"  {YELLOW}⤷  Skipped by you.{R}")
+            return ("SKIPPED by the user — they chose not to run this command. Do not "
+                    "retry it; suggest a different approach or ask what they'd prefer.")
 
         # Use run_cmd_live for real-time output streaming + proper sudo handling
         actual_cmd = cmd
@@ -1487,6 +1509,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     messages = [{"role": "user", "content": task}]
     sudo_pw  = None
     step_counter = [1]
+    approve_state = {"all": False}   # session-wide "yes to all" toggle
 
     print(f"\n  {CYAN}{BOLD}⚡ AI: Anthropic · {_OPUS_MODEL}  ·  adaptive thinking{R}")
 
@@ -1585,7 +1608,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 tool_results = []
                 for block in response.content:
                     if getattr(block, "type", None) == "tool_use":
-                        result = _handle_tool_call(block, sudo_pw, step_counter)
+                        result = _handle_tool_call(block, sudo_pw, step_counter, backend, approve_state)
                         session_log.append({"command": block.input.get("command", ""), "source": "agentic"})
                         tool_results.append({
                             "type":        "tool_result",
@@ -1607,6 +1630,8 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
         print(f"\n  {YELLOW}Reached {max_turns} steps without completing. "
               f"The problem may need manual investigation.{R}")
 
+    except _AbortSession:
+        print(f"\n  {YELLOW}Stopped at your request.{R}")
     except KeyboardInterrupt:
         print(f"\n  {YELLOW}Cancelled by user.{R}")
     finally:
@@ -1787,6 +1812,133 @@ def is_dangerous(cmd):
         # command we failed to analyse if it *looks* destructive.
         return bool(re.search(r"\b(rm|dd|mkfs|wipefs|shred)\b", cmd))
     return False
+
+
+# ── Per-step approval gate ──────────────────────────────────────────────────
+# The safety promise is "TuxGenie never changes your system without your OK".
+# is_dangerous() hard-blocks catastrophic commands, but ordinary state-changing
+# ones (installs, service restarts, edits) still need consent. To keep diagnosis
+# fast, read-only commands run automatically; anything that could change the
+# system is shown and confirmed. Power users can set auto_approve to opt out.
+
+class _AbortSession(Exception):
+    """Raised when the user chooses to abort the whole AI session at a prompt."""
+
+
+# Tools that only read/report state. Dual-use tools (systemctl, ip, docker, git,
+# apt…) are listed here but guarded by _WRITE_SUBCMDS below.
+_READ_ONLY_CMDS = {
+    "ls", "dir", "cat", "bat", "head", "tail", "less", "more", "zcat", "zless",
+    "grep", "egrep", "fgrep", "zgrep", "rg", "ag", "cut", "sort", "uniq", "wc",
+    "find", "locate", "which", "whereis", "type", "file", "stat", "readlink",
+    "realpath", "pwd", "tree", "du", "df", "free", "ps", "pgrep", "pidof", "top",
+    "htop", "uptime", "uname", "hostname", "whoami", "id", "groups", "who", "w",
+    "last", "date", "echo", "printf", "env", "printenv", "locale", "true", "false",
+    "systemctl", "journalctl", "dmesg", "loginctl", "timedatectl",
+    "ip", "ifconfig", "ss", "netstat", "route", "arp", "ping", "ping6",
+    "traceroute", "tracepath", "dig", "nslookup", "host", "getent", "nmcli",
+    "iw", "iwconfig", "rfkill", "lsblk", "lsusb", "lspci", "lscpu", "lsmod",
+    "blkid", "findmnt", "modinfo", "sensors", "acpi", "dmidecode", "lshw",
+    "upower", "inxi", "vmstat", "iostat", "mpstat", "dpkg", "dpkg-query",
+    "apt-cache", "apt", "snap", "flatpak", "pip", "pip3", "conda", "docker",
+    "podman", "kubectl", "git", "ldd", "sysctl", "cmp", "diff", "nproc",
+    "getconf", "tty", "column", "xxd", "od", "strings", "md5sum", "sha256sum",
+}
+
+# Sub-commands / flags that turn an otherwise read-only tool into a mutating one.
+_WRITE_SUBCMDS = {
+    "systemctl":  {"start", "stop", "restart", "reload", "reload-or-restart",
+                   "enable", "disable", "mask", "unmask", "set-default", "isolate",
+                   "kill", "daemon-reload", "daemon-reexec", "edit", "set-property",
+                   "reset-failed", "poweroff", "reboot", "halt", "suspend"},
+    "loginctl":   {"lock-session", "terminate-session", "kill-session", "poweroff", "reboot"},
+    "timedatectl": {"set-time", "set-timezone", "set-ntp", "set-local-rtc"},
+    "ip":         {"add", "del", "delete", "set", "flush", "change", "replace"},
+    "nmcli":      {"up", "down", "add", "del", "delete", "modify", "edit",
+                   "connect", "disconnect"},
+    "rfkill":     {"block", "unblock"},
+    "docker":     {"run", "rm", "rmi", "stop", "start", "kill", "exec", "build",
+                   "pull", "push", "prune", "system", "volume", "network", "create",
+                   "restart", "commit", "tag", "load", "import", "compose"},
+    "podman":     {"run", "rm", "rmi", "stop", "start", "kill", "exec", "build",
+                   "pull", "push", "prune"},
+    "kubectl":    {"apply", "delete", "create", "edit", "scale", "patch", "replace",
+                   "drain", "cordon", "uncordon"},
+    "git":        {"push", "reset", "clean", "rebase", "commit", "checkout", "switch",
+                   "merge", "rm", "mv", "stash", "cherry-pick", "revert", "am",
+                   "apply", "gc", "prune"},
+    "snap":       {"install", "remove", "refresh", "revert", "disable", "enable", "alias"},
+    "flatpak":    {"install", "uninstall", "update", "remove", "override"},
+    "apt":        {"install", "remove", "purge", "upgrade", "full-upgrade",
+                   "autoremove", "update", "dist-upgrade"},
+    "pip":        {"install", "uninstall"},
+    "pip3":       {"install", "uninstall"},
+    "conda":      {"install", "remove", "update", "create"},
+    "dpkg":       {"-i", "--install", "-r", "--remove", "-P", "--purge",
+                   "--configure", "--unpack"},
+    "sysctl":     {"-w", "--write", "-p", "--load"},
+}
+
+
+def _is_read_only(cmd: str) -> bool:
+    """Conservative: True only when we're confident the command cannot change
+    system state (no sudo, no redirection/tee, no known write sub-command).
+    Anything we can't be sure about returns False so the user is asked."""
+    s = cmd.strip()
+    if not s:
+        return False
+    if re.search(r"\bsudo\b", s):
+        return False
+    if re.search(r"(?<!\d)>>?", s) or re.search(r"\btee\b", s):   # writes to a file/device
+        return False
+    try:
+        simple = _split_simple_commands(s)
+    except Exception:
+        return False
+    if not simple:
+        return False
+    for toks in simple:
+        if not toks:
+            return False
+        prog = os.path.basename(toks[0])
+        if prog not in _READ_ONLY_CMDS:
+            return False
+        rest = toks[1:]
+        writes = _WRITE_SUBCMDS.get(prog)
+        if writes and any(a in writes for a in rest):
+            return False
+        if prog == "find" and any(a in ("-delete", "-exec", "-execdir", "-fprint", "-fprintf") for a in rest):
+            return False
+    return True
+
+
+def _approval_gate(cmd, requires_root, backend, approve_state):
+    """Decide whether to run an AI-proposed command. Returns True to run, False
+    to skip; raises _AbortSession to stop the whole session. Read-only commands
+    run silently; state-changing ones are confirmed unless auto_approve is set."""
+    if getattr(backend, "auto_approve", False) or approve_state.get("all"):
+        return True
+    if not requires_root and _is_read_only(cmd):
+        return True
+    if not sys.stdin.isatty():
+        print(f"  {YELLOW}⚠  Skipped — needs your approval but the session is non-interactive.{R}")
+        return False
+    prompt = (f"  {BOLD}Run this?{R} [{C('y',GREEN,BOLD)}=yes  {C('n',YELLOW,BOLD)}=skip  "
+              f"{C('a',RED,BOLD)}=abort  {C('A',CYAN,BOLD)}=yes to all]: ")
+    try:
+        raw = input(prompt).strip()
+    except (EOFError, KeyboardInterrupt):
+        raise _AbortSession()
+    ans = raw.lower()
+    if raw == "A" or ans in ("all", "yes-all", "yall"):
+        approve_state["all"] = True
+        return True
+    if ans in ("a", "abort", "q", "quit"):
+        raise _AbortSession()
+    if ans in ("", "y", "yes"):
+        return True
+    return False
+
 
 # ── Passthrough: commands that run directly without calling Claude ─────────────
 # Each entry: (compiled_regex, risk_level, human_readable_description)
@@ -3121,6 +3273,8 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
     backend.select_model_for_task(user_text, round_num=1)
     print(f"\n  {CYAN}{BOLD}⚡ AI: {backend.label()}{R}")
 
+    approve_state = {"all": False}   # session-wide "yes to all" toggle
+
     for rnd in range(1, max_rounds+1):
         hdr(f"Round {rnd}/{max_rounds}")
 
@@ -3222,6 +3376,18 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 print(f"  {RED}Skipping for safety. Run manually if you are certain.{R}")
                 step_outputs.append({"step": i, "command": cmd, "skipped": True})
                 continue
+
+            # Ask before running anything that changes the system (read-only
+            # steps run automatically). Power users can set auto_approve to skip.
+            _needs_root = cmd.strip().startswith("sudo") or step.get("requires_root", False)
+            try:
+                if not _approval_gate(cmd, _needs_root, backend, approve_state):
+                    info("Skipped.")
+                    step_outputs.append({"step": i, "command": cmd, "skipped": True})
+                    continue
+            except _AbortSession:
+                warn("Stopped."); aborted = True
+                break
 
             # Get sudo password once — cached for the whole session
             sudo_pw = None
@@ -4652,11 +4818,12 @@ def feat_self_update():
 
         latest = data.get("tag_name", "").lstrip("v").strip()
         notes  = _strip_md((data.get("body") or "")[:400].strip())
-        deb_url = deb_name = None
+        deb_url = deb_name = deb_digest = None
         for asset in data.get("assets", []):
             if asset.get("name", "").endswith("_all.deb"):
-                deb_url  = asset["browser_download_url"]
-                deb_name = asset["name"]
+                deb_url    = asset["browser_download_url"]
+                deb_name   = asset["name"]
+                deb_digest = asset.get("digest")   # "sha256:..." from GitHub
                 break
 
         if not latest:
@@ -4684,7 +4851,7 @@ def feat_self_update():
         if ans not in ("y", "yes"):
             info("Update cancelled. Run option [u] anytime to update later."); return
 
-        _do_update_install(deb_url, deb_name, latest)
+        _do_update_install(deb_url, deb_name, latest, deb_digest)
 
     except urllib.error.URLError:
         warn("Could not reach the update server — check your internet connection.")
@@ -4707,9 +4874,17 @@ def _strip_md(text: str) -> str:
     return text.strip()
 
 def _ver(v):
-    """Parse version string '4.1.0' into tuple (4, 1, 0)."""
-    try:    return tuple(int(x) for x in str(v).strip().split("."))
-    except Exception: return (0,)
+    """Parse a version string into a comparable int tuple.
+    '4.1.0' → (4,1,0); tolerates suffixes like '5.80.0-rc1' → (5,80,0)
+    instead of collapsing the whole thing to (0,) and hiding a real update."""
+    try:
+        parts = []
+        for seg in str(v).strip().lstrip("v").split("."):
+            m = re.match(r"\d+", seg)
+            parts.append(int(m.group()) if m else 0)
+        return tuple(parts) if parts else (0,)
+    except Exception:
+        return (0,)
 
 def _version_gap(current, latest):
     """Return how big the update is: major bump ≥ 10 (forced), minor ≥ 1, patch 1.
@@ -4748,7 +4923,52 @@ def _save_update_cache(data):
     except Exception:
         pass
 
-def _try_silent_update(deb_url, deb_name, latest) -> bool:
+def _download_verified(url, dest, expected_digest=None, progress=False):
+    """Stream `url` to `dest`, verifying completeness and (when provided) a
+    GitHub 'sha256:...' asset digest before the file is ever handed to dpkg.
+    Returns (True, "") on success or (False, reason). This is the gate that
+    stops a truncated download or a tampered/redirected payload from being
+    installed as root."""
+    import hashlib
+    h = hashlib.sha256()
+    total = 0
+    done = 0
+    try:
+        with urllib.request.urlopen(url, timeout=60) as resp, open(dest, "wb") as out:
+            total = int(resp.headers.get("Content-Length", 0) or 0)
+            last_pct = -1
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                out.write(chunk)
+                h.update(chunk)
+                done += len(chunk)
+                if progress and total > 0:
+                    pct = min(100, int(done * 100 / total))
+                    if pct != last_pct:
+                        bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+                        print(f"\r  {CYAN}{bar}{R} {pct}%", end="", flush=True)
+                        last_pct = pct
+        if progress and total > 0:
+            print()
+    except Exception as e:
+        return False, f"download error: {e}"
+    # Completeness — a partial download must never reach dpkg.
+    if total > 0 and done != total:
+        return False, f"incomplete download ({done}/{total} bytes)"
+    if done == 0:
+        return False, "empty download"
+    # Authenticity/integrity — must match the release's published SHA-256.
+    if expected_digest:
+        want = expected_digest.split(":", 1)[-1].strip().lower()
+        got  = h.hexdigest().lower()
+        if want and want != got:
+            return False, f"checksum mismatch (expected {want[:12]}…, got {got[:12]}…)"
+    return True, ""
+
+
+def _try_silent_update(deb_url, deb_name, latest, expected_digest=None) -> bool:
     """Attempt a fully silent auto-update using cached sudo credentials.
 
     Uses `sudo -n` (non-interactive) so it never prompts for a password.
@@ -4783,19 +5003,13 @@ def _try_silent_update(deb_url, deb_name, latest) -> bool:
             os.execv(sys.executable, [sys.executable] + sys.argv)
         return rc == 0
 
-    # Deb systems: download to a unique temp file then sudo -n dpkg -i
+    # Deb systems: download to a unique temp file, VERIFY, then sudo -n dpkg -i
     import tempfile
     fd, tmp_deb = tempfile.mkstemp(suffix=".deb", prefix="tuxgenie_upd_")
     os.close(fd)
-    try:
-        # Use urlopen with timeout — urlretrieve() can hang forever
-        with urllib.request.urlopen(deb_url, timeout=60) as resp, open(tmp_deb, "wb") as out:
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                out.write(chunk)
-    except Exception:
+    okdl, reason = _download_verified(deb_url, tmp_deb, expected_digest)
+    if not okdl:
+        # A silent update must never install an unverified/partial file.
         try: os.unlink(tmp_deb)
         except OSError: pass
         return False
@@ -4814,7 +5028,7 @@ def _try_silent_update(deb_url, deb_name, latest) -> bool:
     return rc == 0
 
 
-def _do_update_install(deb_url, deb_name, latest):
+def _do_update_install(deb_url, deb_name, latest, expected_digest=None):
     """Download and install a .deb update, or pip upgrade on non-deb systems."""
     # Validate version string before using it anywhere to prevent injection
     if not re.match(r'^\d+\.\d+\.\d+$', latest):
@@ -4848,30 +5062,18 @@ def _do_update_install(deb_url, deb_name, latest):
     fd, tmp_deb = tempfile.mkstemp(suffix=".deb", prefix="tuxgenie_upd_")
     os.close(fd)
     print(f"\n  {CYAN}▶ Downloading v{latest}…{R}", flush=True)
-    try:
-        # Use urlopen with timeout — urlretrieve() can hang forever
-        with urllib.request.urlopen(deb_url, timeout=60) as resp, open(tmp_deb, "wb") as out:
-            total = int(resp.headers.get("Content-Length", 0) or 0)
-            done = 0
-            last_pct = -1
-            while True:
-                chunk = resp.read(65536)
-                if not chunk:
-                    break
-                out.write(chunk)
-                done += len(chunk)
-                if total > 0:
-                    pct = min(100, int(done * 100 / total))
-                    if pct != last_pct:
-                        bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
-                        print(f"\r  {CYAN}{bar}{R} {pct}%", end="", flush=True)
-                        last_pct = pct
-        print()
-    except Exception as e:
+    okdl, reason = _download_verified(deb_url, tmp_deb, expected_digest, progress=True)
+    if not okdl:
         try: os.unlink(tmp_deb)
         except OSError: pass
-        err(f"Download failed: {e}"); return False
-    ok(f"Downloaded {deb_name}")
+        err(f"Download failed — not installing: {reason}")
+        info("This can be a flaky connection or a bad mirror. Try again, or "
+             "download manually from www.tuxgenie.com")
+        return False
+    if expected_digest:
+        ok(f"Downloaded {deb_name}  {DIM}(SHA-256 verified){R}")
+    else:
+        ok(f"Downloaded {deb_name}")
     _save_version_backup()   # save current version before replacing
 
     print(f"\n  {CYAN}▶ Installing v{latest}…{R}")
@@ -4908,10 +5110,11 @@ def startup_update_check():
 
     if now - last_check < cache_ttl and cache.get("latest"):
         # Use cached result
-        latest    = cache["latest"]
-        deb_url   = cache.get("deb_url")
-        deb_name  = cache.get("deb_name")
-        notes     = cache.get("notes", "")
+        latest     = cache["latest"]
+        deb_url    = cache.get("deb_url")
+        deb_name   = cache.get("deb_name")
+        deb_digest = cache.get("deb_digest")
+        notes      = cache.get("notes", "")
     else:
         # Fetch from GitHub (with short timeout to not slow startup)
         try:
@@ -4923,16 +5126,18 @@ def startup_update_check():
                 data = json.loads(resp.read().decode())
             latest = data.get("tag_name", "").lstrip("v").strip()
             notes  = _strip_md((data.get("body") or "")[:300].strip())
-            deb_url = deb_name = None
+            deb_url = deb_name = deb_digest = None
             for asset in data.get("assets", []):
                 if asset.get("name", "").endswith("_all.deb"):
-                    deb_url  = asset["browser_download_url"]
-                    deb_name = asset["name"]
+                    deb_url    = asset["browser_download_url"]
+                    deb_name   = asset["name"]
+                    deb_digest = asset.get("digest")   # "sha256:..." from GitHub
                     break
             # Save to cache
             _save_update_cache({
                 "last_check": now, "latest": latest,
-                "deb_url": deb_url, "deb_name": deb_name, "notes": notes,
+                "deb_url": deb_url, "deb_name": deb_name,
+                "deb_digest": deb_digest, "notes": notes,
             })
         except Exception:
             # Offline or server error — skip silently, never block the user
@@ -4950,7 +5155,7 @@ def startup_update_check():
     if gap == 1:
         if deb_url and deb_name:
             # Silent path: works when sudo credentials are cached (15-min window)
-            if _try_silent_update(deb_url, deb_name, latest):
+            if _try_silent_update(deb_url, deb_name, latest, deb_digest):
                 return  # re-exec already happened inside _try_silent_update
         # Silent update wasn't possible — show the yellow banner and ask
         print(f"\n  {YELLOW}{BOLD}┌─────────────────────────────────────────────┐{R}")
@@ -4964,7 +5169,7 @@ def startup_update_check():
             except (EOFError, KeyboardInterrupt):
                 return
             if ans in ("y", "yes"):
-                _do_update_install(deb_url, deb_name, latest)
+                _do_update_install(deb_url, deb_name, latest, deb_digest)
         else:
             info("Update: pip install --upgrade tuxgenie")
         print()
@@ -4987,8 +5192,12 @@ def startup_update_check():
                 print(f"\n  {RED}Update required to continue. Exiting.{R}")
                 sys.exit(0)
             if ans in ("y", "yes"):
-                _do_update_install(deb_url, deb_name, latest)
-                return  # if install failed, loop back to ask again
+                # On success _do_update_install re-execs and never returns. On
+                # failure it returns False — loop back and ask again instead of
+                # falling through into the app on an out-of-date (blocked) version.
+                _do_update_install(deb_url, deb_name, latest, deb_digest)
+                print(C("  Update did not complete — let's try again.", YELLOW))
+                continue
             if ans in ("q", "quit", "exit"):
                 print(f"\n  {RED}Update required to continue. Exiting.{R}")
                 sys.exit(0)
@@ -5184,9 +5393,15 @@ def _crash_write(data: dict):
         pass
 
 def _crash_mark_clean():
-    """Called on clean exit via atexit — resets the crash counter."""
+    """Reset the crash counter once this version has proven it can start.
+
+    Called from an explicit 'healthy state' checkpoint (after startup succeeds),
+    NOT from atexit. atexit was wrong in both directions: it fired after a
+    top-level-caught crash (resetting the counter so real startup crashes never
+    reached the rollback threshold), and it did NOT fire on SIGTERM/SIGHUP
+    (closing the terminal), so benign exits were miscounted as crashes."""
     data = _crash_read()
-    if data.get("version") == __version__:
+    if data.get("version") == __version__ and data.get("crashes", 0):
         data["crashes"] = 0
         _crash_write(data)
 
@@ -5200,10 +5415,10 @@ def _save_version_backup():
         pass
 
 def _crash_guard():
-    """Call at startup. Increments crash counter; triggers rollback at threshold."""
-    import atexit
-    atexit.register(_crash_mark_clean)
-
+    """Call at startup. Increments the crash counter; triggers rollback at the
+    threshold. The counter is cleared later by _crash_mark_clean() once the app
+    reaches a healthy interactive state — so only crashes that happen DURING
+    startup (a genuinely broken version) ever accumulate toward a rollback."""
     data = _crash_read()
     ver  = data.get("version", "")
     crashes = data.get("crashes", 0)
@@ -7433,17 +7648,20 @@ def main():
                 bctx = base_ctx()
             verb = args.issue or "explain"
             issue = f"{verb}\n\nPIPED INPUT:\n{piped}"
+            _crash_mark_clean()   # startup succeeded — this version is healthy
             agentic_engine(backend, issue, bctx, [])
             return
 
     # ── Monitor daemon mode: tuxgenie --monitor ──────────────────────────────
     if args.monitor:
+        _crash_mark_clean()   # reached daemon entry — startup is healthy
         _monitor_daemon()
         return
 
     # ── Digest-only mode: tuxgenie --digest ──────────────────────────────────
     if args.digest:
         _init_light_theme()
+        _crash_mark_clean()
         _weekly_digest(force=True)
         return
 
@@ -7462,6 +7680,9 @@ def main():
         except Exception:
             pass
     ok("System info collected")
+    # Startup fully succeeded — clear the crash counter so only crashes that
+    # happen *during* startup accumulate toward an automatic rollback.
+    _crash_mark_clean()
     print(f"  {CYAN}{BOLD}Your system:{R}  {BOLD}{bctx['os']}{R}  {DIM}· {bctx['kernel']} · {bctx['arch']}{R}")
 
     session_log: list = []
