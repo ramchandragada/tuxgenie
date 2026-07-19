@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tuxgenie"
-version = "5.79.0"
+version = "5.80.0"
 description = "AI-powered Linux assistant — fix any Linux problem in plain English"
 readme = "README.md"
 license = "MIT"
@@ -47,3 +47,18 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 120
 target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+# Ignore purely-cosmetic pycodestyle codes: this single-file tool deliberately
+# uses compact one-liners (def ok(msg): print(...)) and short status f-strings.
+# All meaningful correctness checks (undefined names, unused vars/imports,
+# redefinitions, f-string errors, bare-except, etc.) stay enabled.
+ignore = [
+    "E501",   # line-too-long (handled by line-length, long UI strings are fine)
+    "E701",   # multiple statements on one line (colon) — intentional one-liners
+    "E702",   # multiple statements on one line (semicolon) — intentional
+    "E741",   # ambiguous variable name (l/O/I) — a few short-lived locals
+    "E401",   # multiple imports on one line — intentional at the top
+    "F541",   # f-string without placeholders — harmless in status messages
+]

@@ -63,6 +63,76 @@ class TestIsDangerous:
     def test_safe_systemctl(self):
         assert not tg.is_dangerous("systemctl restart nginx")
 
+    # ── Regression: argv-level bypasses that the regex-only filter missed ──────
+    @pytest.mark.parametrize("cmd", [
+        "rm -rf /*",                       # glob target
+        "rm -Rf /",                        # capital R
+        "rm -rfv /etc",                    # extra flag letter + system dir
+        "rm -r -f /",                      # split flags
+        "rm --recursive --force /",        # long options
+        "rm -rf --no-preserve-root /",     # explicit override, flag before path
+        "rm -rf /etc/*",                   # system dir via glob
+        "rm -rf /home",                    # top-level dir
+        "rm -r /usr",                      # recursive without force
+        "sudo rm -rf /var",                # sudo prefix
+        "dd of=/dev/sda if=/dev/zero",     # of= before if=
+        "sudo dd of=/dev/nvme0n1 if=/dev/zero",
+        "find / -delete",                  # recursive delete of everything
+        "find /var -exec rm {} +",         # exec rm from a system root
+        "chmod 0777 /",                    # octal-leading-zero
+        "chmod 777 /etc",                  # world-writable system dir
+        "echo x | sudo tee /dev/sda",      # device overwrite via tee
+        "chown -R root:root /",            # recursive chown of /
+        "ls; rm -rf /*",                   # chained after a benign command
+        "cd /tmp && rm -rf /",             # chained with &&
+        # Recursive rm of a path *inside* a critical system dir bricks the box.
+        "rm -rf /boot/grub",               # unbootable
+        "rm -rf /usr/bin",                 # deletes core binaries
+        "rm -rf /var/lib/dpkg",            # destroys package DB
+        "rm -rf /etc/nginx",               # system config subtree
+    ])
+    def test_blocks_known_bypasses(self, cmd):
+        assert tg.is_dangerous(cmd), f"should be BLOCKED: {cmd!r}"
+
+    @pytest.mark.parametrize("cmd", [
+        "rm -rf /home/user/project/node_modules",  # user-data sub-path
+        "rm -rf build/",
+        "rm -rf ./dist",
+        "rm -rf /home/user/.cache",
+        "rm -f /tmp/foo.log",
+        "rm -rf /tmp/build",               # /tmp is not a critical system dir
+        "find /tmp -name '*.log' -delete", # delete under a safe root
+        "chmod -R 755 /home/user/app",
+        "chmod 644 /etc/nginx/nginx.conf", # single file, not the dir
+        "dd if=/dev/zero of=/tmp/disk.img bs=1M count=100",  # writing to a file
+        "chown -R user:user /home/user/app",
+        "tee /tmp/out.txt",
+    ])
+    def test_allows_legitimate_commands(self, cmd):
+        assert not tg.is_dangerous(cmd), f"should be ALLOWED: {cmd!r}"
+
+
+# ── _version_gap (update severity) ───────────────────────────────────────────
+
+class TestVersionGap:
+    def test_patch_bump(self):
+        assert tg._version_gap("5.79.0", "5.79.1") == 1
+
+    def test_minor_bump(self):
+        assert tg._version_gap("5.79.0", "5.80.0") == 1
+
+    def test_same_version(self):
+        assert tg._version_gap("5.79.0", "5.79.0") == 0
+
+    def test_downgrade_is_zero(self):
+        assert tg._version_gap("5.79.0", "5.78.0") == 0
+
+    def test_major_bump_forces_update(self):
+        # Regression: a major bump whose minor is smaller must NOT cancel out.
+        assert tg._version_gap("5.79.0", "6.0.0") >= 10
+        assert tg._version_gap("5.79.0", "6.5.0") >= 10
+        assert tg._version_gap("5.79.0", "7.0.0") >= 10
+
 
 # ── clean_json ────────────────────────────────────────────────────────────────
 

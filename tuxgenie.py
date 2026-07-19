@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.79.0"
+__version__ = "5.80.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -46,7 +46,7 @@ except ImportError:
     _anthropic = None
 
 try:
-    import readline
+    import readline  # noqa: F401 — imported for its input()-editing/history side effect
 except ImportError:
     pass
 
@@ -63,7 +63,7 @@ def _safe_input(prompt=""):
     if '\033[' in prompt:
         prompt = _rl(prompt)
     return _builtin_input(prompt)
-import builtins
+import builtins  # noqa: E402 — must follow _safe_input definition to override input()
 builtins.input = _safe_input
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1620,8 +1620,9 @@ DANGER_RE = [
     r"rm\s+-[rf]{1,2}\s+~\s*$",                     # rm -rf ~
     r"rm\s+-[rf]{1,2}\s+~/\s*$",                    # rm -rf ~/
     r"rm\s+--no-preserve-root",                      # explicit safety override
-    r"rm\s+-[rf]{1,2}\s+/(?:boot|etc|usr|lib(?:64)?|bin|sbin|var|sys|proc|dev|run|opt|home|root)\b",
-    r"\bdd\s+if=", r"\bmkfs\b", r"\bfdisk\b",
+    # (Recursive rm of a whole system dir is caught precisely by the argv layer
+    #  below, so deep sub-paths like /home/user/project stay allowed.)
+    r"\bmkfs\b", r"\bfdisk\b",
     r"\bwipefs\b", r"\bshred\b", r"\btruncate\b.*\s/dev/",
     r">\s*/dev/sd", r">\s*/dev/nvme", r">\s*/dev/vd",
     # ── Fork bombs / resource exhaustion ────────────────────────────────────
@@ -1634,12 +1635,158 @@ DANGER_RE = [
     r"sudo\b.*\$\(",                                 # sudo ... $( )
     r"sudo\b.*`",                                    # sudo ... `backtick`
     # ── Dangerous permission changes ─────────────────────────────────────────
-    r"chmod\s+-[Rr]\s+[0-7]*7[0-7]*\s+/",
-    r"chmod\s+777\s+/",
-    r"chmod\s+[0-7]*7[0-7]*\s+/etc/(?:passwd|shadow|sudoers)",
+    # (chmod of / or a system dir is caught precisely by the argv layer; this
+    #  rule stays for the specific case of loosening perms on credential files.)
+    r"chmod\s+[0-7]*[2367][0-7]*\s+/etc/(?:passwd|shadow|sudoers)",
 ]
+# ── Argv-aware danger analysis ──────────────────────────────────────────────
+# Regexes alone can't catch flag reorderings (rm -Rf, rm -r -f, --recursive),
+# glob targets (rm -rf /*), or argument order (dd of=… if=…). This second layer
+# tokenises each simple command and reasons about its argv, so destructive
+# intent is caught regardless of spelling. It only ever *adds* blocks.
+
+# Paths whose recursive deletion / permission-change / device-write is
+# catastrophic. A target is compared after stripping a trailing "/*" and "/".
+_PROTECTED_TARGETS = {
+    "/", "~", os.path.expanduser("~"),
+    "/boot", "/etc", "/usr", "/lib", "/lib64", "/bin", "/sbin",
+    "/var", "/sys", "/proc", "/dev", "/run", "/opt", "/home", "/root",
+}
+# System directories where recursively deleting even a SUB-path (e.g.
+# /boot/grub, /usr/bin, /var/lib/dpkg) can brick the machine. User-data trees
+# (/home/<user>/…, /root/…, /tmp, /mnt, /media) are intentionally NOT here, so
+# ordinary cleanup like `rm -rf ~/project/node_modules` stays allowed.
+_CRITICAL_SYSTEM_DIRS = (
+    "/boot", "/etc", "/usr", "/lib", "/lib64", "/bin", "/sbin",
+    "/var", "/sys", "/proc", "/dev", "/run", "/opt",
+)
+_BLOCK_DEVICE_RE = re.compile(r"^/dev/(?:sd[a-z]|nvme\d|vd[a-z]|mmcblk\d|hd[a-z]|disk\d)", re.IGNORECASE)
+
+
+def _hits_protected_path(target: str) -> bool:
+    """True if `target` is a protected dir itself, or a path inside a critical
+    system directory. User-data sub-paths (~/…, /home/x/…, /tmp/…) are allowed."""
+    t = _norm_target(target)
+    if t in _PROTECTED_TARGETS:
+        return True
+    return any(t == d or t.startswith(d + "/") for d in _CRITICAL_SYSTEM_DIRS)
+
+
+def _norm_target(tok: str) -> str:
+    """Normalise an rm/chmod/find target for comparison against protected paths.
+    'rm -rf /etc/*' and '/etc/' both reduce to '/etc'."""
+    t = tok.strip().strip('"').strip("'")
+    if t.endswith("/*"):
+        t = t[:-2] or "/"
+    t = t.rstrip("/") or "/"
+    return t
+
+
+def _split_simple_commands(cmd: str):
+    """Break a shell line into simple commands on ; && || | and newlines, then
+    tokenise each. Falls back to a naive split on shlex failure so we fail safe
+    (an unparseable fragment is still handed to the argv checks)."""
+    out = []
+    for part in re.split(r"\|\||&&|;|\||\n", cmd):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            toks = shlex.split(part)
+        except ValueError:
+            toks = part.split()
+        if toks and toks[0] == "sudo":
+            toks = toks[1:]
+            # skip sudo's own options (e.g. -S, -u user) to reach the real argv
+            while toks and toks[0].startswith("-"):
+                dropped = toks.pop(0)
+                if dropped in ("-u", "--user", "-g", "--group") and toks:
+                    toks.pop(0)
+        if toks:
+            out.append(toks)
+    return out
+
+
+def _rm_is_dangerous(toks) -> bool:
+    short = "".join(t[1:] for t in toks[1:] if t.startswith("-") and not t.startswith("--"))
+    longs = [t for t in toks[1:] if t.startswith("--")]
+    recursive = ("r" in short.lower()) or ("--recursive" in longs)
+    if "--no-preserve-root" in longs:
+        return True
+    # Recursing into a protected dir — or any path inside a critical system dir —
+    # is catastrophic whether or not -f is given (-r alone still deletes writable
+    # files). User-data sub-paths (~/…, /home/x/…, /tmp/…) stay allowed.
+    if recursive:
+        for t in (x for x in toks[1:] if not x.startswith("-")):
+            if _hits_protected_path(t):
+                return True
+    return False
+
+
+def _argv_is_dangerous(toks) -> bool:
+    if not toks:
+        return False
+    prog = os.path.basename(toks[0])
+    args = toks[1:]
+
+    if prog == "rm":
+        return _rm_is_dangerous(toks)
+
+    if prog == "dd":
+        # Writing to a raw block device wipes it — order of if=/of= is irrelevant.
+        for a in args:
+            if a.startswith("of=") and _BLOCK_DEVICE_RE.match(a[3:]):
+                return True
+
+    if prog in ("mkfs", "wipefs", "shred", "fdisk", "sgdisk", "parted", "blkdiscard"):
+        if any(_BLOCK_DEVICE_RE.match(a) for a in args):
+            return True
+
+    if prog == "chmod":
+        # Changing perms on / or a top-level system dir (esp. recursively) is
+        # a classic way to render a system unbootable / world-writable.
+        for t in (x for x in args if not x.startswith("-")):
+            if _norm_target(t) in _PROTECTED_TARGETS:
+                return True
+
+    if prog == "chown":
+        recursive = any(a in ("-R", "--recursive") or (a.startswith("-") and "R" in a) for a in args)
+        if recursive:
+            for t in (x for x in args if not x.startswith("-")):
+                if _norm_target(t) in _PROTECTED_TARGETS:
+                    return True
+
+    if prog == "find":
+        destructive = ("-delete" in args) or ("-exec" in args and "rm" in args)
+        if destructive:
+            root = next((a for a in args if not a.startswith("-")), None)
+            if root is not None and _hits_protected_path(root):
+                return True
+
+    if prog == "tee":
+        if any(_BLOCK_DEVICE_RE.match(_norm_target(a)) for a in args):
+            return True
+
+    return False
+
+
 def is_dangerous(cmd):
-    return any(re.search(p, cmd) for p in DANGER_RE)
+    # Layer 1: fast regex denylist (redirects to devices, sudo shells, etc.)
+    if any(re.search(p, cmd) for p in DANGER_RE):
+        return True
+    # Layer 1b: whitespace-tolerant classic fork bomb, e.g. ": () { : | : & } ; :"
+    if re.search(r":\(\)\{:\|:&\};:", re.sub(r"\s+", "", cmd)):
+        return True
+    # Layer 2: argv-aware analysis of each simple command in the pipeline/chain.
+    try:
+        for toks in _split_simple_commands(cmd):
+            if _argv_is_dangerous(toks):
+                return True
+    except Exception:
+        # Never let the safety check itself crash — but do not silently pass a
+        # command we failed to analyse if it *looks* destructive.
+        return bool(re.search(r"\b(rm|dd|mkfs|wipefs|shred)\b", cmd))
+    return False
 
 # ── Passthrough: commands that run directly without calling Claude ─────────────
 # Each entry: (compiled_regex, risk_level, human_readable_description)
@@ -3038,13 +3185,10 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         aborted      = False
 
         for i, step in enumerate(steps, 1):
-            step_failed       = False
             output_has_errors = False
             risk    = step.get("risk", "safe").lower()
             cmd     = step.get("command", "").strip()
             desc    = step.get("description", "")
-            root    = step.get("requires_root", False)
-            exp_out = step.get("expected_output", "")
             meaning = step.get("what_this_means", "")
 
             if is_dangerous(cmd):
@@ -3184,23 +3328,17 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                         ok("Nothing found (this is the expected result).")
                 elif downloaded_html:
                     warn("Downloaded an HTML page instead of a real file. The AI will fix this.")
-                    step_failed = True
                 elif rc == 0 and expects_output and empty_output:
                     warn("Command returned empty output — result is inconclusive. The AI will review.")
-                    step_failed = True
                 elif rc == 0 and output_has_errors:
                     warn("Command ran but output suggests a problem. The AI will review this.")
-                    step_failed = True
                 elif rc == 127:
                     warn("That program is not installed on this system — the AI will find another way.")
-                    step_failed = True
                 elif rc == -1:
                     warn("Command timed out. The AI will try a different approach.")
-                    step_failed = True
                 else:
                     print(C(f"  ✗ Exit {rc}", RED))
                     warn("This step had an issue. The AI will look at this and try to fix it.")
-                    step_failed = True
 
             step_ok = (exit1_is_ok or (rc == 0 and not output_has_errors
                        and not (expects_output and empty_output)
@@ -3225,7 +3363,6 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         any_step_failed = any(
             not s.get("success", True) for s in step_outputs if not s.get("skipped")
         )
-        verified = False
 
         if verify_cmd:
             if not backend.expert_mode:
@@ -3253,7 +3390,6 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
             # empty output on exit 0 often means "nothing found" (removal success)
             v_steps_all_ok = not any_step_failed
             if v_rc == 0 and not v_has_errors and not v_is_weak and (not v_empty or v_steps_all_ok):
-                verified = True
                 print(f"\n  {GREEN}{BOLD}✓ VERIFIED — Task completed successfully!{R}")
                 if plan.get("needs_synthesis"):
                     _synthesize_findings(backend, user_text, step_outputs)
@@ -3329,7 +3465,6 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         # Clearly tell the AI what failed, what worked, and what NOT to repeat
         failed_steps = [s for s in step_outputs if not s.get("success", True) and not s.get("skipped")]
         passed_steps = [s for s in step_outputs if s.get("success", False)]
-        tried_cmds   = [s.get("command","") for s in step_outputs if not s.get("skipped")]
 
         # ── Count download failures across all rounds for early-stop ──
         all_cmds_so_far = " ".join(m.get("content","") for m in messages if m.get("role") == "user")
@@ -4574,26 +4709,27 @@ def _strip_md(text: str) -> str:
 def _ver(v):
     """Parse version string '4.1.0' into tuple (4, 1, 0)."""
     try:    return tuple(int(x) for x in str(v).strip().split("."))
-    except: return (0,)
+    except Exception: return (0,)
 
 def _version_gap(current, latest):
-    """Return how many releases behind (major=10, minor=1, patch=1).
-    4.2.0→4.2.1 = 1, 4.1→4.2 = 1, 4.0→4.2 = 2, 4.0→5.0 = 10."""
+    """Return how big the update is: major bump ≥ 10 (forced), minor ≥ 1, patch 1.
+    4.2.0→4.2.1 = 1, 4.1→4.2 = 1, 4.0→4.2 = 2, 4.0→5.0 = 10, 5.79.0→6.0.0 = 10.
+
+    Must be monotonic in severity: a major bump ALWAYS outranks any minor/patch
+    delta, even when the new minor is numerically smaller (5.79.0 → 6.0.0). The
+    old additive formula let the negative minor delta cancel the major gap, so
+    every user was silently stranded when the next major line shipped."""
     c, l = _ver(current), _ver(latest)
     if l <= c:
         return 0
     # Pad to 3 elements
     c = c + (0,) * (3 - len(c))
     l = l + (0,) * (3 - len(l))
-    # Major version diff counts as 10
-    major_gap = (l[0] - c[0]) * 10
-    minor_gap = l[1] - c[1]
-    patch_gap = l[2] - c[2]
-    total = major_gap + minor_gap
-    # If only patch changed (same major.minor), still count as 1
-    if total == 0 and patch_gap > 0:
-        return 1
-    return max(total, 0)
+    if l[0] != c[0]:                       # any major bump → forced-update range
+        return max((l[0] - c[0]) * 10, 10)
+    if l[1] != c[1]:                       # minor bump
+        return max(l[1] - c[1], 1)
+    return 1                               # patch-only (l > c already guaranteed)
 
 def _load_update_cache():
     """Load last update check result from disk."""
@@ -6784,7 +6920,6 @@ def _monitor_daemon():
         unit    = (entry.get("_SYSTEMD_UNIT") or entry.get("UNIT") or
                    entry.get("SYSLOG_IDENTIFIER") or "unknown")
         message = entry.get("MESSAGE") or ""
-        prio    = entry.get("PRIORITY", "3")
 
         # Skip noise
         unit_base = unit.lower().replace(".service", "")
@@ -6898,7 +7033,7 @@ WantedBy=default.target
         except Exception as e:
             err(f"Could not write service file: {e}"); return
 
-        rc1 = os.system("systemctl --user daemon-reload 2>/dev/null")
+        os.system("systemctl --user daemon-reload 2>/dev/null")
         rc2 = os.system(f"systemctl --user enable --now {_MONITOR_SERVICE} 2>/dev/null")
         if rc2 == 0:
             ok("Monitor enabled and started!")
@@ -7257,7 +7392,7 @@ _active_feature = "startup"
 
 
 def main():
-    global _active_feature
+    global _active_feature, _last_failed
     _crash_guard()   # increment crash counter; rolls back if 3 consecutive crashes
     parser = argparse.ArgumentParser(
         prog="tuxgenie",
