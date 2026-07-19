@@ -7,13 +7,13 @@ Browser sessions always start on a feature branch (e.g. `claude/browser-editing-
 **After every set of changes is complete, always:**
 1. Merge the feature branch into `main`
 2. Push `main` to origin
-3. The `auto-release.yml` GitHub Actions workflow will then automatically build the `.deb`, tag the release, and publish it so all users can update via `u`
+3. The `release.yml` GitHub Actions workflow will then automatically build the `.deb`, tag the release, and publish it so all users can update via `u`
 
 Never leave changes stranded on the feature branch — the user needs all changes on `main` to reach users.
 
 ## Project Overview
 
-TuxGenie is a single-file AI-powered Linux assistant (`tuxgenie.py`, ~3000 lines).
+TuxGenie is a single-file AI-powered Linux assistant (`tuxgenie.py`, ~7500 lines).
 - Powered by Claude (Haiku by default, Sonnet on failure)
 - Distributed as a `.deb` package built by `create_deb.py`
 - Users update via the `u` command inside tuxgenie (fetches from GitHub Releases API)
@@ -26,7 +26,7 @@ TuxGenie is a single-file AI-powered Linux assistant (`tuxgenie.py`, ~3000 lines
 | `create_deb.py` | Builds the `.deb` package (pure stdlib, no dpkg-deb needed) |
 | `install.sh` | User-facing installer for double-click installs |
 | `pyproject.toml` | PyPI metadata |
-| `.github/workflows/auto-release.yml` | Auto-builds + publishes release on push to main |
+| `.github/workflows/release.yml` | Auto-builds + publishes release on push to main |
 | `.github/workflows/ci.yml` | Runs tests + linting on PRs |
 
 ## Versioning
