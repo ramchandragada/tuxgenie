@@ -151,7 +151,8 @@ jobs:
           html = re.sub(r'\b\d+(?= built-in tools)', str(tool_count), html, flags=re.IGNORECASE)
           # Auto-synced count spans anywhere in the page.
           def _span(cls, val, h):
-              return re.sub(rf'(<span class="{cls}">)\d+(</span>)', rf'\g<1>{val}\2', h)
+              # Match the marker even inside a compound class (e.g. "grad js-apps").
+              return re.sub(rf'(<span class="[^"]*{cls}[^"]*">)\d+(</span>)', rf'\g<1>{val}\2', h)
           html = _span('js-tools', tool_count, html)
           html = _span('js-apps', app_count, html)
           html = _span('js-ai', ai_count, html)

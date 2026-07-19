@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.84.0"
+__version__ = "5.85.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4723,6 +4723,50 @@ Additional instructions for BATTERY & POWER mode:
 """ + _sys_ctx_block(ctx)
     fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
+# ── FEATURE 31: Gaming Setup ──────────────────────────────────────────────────
+def feat_gaming_setup(backend, bctx, slog):
+    hdr("Gaming Setup — Get your PC ready to game on Linux")
+    with Spinner("Checking your graphics & gaming readiness…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "gpu":          "lspci | grep -iE 'vga|3d|display'",
+            "gl_renderer":  "glxinfo 2>/dev/null | grep -i 'opengl renderer' | head -1",
+            "gl_version":   "glxinfo 2>/dev/null | grep -i 'opengl version' | head -1",
+            "vulkan":       "vulkaninfo --summary 2>/dev/null | grep -iE 'deviceName|driverName|apiVersion' | head -8",
+            "nvidia":       "nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null",
+            "steam":        "command -v steam >/dev/null && echo installed || echo missing",
+            "gamemode":     "command -v gamemoded >/dev/null && echo installed || echo missing",
+            "mangohud":     "command -v mangohud >/dev/null && echo installed || echo missing",
+            "gamescope":    "command -v gamescope >/dev/null && echo installed || echo missing",
+            "flatpak":      "command -v flatpak >/dev/null && (flatpak remotes 2>/dev/null | grep -qi flathub && echo 'flatpak+flathub' || echo 'flatpak-no-flathub') || echo 'no-flatpak'",
+            "controllers":  "ls /dev/input/js* 2>/dev/null; lsusb | grep -iE 'controller|gamepad|xbox|playstation|sony|8bitdo|nintendo|logitech' | head -5",
+            "multilib":     "dpkg --print-foreign-architectures 2>/dev/null; grep -h '^\\[multilib\\]' /etc/pacman.conf 2>/dev/null",
+            "cpu_governor": "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null",
+            "mem":          "free -h | awk '/Mem:/{print $2}'",
+            "kernel":       "uname -r",
+        })}
+    try:
+        want = input(f"\n{BOLD}What do you want to set up? (or press Enter for full game-ready setup):{R}\n"
+                     f"{C('(e.g. install Steam, enable Proton, fix my GPU drivers, set up my controller)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not want:
+        want = "Get this machine fully ready for gaming on Linux."
+    sys_p = BASE_SYS + """
+Additional instructions for GAMING SETUP mode:
+- Goal: make the machine game-ready. Detect the GPU vendor from the context and act accordingly:
+  * NVIDIA → install the proprietary driver for this distro (e.g. nvidia-driver / nvidia on the distro's recommended channel) and the 32-bit libs; explain a reboot is needed.
+  * AMD / Intel → the open Mesa stack is best; ensure Mesa + Vulkan (mesa-vulkan-drivers / vulkan-radeon / vulkan-intel) and the 32-bit variants are installed.
+- Enable 32-bit support where the distro needs it (dpkg --add-architecture i386 on Debian/Ubuntu; the [multilib] repo on Arch) — many games and Proton need it.
+- Install Steam. Explain that Steam Play / Proton is enabled inside Steam: Settings → Compatibility → "Enable Steam Play for all other titles" — this is a GUI toggle the user does once (you cannot flip it from the terminal), so guide them clearly.
+- Install performance helpers: GameMode (gamemode) and MangoHud (mangohud, the FPS/temperature overlay). Mention gamescope for a gaming session/upscaling on Wayland if relevant.
+- Controllers usually work out of the box via the kernel. For Xbox controllers over Bluetooth, xpadneo improves support — offer it. For 8BitDo/PlayStation, note they generally work; suggest testing with an evtest/jstest.
+- Point the user to Heroic (Epic/GOG), Lutris, and Bottles for non-Steam games (they're in the app catalog [77] under Gaming), and to protondb.com to check how a specific game runs.
+- For free/open-source games, mention they can install titles like SuperTuxKart, 0 A.D., or Veloren from the app catalog [77].
+- Prefer the distro's package manager; use Flathub for GUI tools when that's the cleanest path. Keep each step explained in plain language — many gamers are new to Linux.
+- Do NOT attempt to download or install pirated games, ROMs, or commercial titles directly; those come from stores the user owns.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
+
 # ── FEATURE 22: Sound Fix ────────────────────────────────────────────────────
 def feat_sound(backend, bctx, slog):
     hdr("Sound Fix — Fix audio problems")
@@ -6057,6 +6101,24 @@ APP_CATALOG = [
     {"id": 109,"name": "Gufw Firewall",       "cat": "Security",       "prompt": "Install Gufw, a graphical firewall (UFW) frontend, via apt (gufw). Tell the user to enable the firewall inside the app.", "desc": "Easy graphical firewall"},
     {"id": 110,"name": "ClamAV + ClamTk",     "cat": "Security",       "prompt": "Install the ClamAV antivirus engine and the ClamTk GUI via apt (clamav clamtk), then update the virus database with freshclam.", "desc": "Open-source antivirus + GUI"},
     {"id": 111,"name": "Wireshark",           "cat": "Security",       "prompt": "Install Wireshark network protocol analyzer via apt (wireshark). If prompted, allow non-root packet capture.", "desc": "Network protocol analyzer"},
+    # ── Games — Free & Open-Source (all installable via Flathub; verified IDs) ──
+    {"id": 112,"name": "SuperTuxKart",        "cat": "Games — Free & Open-Source", "prompt": "Install SuperTuxKart, a 3D open-source kart racer, via flatpak from Flathub: net.supertuxkart.SuperTuxKart (or apt: supertuxkart).", "desc": "3D kart racer (Mario Kart-like)"},
+    {"id": 113,"name": "0 A.D.",              "cat": "Games — Free & Open-Source", "prompt": "Install 0 A.D., a free historical real-time strategy game, via flatpak from Flathub: com.play0ad.zeroad (or apt: 0ad).", "desc": "Historical RTS (Age of Empires-like)"},
+    {"id": 114,"name": "Luanti (Minetest)",   "cat": "Games — Free & Open-Source", "prompt": "Install Luanti (formerly Minetest), a block-based voxel sandbox game platform, via flatpak from Flathub: org.luanti.luanti.", "desc": "Voxel sandbox (Minecraft-like)"},
+    {"id": 115,"name": "Battle for Wesnoth",  "cat": "Games — Free & Open-Source", "prompt": "Install The Battle for Wesnoth, a turn-based fantasy strategy game, via flatpak from Flathub: org.wesnoth.Wesnoth (or apt: wesnoth).", "desc": "Turn-based fantasy strategy"},
+    {"id": 116,"name": "Xonotic",             "cat": "Games — Free & Open-Source", "prompt": "Install Xonotic, a fast free arena first-person shooter, via flatpak from Flathub: org.xonotic.Xonotic.", "desc": "Fast arena FPS (Quake-like)"},
+    {"id": 117,"name": "OpenTTD",             "cat": "Games — Free & Open-Source", "prompt": "Install OpenTTD, an open-source Transport Tycoon Deluxe, via flatpak from Flathub: org.openttd.OpenTTD (or apt: openttd).", "desc": "Transport business sim"},
+    {"id": 118,"name": "Warzone 2100",        "cat": "Games — Free & Open-Source", "prompt": "Install Warzone 2100, a modernized classic 3D real-time strategy game, via flatpak from Flathub: net.wz2100.wz2100 (or apt: warzone2100).", "desc": "3D real-time strategy"},
+    {"id": 119,"name": "Veloren",             "cat": "Games — Free & Open-Source", "prompt": "Install Veloren, an action-adventure voxel RPG, via flatpak from Flathub: net.veloren.veloren.", "desc": "Multiplayer voxel action-RPG"},
+    {"id": 120,"name": "Mindustry",           "cat": "Games — Free & Open-Source", "prompt": "Install Mindustry, a sandbox tower-defense and factory builder, via flatpak from Flathub: com.github.Anuken.Mindustry.", "desc": "Tower-defense + factory builder"},
+    {"id": 121,"name": "OpenRA",              "cat": "Games — Free & Open-Source", "prompt": "Install OpenRA, a modernized Command & Conquer-style RTS, via flatpak from Flathub: net.openra.OpenRA.", "desc": "Classic C&C-style RTS, rebuilt"},
+    {"id": 122,"name": "Shattered Pixel Dungeon","cat": "Games — Free & Open-Source", "prompt": "Install Shattered Pixel Dungeon, a traditional roguelike dungeon crawler, via flatpak from Flathub: com.shatteredpixel.shatteredpixeldungeon.", "desc": "Roguelike dungeon crawler"},
+    {"id": 123,"name": "SuperTux",            "cat": "Games — Free & Open-Source", "prompt": "Install SuperTux, a classic jump-and-run platformer starring Tux, via flatpak from Flathub: org.supertuxproject.SuperTux (or apt: supertux).", "desc": "2D platformer (Super Mario-like)"},
+    {"id": 124,"name": "Endless Sky",         "cat": "Games — Free & Open-Source", "prompt": "Install Endless Sky, a space trading, exploration and combat game, via flatpak from Flathub: io.github.endless_sky.endless_sky (or apt: endless-sky).", "desc": "Space trading & combat"},
+    {"id": 125,"name": "Hedgewars",           "cat": "Games — Free & Open-Source", "prompt": "Install Hedgewars, turn-based artillery combat, via flatpak from Flathub: org.hedgewars.Hedgewars (or apt: hedgewars).", "desc": "Turn-based artillery (Worms-like)"},
+    {"id": 126,"name": "Widelands",           "cat": "Games — Free & Open-Source", "prompt": "Install Widelands, a Settlers-style economy strategy game, via flatpak from Flathub: org.widelands.Widelands (or apt: widelands).", "desc": "Settlers-style economy strategy"},
+    {"id": 127,"name": "Freeciv",             "cat": "Games — Free & Open-Source", "prompt": "Install Freeciv, a Civilization-style turn-based 4X strategy game. Prefer apt (freeciv) on Debian/Ubuntu, or flatpak from Flathub using the GTK client: org.freeciv.gtk322.", "desc": "Civilization-style 4X strategy"},
+    {"id": 128,"name": "Cataclysm: DDA",      "cat": "Games — Free & Open-Source", "prompt": "Install Cataclysm: Dark Days Ahead, a turn-based post-apocalyptic survival roguelike, via flatpak from Flathub: org.cataclysmdda.CataclysmDDA.", "desc": "Post-apocalyptic survival roguelike"},
 ]
 
 
@@ -6182,9 +6244,10 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
 
 
 def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — 111-app catalog covering browsers, communication,
+    """Quick app installer — 128-app catalog covering browsers, communication,
     office, media, graphics, developer tools, system tools, files & sync,
-    utilities, gaming, and security. Each entry maps to a natural-language install prompt;
+    utilities, gaming, security, and free/open-source games. Each entry maps to a
+    natural-language install prompt;
     the agentic engine picks the right method (apt / snap / flatpak / vendor
     repo) for the user's distro and confirms before running anything."""
     _run_catalog_picker(
@@ -7514,8 +7577,10 @@ MENU_ITEMS = [
     ("28", "docker",    "Docker Help",        "Container troubleshooting & cleanup",            feat_docker),
     ("29", "ssh",       "SSH Setup",          "Set up & harden SSH securely",                   feat_ssh),
     ("30", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
+    # ── Gaming ───────────────────────────────────────────────────────────────
+    ("31", "gaming",    "Gaming Setup",       "Get game-ready: Steam+Proton, GPU drivers, GameMode", feat_gaming_setup),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "111-app catalog (Brave, Signal, Obsidian, Blender, Bitwarden, Zoho Mail…)", feat_install_apps),
+    ("77", "apps",      "Install Apps",       "128-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
     ("99", "ai",        "AI Tools",           "22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
@@ -7585,8 +7650,12 @@ def show_menu():
     _item("29", "SSH Setup",           "Remote access to another computer")
     _item("30", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
 
+    _cat(BG_FOREST, "🎮", "GAMING", "Play on Linux")
+    _item("31", "Gaming Setup",        "Steam + Proton, GPU drivers, GameMode — get game-ready")
+    print(f"    {DIM}🎮 Free games — SuperTuxKart, 0 A.D., Minetest, Veloren… — live in the App Catalog ({BOLD}77{R}{DIM}).{R}")
+
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
-    _item("77", "Install Apps",        "🎁 111 apps: Brave, Signal, Obsidian, Blender, Bitwarden, Steam, Zoho Mail…")
+    _item("77", "Install Apps",        "🎁 128 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
     _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
     _item("99", "AI Tools",            "🤖 22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI, GPT4All…")
 
@@ -7621,7 +7690,7 @@ def show_help():
       {BLUE}{BOLD}how much disk space do I have{R}
       {BLUE}{BOLD}update everything{R}
 
-  {GREEN}{BOLD}Or pick a number:{R}  Type 1-30, or 77 for Apps, 99 for AI Tools
+  {GREEN}{BOLD}Or pick a number:{R}  Type 1-31, or 77 for Apps, 99 for AI Tools
 
   {GREEN}{BOLD}Safety:{R}
     {GREEN}{BOLD}✓{R} Every command is shown before it runs
