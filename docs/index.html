@@ -252,6 +252,14 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
 .cmp-legend{margin-top:16px;font-size:12.5px;color:var(--t2);display:flex;gap:20px;flex-wrap:wrap;justify-content:center}
 .cmp-legend b{font-weight:700}
 .cmp-note{margin:12px auto 0;font-size:12.5px;color:var(--t3);text-align:center;max-width:700px;line-height:1.65}
+/* ── MISSION ───────────────────────────────────────────────────────────────── */
+.mission{background:radial-gradient(ellipse 60% 80% at 50% -10%,rgba(99,102,241,.12),transparent 70%),linear-gradient(180deg,#faf9ff,#ffffff);border-top:1px solid var(--border);border-bottom:1px solid var(--border);text-align:center}
+.mission-eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--green-2);margin-bottom:14px}
+.mission-body{max-width:690px;margin:22px auto 0}
+.mission-body p{font-size:16px;line-height:1.85;color:var(--t2);margin-bottom:16px}
+.mission-body p.lead{font-size:19px;line-height:1.7;color:var(--t1);font-weight:500}
+.mission-body em{color:var(--green-2);font-style:normal;font-weight:600}
+.mission-tags{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:26px}
 /* ── EXPANDED FOOTER ───────────────────────────────────────────────────────── */
 .foot-grid{display:grid;grid-template-columns:1.8fr 1fr 1fr 1fr;gap:32px;padding:48px 0 32px}
 .foot-col h5{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--t3);margin-bottom:14px}
@@ -689,6 +697,27 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">How is it different from just asking ChatGPT?<span class="faq-chevron">+</span></button>
         <div class="faq-body"><p>TuxGenie knows your exact system — kernel version, installed packages, running services, disk usage — and acts on it directly. It runs commands, verifies they worked, retries on failure, rolls back changes, and remembers past fixes across sessions. ChatGPT just gives text suggestions.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MISSION -->
+<section class="mission sec">
+  <div class="container">
+    <div class="fade">
+      <p class="mission-eyebrow">🐧 Our mission</p>
+      <h2 class="sh">Built for people, <span class="grad">not for profit</span></h2>
+      <div class="mission-body">
+        <p class="lead">TuxGenie is free — and it always will be. We didn't build it to make money. We built it because Linux, the open-source system that quietly runs the world, should be easy enough for <em>anyone</em> to use — not just experts.</p>
+        <p>We believe in a free and open world: one where the tools that give people opportunity aren't locked behind paywalls, and aren't controlled by any single company. Software like this should belong to everyone.</p>
+        <p>So this is our contribution — a little genie that helps you fix, learn, and get more from your computer, free, forever. Dedicated to Linus Torvalds, and to everyone who believes technology should stay open.</p>
+        <div class="mission-tags">
+          <span class="pill pill-g">💛 Free forever</span>
+          <span class="pill pill-g">🔓 Open source · MIT</span>
+          <span class="pill pill-g">🚫 No tracking</span>
+          <span class="pill pill-g">🌍 For everyone</span>
+        </div>
       </div>
     </div>
   </div>
