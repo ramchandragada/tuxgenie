@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.81.0"
+__version__ = "5.82.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -7417,7 +7417,10 @@ MENU_ITEMS = [
 
 def show_menu():
     def _cat(bg, icon, title, subtitle):
-        print(f"\n  {bg}{BWHITE}{BOLD}  {icon} {title}  {R}  {DIM}{subtitle}{R}")
+        # No background box — the coloured backgrounds washed the bright-white
+        # title out on many terminals. Use one consistent dark, high-contrast
+        # colour for every category heading instead (bg arg kept for callers).
+        print(f"\n  {INDIGO}{BOLD}{icon} {title}{R}  {DIM}{subtitle}{R}")
 
     def _item(num, label, tip):
         # Pad BEFORE adding ANSI codes — otherwise f-string width counts invisible escape chars
@@ -7425,7 +7428,7 @@ def show_menu():
         label_s = label.ljust(26)
         print(f"    {BLUE}{BOLD}{num_s}{R}  {BOLD}{label_s}{R}  {DIM}{tip}{R}")
 
-    print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🐧 What would you like to do today?  {R}")
+    print(f"\n  {INDIGO}{BOLD}🐧 What would you like to do today?{R}")
 
     _cat(BG_FOREST, "🚀", "START HERE", "The two most-used features")
     _item("1",  "Fix a Problem",       "Describe what's wrong in plain English")
