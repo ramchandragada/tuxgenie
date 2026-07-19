@@ -278,6 +278,36 @@ class TestCatalogSearch:
         assert "Cursor" in out and "result(s) for 'cursor'" in out
 
 
+# ── Cancel/back words never reach the AI engines ─────────────────────────────
+
+class TestBackWords:
+    def test_is_back(self):
+        for w in ["q", "Q", "quit", "back", "cancel", "menu", " EXIT "]:
+            assert tg._is_back(w), w
+        for w in ["install steam", "q please", "backup", "", "31"]:
+            assert not tg._is_back(w), w
+
+    def test_engines_return_without_ai_on_back_word(self, monkeypatch):
+        # A bare cancel word must not trigger any API call in either engine.
+        called = {"n": 0}
+        class FakeClient:
+            class messages:
+                @staticmethod
+                def create(*a, **k):
+                    called["n"] += 1
+                    raise AssertionError("AI must not be called on a back-word")
+        class FakeBackend:
+            client = FakeClient(); auto_approve = False; expert_mode = False
+            def select_model_for_task(self, *a, **k): pass
+            def label(self): return "test"
+        b = FakeBackend()
+        # agentic_engine
+        tg.agentic_engine(b, "q", {}, [])
+        # fix_engine
+        tg.fix_engine(b, "SYS", [{"role": "user", "content": "back"}], [])
+        assert called["n"] == 0
+
+
 class TestCrashGuardExtra:
     def setup_method(self):
         self._orig = tg.CRASH_FILE

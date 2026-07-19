@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.85.0"
+__version__ = "5.86.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -65,6 +65,12 @@ def _safe_input(prompt=""):
     return _builtin_input(prompt)
 import builtins  # noqa: E402 — must follow _safe_input definition to override input()
 builtins.input = _safe_input
+
+# Words that mean "go back to the menu / cancel" at any feature prompt. These
+# are never treated as a task or sent to the AI — every screen honours them.
+_BACK_WORDS = {"q", "quit", "exit", "back", "cancel", "menu"}
+def _is_back(s):
+    return isinstance(s, str) and s.strip().lower() in _BACK_WORDS
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 1 — ANSI + UI  (light-theme palette — always white bg, dark text)
@@ -1480,6 +1486,9 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     - Adaptive thinking + effort=xhigh: 4.7 dynamically allocates thinking
       tokens; xhigh is the recommended setting for coding/agentic work.
     """
+    # A bare "q"/"back"/"cancel" is not a task — return to the menu, no AI call.
+    if _is_back(task):
+        return
     # ── Cross-session memory recall ─────────────────────────────────────────
     # Search for similar issues the user has had before and show a hint.
     # The AI also sees this via _mem_block() in the system prompt.
@@ -3265,6 +3274,10 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
     # ── Smart model routing: start with Haiku, escalate on failure ──
     user_text = messages[0].get("content", "") if messages else ""
 
+    # A bare "q"/"back"/"cancel" is not a task — return to the menu, no AI call.
+    if _is_back(user_text):
+        return
+
     # ── Genie Memory: try a saved fix first (zero API cost when it works) ──
     recalled = _mem_recall(user_text)
     if recalled and _mem_apply_recalled(recalled):
@@ -4165,9 +4178,10 @@ RETURN ONLY VALID JSON."""
 def feat_perms(backend, bctx, slog):
     hdr("Permission Doctor — Fix permission issues")
     try:
-        path = input(f"\n{BOLD}Which file/folder has permission issues? (path or description):{R}\n> ").strip()
+        path = input(f"\n{BOLD}Which file/folder has permission issues? (path or description, or 'q' to go back):{R}\n> ").strip()
     except (EOFError, KeyboardInterrupt):
         return
+    if _is_back(path): return
     if not path: path = "my home directory"
 
     safe_path = shlex.quote(path)
@@ -4667,7 +4681,7 @@ def feat_appswitch(backend, bctx, slog):
                     f"{C('(e.g. Photoshop, Microsoft Word, After Effects, iTunes, Notepad++)',DIM)}\n> ").strip()
     except (EOFError, KeyboardInterrupt):
         return
-    if not app:
+    if not app or _is_back(app):
         return
     sys_p = BASE_SYS + """
 Additional instructions for APP FINDER mode:
@@ -4745,7 +4759,7 @@ def feat_gaming_setup(backend, bctx, slog):
             "kernel":       "uname -r",
         })}
     try:
-        want = input(f"\n{BOLD}What do you want to set up? (or press Enter for full game-ready setup):{R}\n"
+        want = input(f"\n{BOLD}What do you want to set up? (Enter = full game-ready setup · 'q' = back):{R}\n"
                      f"{C('(e.g. install Steam, enable Proton, fix my GPU drivers, set up my controller)',DIM)}\n> ").strip()
     except (EOFError, KeyboardInterrupt):
         return
