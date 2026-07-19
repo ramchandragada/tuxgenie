@@ -232,6 +232,26 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
 .badge-bar{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;padding:28px 0;border-top:1px solid var(--border);margin-top:48px}
 .badge{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:5px 11px;font-size:11px;font-weight:600;color:var(--t2);white-space:nowrap}
 .badge-green{background:rgba(22,163,74,.06);border-color:rgba(22,163,74,.3);color:#15803d}
+/* ── COMPARISON TABLE ──────────────────────────────────────────────────────── */
+.cmp-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:var(--r-lg);background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.04),0 8px 24px -14px rgba(99,102,241,.14)}
+.cmp{width:100%;border-collapse:collapse;min-width:760px;font-size:14px}
+.cmp th,.cmp td{padding:14px 16px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+.cmp thead th{font-family:var(--fd);font-weight:700;font-size:12.5px;color:var(--t2);background:#fafaff;letter-spacing:.01em}
+.cmp thead th.tg{color:var(--green-2)}
+.cmp thead th small{display:block;font-family:var(--fb);font-weight:500;font-size:11px;color:var(--t3);margin-top:3px}
+.cmp tbody tr:last-child td{border-bottom:none}
+.cmp td.cap{font-weight:700;color:var(--t1);min-width:190px}
+.cmp td.cap small{display:block;font-weight:400;font-size:12px;color:var(--t3);margin-top:2px}
+.cmp .col-tg{background:rgba(99,102,241,.055)}
+.cmp .mk{font-weight:700;margin-right:5px}
+.cmp .yes .mk{color:#15803d}
+.cmp .no{color:var(--t3)}
+.cmp .no .mk{color:#b9c0cf}
+.cmp .part .mk{color:#b45309}
+.cmp td .sub{font-size:11.5px;color:var(--t3);display:block;margin-top:1px}
+.cmp-legend{margin-top:16px;font-size:12.5px;color:var(--t2);display:flex;gap:20px;flex-wrap:wrap;justify-content:center}
+.cmp-legend b{font-weight:700}
+.cmp-note{margin:12px auto 0;font-size:12.5px;color:var(--t3);text-align:center;max-width:700px;line-height:1.65}
 /* ── EXPANDED FOOTER ───────────────────────────────────────────────────────── */
 .foot-grid{display:grid;grid-template-columns:1.8fr 1fr 1fr 1fr;gap:32px;padding:48px 0 32px}
 .foot-col h5{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--t3);margin-bottom:14px}
@@ -267,7 +287,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
   "description": "AI-powered Linux assistant. Fix any Linux problem in plain English. 34 built-in tools, app catalog, AI tools installer, cross-session memory.",
   "url": "https://tuxgenie.com/",
   "downloadUrl": "https://github.com/ramchandragada/tuxgenie/releases/latest",
-  "softwareVersion": "5.85.0",
+  "softwareVersion": "5.87.0",
   "author": {
     "@type": "Organization",
     "name": "Aspera Technologies",
@@ -293,11 +313,12 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     <a href="#top" class="nav-logo" aria-label="TuxGenie home">
       <span>🐧</span>
       <span style="font-family:var(--fd);font-size:18px;font-weight:800" class="grad">TuxGenie</span>
-      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v5.85.0</span>
+      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v5.87.0</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
       <a href="#how">How it works</a>
+      <a href="#compare">Compare</a>
       <a href="#install">Install</a>
       <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">GitHub ↗</a>
     </div>
@@ -309,6 +330,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
   <div class="mob" id="mob">
     <a href="#features" onclick="closeM()">⚡ Features</a>
     <a href="#how" onclick="closeM()">💡 How it works</a>
+    <a href="#compare" onclick="closeM()">⚖ Compare</a>
     <a href="#install" onclick="closeM()">⬇ Install</a>
     <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener" onclick="closeM()">⭐ GitHub</a>
     <a href="#install" onclick="closeM()" style="color:var(--green-2);font-weight:700">🐧 Install Free</a>
@@ -556,8 +578,88 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
   </div>
 </section>
 
+<!-- COMPARISON -->
+<section id="compare" class="sec" style="background:linear-gradient(180deg,#ffffff,#faf9ff);border-top:1px solid var(--border)">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">How TuxGenie <span class="grad">compares</span></h2>
+      <p class="sh-sub">There are many AI terminal tools — but they're built either to <em>suggest commands</em> for developers, or to <em>edit code</em> for developers. TuxGenie is built to fix, install, and maintain a whole Linux system, in plain English, for everyone.</p>
+    </div>
+    <div class="cmp-scroll fade">
+      <table class="cmp">
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th class="tg">TuxGenie</th>
+            <th>AI shell tools<small>ShellGPT · aichat · tgpt</small></th>
+            <th>AI coding agents<small>Claude Code · Aider · Codex</small></th>
+            <th>Built-in OS AI<small>Ubuntu 26.10*</small></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="cap">Beginner-first<small>no Linux expertise needed</small></td>
+            <td class="col-tg yes"><span class="mk">✓</span>Yes</td>
+            <td class="no"><span class="mk">✗</span>Built for devs</td>
+            <td class="no"><span class="mk">✗</span>Built for devs</td>
+            <td class="part"><span class="mk">~</span>Aims to (preview)</td>
+          </tr>
+          <tr>
+            <td class="cap">Runs &amp; fixes for you<small>agentic — not just suggestions</small></td>
+            <td class="col-tg yes"><span class="mk">✓</span>Yes, iterates</td>
+            <td class="part"><span class="mk">~</span>Runs single cmds</td>
+            <td class="yes"><span class="mk">✓</span>Yes</td>
+            <td class="part"><span class="mk">~</span>Planned</td>
+          </tr>
+          <tr>
+            <td class="cap">Fixes the whole system<small>Wi-Fi, sound, drivers, boot, security</small></td>
+            <td class="col-tg yes"><span class="mk">✓</span>Core purpose</td>
+            <td class="no"><span class="mk">✗</span>No</td>
+            <td class="no"><span class="mk">✗</span>Edits code, not the OS</td>
+            <td class="part"><span class="mk">~</span>Planned</td>
+          </tr>
+          <tr>
+            <td class="cap">One-tap catalogs<small>128 apps · AI tools · games</small></td>
+            <td class="col-tg yes"><span class="mk">✓</span>Yes</td>
+            <td class="no"><span class="mk">✗</span>No</td>
+            <td class="no"><span class="mk">✗</span>No</td>
+            <td class="no"><span class="mk">✗</span>No</td>
+          </tr>
+          <tr>
+            <td class="cap">Layered safety<small>approval + hard-block + rollback</small></td>
+            <td class="col-tg yes"><span class="mk">✓</span>Full stack</td>
+            <td class="part"><span class="mk">~</span>Approval only</td>
+            <td class="part"><span class="mk">~</span>Approval only</td>
+            <td class="no"><span class="mk">?</span>Unknown</td>
+          </tr>
+          <tr>
+            <td class="cap">Free, open-source, no telemetry</td>
+            <td class="col-tg yes"><span class="mk">✓</span>MIT</td>
+            <td class="yes"><span class="mk">✓</span>Mostly</td>
+            <td class="part"><span class="mk">~</span>Mixed</td>
+            <td class="part"><span class="mk">~</span>Opt-in</td>
+          </tr>
+          <tr>
+            <td class="cap">Any distro, in the terminal</td>
+            <td class="col-tg yes"><span class="mk">✓</span>Any Linux</td>
+            <td class="yes"><span class="mk">✓</span>Yes</td>
+            <td class="yes"><span class="mk">✓</span>Yes</td>
+            <td class="no"><span class="mk">✗</span>Ubuntu only</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cmp-legend fade">
+      <span><b class="yes" style="color:#15803d">✓</b> Yes</span>
+      <span><b class="part" style="color:#b45309">~</b> Partial / limited</span>
+      <span><b style="color:var(--t3)">✗</b> No</span>
+    </div>
+    <p class="cmp-note fade">Reflects each tool's primary design focus (based on 2026 research across 20+ sources). The coding agents are excellent at what they do — editing code — they're just built for developers, not desktop repair. <em>*Ubuntu's system AI is an opt-in preview announced for 26.10 (Oct 2026), not yet shipping.</em></p>
+  </div>
+</section>
+
 <!-- FAQ -->
-<section id="faq" class="sec" style="background:linear-gradient(180deg,#ffffff,#faf9ff);border-top:1px solid var(--border)">
+<section id="faq" class="sec" style="background:linear-gradient(180deg,#faf9ff,#ffffff);border-top:1px solid var(--border)">
   <div class="container">
     <div class="sec-head fade">
       <h2 class="sh">Common <span class="grad">questions</span></h2>
@@ -640,7 +742,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       <span class="badge">🐍 Python 3.8+</span>
       <span class="badge badge-green">✓ No telemetry</span>
       <span class="badge">🐧 Any Linux distro</span>
-      <span class="badge badge-green">✓ v5.85.0</span>
+      <span class="badge badge-green">✓ v5.87.0</span>
       <span class="badge">⭐ <span class="gh-stars">…</span> GitHub stars</span>
     </div>
   </div>
@@ -678,7 +780,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     </div>
     <div class="foot-divider"></div>
     <div class="foot-bottom">
-      <span>© 2026 Aspera Technologies · TuxGenie v5.85.0 · MIT License</span>
+      <span>© 2026 Aspera Technologies · TuxGenie v5.87.0 · MIT License</span>
       <span><a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">⭐ <span class="gh-stars">…</span> stars on GitHub</a></span>
     </div>
   </div>
@@ -788,7 +890,7 @@ function copyCmd(btn,txt){
 // Terminal animation
 const lines=[
   {t:'p',v:'tuxgenie'},
-  {t:'o',v:'🐧 TuxGenie v5.85.0 — Your Linux AI assistant',c:'#a5b4fc'},
+  {t:'o',v:'🐧 TuxGenie v5.87.0 — Your Linux AI assistant',c:'#a5b4fc'},
   {t:'b'},
   {t:'i',v:'my wifi is not working'},
   {t:'o',v:'  🔍 Scanning network interfaces...',c:'#93c5fd'},
