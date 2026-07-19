@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.83.0"
+__version__ = "5.84.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -6098,36 +6098,65 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
     hdr(title)
     print(f"\n  {DIM}{intro}{R}")
 
-    # Group by category, preserving the order each category first appears in
-    # the catalog. This lets new entries be appended anywhere in the list and
-    # still render under the right heading (no duplicate category headers).
-    cats, by_cat = [], {}
-    for entry in catalog:
-        if entry["cat"] not in by_cat:
-            by_cat[entry["cat"]] = []
-            cats.append(entry["cat"])
-        by_cat[entry["cat"]].append(entry)
-    for cat in cats:
-        print(f"\n  {BOLD}{CYAN}{cat.upper()}{R}")
-        for entry in by_cat[cat]:
-            num = f"[{entry['id']:>3}]"
-            name = f"{BOLD}{entry['name']}{R}".ljust(38 + len(BOLD) + len(R))
-            print(f"   {C(num, GREEN)}  {name}  {DIM}{entry['desc']}{R}")
+    def _render(entries):
+        # Group by category, preserving the order each category first appears.
+        # Rendering an arbitrary subset lets us show live search results too.
+        cats, by_cat = [], {}
+        for entry in entries:
+            if entry["cat"] not in by_cat:
+                by_cat[entry["cat"]] = []
+                cats.append(entry["cat"])
+            by_cat[entry["cat"]].append(entry)
+        for cat in cats:
+            print(f"\n  {BOLD}{CYAN}{cat.upper()}{R}")
+            for entry in by_cat[cat]:
+                num = f"[{entry['id']:>3}]"
+                name = f"{BOLD}{entry['name']}{R}".ljust(38 + len(BOLD) + len(R))
+                print(f"   {C(num, GREEN)}  {name}  {DIM}{entry['desc']}{R}")
 
-    print(f"\n  {DIM}Examples:  '1'   '1,3,5'   '1-5'   '1,3-5,8'   'q' to cancel{R}")
-    try:
-        sel = input(f"\n  {BOLD}Pick {item_label} [1-{len(catalog)}]:{R} ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not sel or sel in ("q", "quit", "exit", "back"):
-        return
+    def _match(term):
+        t = term.lower()
+        return [e for e in catalog
+                if t in e["name"].lower() or t in e["desc"].lower() or t in e["cat"].lower()]
 
-    ids = _parse_app_selection(sel, max_id=len(catalog))
-    if not ids:
-        warn(f"Couldn't parse '{sel}'. Try a number, list, or range — e.g. '1' or '1,5,14' or '1-5'.")
-        return
-
-    chosen = [e for e in catalog if e["id"] in ids]
+    # Search-and-select loop: a word filters the list; numbers/ranges select.
+    term = ""
+    chosen = None
+    while chosen is None:
+        entries = catalog if not term else _match(term)
+        if term and not entries:
+            warn(f"Nothing matches '{term}'. Showing everything.")
+            term, entries = "", catalog
+        if term:
+            print(f"\n  {BOLD}{GREEN}🔎 {len(entries)} result(s) for '{term}'{R}   "
+                  f"{DIM}(type {BOLD}*{R}{DIM} to show all again){R}")
+        _render(entries)
+        print(f"\n  {DIM}Pick numbers ('1'  '1,3,5'  '1-5'), or type a word to "
+              f"{BOLD}search{R}{DIM} (e.g. 'photo', 'browser', 'backup'). 'q' cancels.{R}")
+        try:
+            sel = input(f"\n  {BOLD}Pick {item_label} or search:{R} ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        low = sel.lower()
+        if not sel or low in ("q", "quit", "exit", "back"):
+            return
+        if sel == "*" or low in ("all", "clear", "reset"):
+            term = ""
+            continue
+        if sel.startswith("/"):                       # explicit search: "/photo"
+            term = sel[1:].strip()
+            continue
+        if not any(ch.isdigit() for ch in sel):       # any word → search
+            term = sel
+            continue
+        ids = _parse_app_selection(sel, max_id=len(catalog))
+        if not ids:
+            if any(ch.isalpha() for ch in sel):        # e.g. "3d printing" → search
+                term = sel
+                continue
+            warn(f"Couldn't parse '{sel}'. Use numbers like '1' or '1,5,14', or type a word to search.")
+            continue
+        chosen = [e for e in catalog if e["id"] in ids]
     print(f"\n  {BOLD}You're about to install {len(chosen)} {item_label}:{R}")
     for entry in chosen:
         print(f"   {GREEN}•{R} {BOLD}{entry['name']}{R}  {DIM}({entry['cat']}){R}")

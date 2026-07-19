@@ -123,52 +123,47 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 - <<'PYEOF'
-          import re, subprocess, sys
+          import re, sys
 
           with open('tuxgenie.py') as f:
               src = f.read()
 
-          # Read current version
+          # Version, built-in tool count, and live catalog sizes — the single
+          # source of truth. The website mirrors these so it can never go stale.
           ver = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', src).group(1)
-
-          # Count numbered menu tool items
           tool_count = len(re.findall(r'_item\("', src))
+
+          def _count(block):
+              m = re.search(block + r'\s*=\s*\[(.*?)\n\]', src, re.S)
+              return len(re.findall(r'\{\s*"id"', m.group(1))) if m else 0
+          app_count = _count('APP_CATALOG')
+          ai_count  = _count('AI_CATALOG')
 
           with open('docs/index.html') as f:
               html = f.read()
-
           original = html
 
-          # 1. Replace ALL vX.Y.Z version strings (all belong to TuxGenie in this file)
+          # All vX.Y.Z strings in this file belong to TuxGenie.
           html = re.sub(r'v\d+\.\d+\.\d+', f'v{ver}', html)
-
-          # 2. Replace tool count before "built-in tools" (case-insensitive variants)
-          html = re.sub(r'\b\d+(?= built-in tools)', str(tool_count), html)
-          html = re.sub(r'\b\d+(?= Built-in Tools)', str(tool_count), html)
-
-          # 3. Replace tool count in meta description
-          html = re.sub(
-              r'(\d+) built-in tools',
-              f'{tool_count} built-in tools',
-              html,
-              flags=re.IGNORECASE
-          )
-
-          # 4. Update hero stat number (the big "29" badge)
-          html = re.sub(
-              r'(font-size:24px;font-weight:900[^>]*>)\d+(<)',
-              rf'\g<1>{tool_count}\2',
-              html
-          )
+          # JSON-LD softwareVersion carries no 'v' prefix.
+          html = re.sub(r'("softwareVersion":\s*")\d+\.\d+\.\d+(")', rf'\g<1>{ver}\2', html)
+          # "NN built-in tools" prose (meta description, section heading).
+          html = re.sub(r'\b\d+(?= built-in tools)', str(tool_count), html, flags=re.IGNORECASE)
+          # Auto-synced count spans anywhere in the page.
+          def _span(cls, val, h):
+              return re.sub(rf'(<span class="{cls}">)\d+(</span>)', rf'\g<1>{val}\2', h)
+          html = _span('js-tools', tool_count, html)
+          html = _span('js-apps', app_count, html)
+          html = _span('js-ai', ai_count, html)
 
           if html == original:
-              print(f"Website already up to date (v{ver}, {tool_count} tools). Nothing to commit.")
+              print(f"Website already current (v{ver}, {tool_count} tools, {app_count} apps, {ai_count} AI). Nothing to commit.")
               sys.exit(0)
 
           with open('docs/index.html', 'w') as f:
               f.write(html)
 
-          print(f"Updated docs/index.html → v{ver}, {tool_count} tools")
+          print(f"Updated docs/index.html → v{ver}, {tool_count} tools, {app_count} apps, {ai_count} AI tools")
           PYEOF
 
           # Commit only if something changed

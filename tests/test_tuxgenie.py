@@ -246,6 +246,38 @@ class TestCatalogs:
         assert {"Cursor", "Windsurf", "Zed", "GitHub Copilot CLI"} <= ai_names
 
 
+class TestCatalogSearch:
+    def _drive(self, monkeypatch, catalog, inputs):
+        import io, contextlib
+        calls = []
+        monkeypatch.setattr(tg, "agentic_engine", lambda *a, **k: calls.append(a))
+        it = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: next(it))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            tg._run_catalog_picker(None, {}, [], catalog=catalog, title="T",
+                                   intro="i", item_label="item(s)", history_tag="x")
+        return buf.getvalue(), calls
+
+    def test_search_filters_and_shows_header(self, monkeypatch):
+        out, calls = self._drive(monkeypatch, tg.APP_CATALOG, ["photo", "q"])
+        assert "result(s) for 'photo'" in out
+        assert "RawTherapee" in out          # a photo tool surfaces
+        assert calls == []                   # searching never installs
+
+    def test_search_then_cancel_does_not_install(self, monkeypatch):
+        out, calls = self._drive(monkeypatch, tg.APP_CATALOG, ["photo", "80", "n"])
+        assert calls == []
+
+    def test_no_match_falls_back_to_all(self, monkeypatch):
+        out, _ = self._drive(monkeypatch, tg.APP_CATALOG, ["zznope", "q"])
+        assert "Nothing matches" in out
+
+    def test_word_finds_ai_tool(self, monkeypatch):
+        out, _ = self._drive(monkeypatch, tg.AI_CATALOG, ["cursor", "q"])
+        assert "Cursor" in out and "result(s) for 'cursor'" in out
+
+
 class TestCrashGuardExtra:
     def setup_method(self):
         self._orig = tg.CRASH_FILE
