@@ -212,6 +212,49 @@ class TestCrashGuard:
         tg._crash_mark_clean()
         assert tg._crash_read().get("crashes") == 0
 
+    def _placeholder(self):
+        pass
+
+
+# ── Catalog integrity (Install Apps [77] / AI Tools [99]) ────────────────────
+
+class TestCatalogs:
+    @pytest.mark.parametrize("name", ["APP_CATALOG", "AI_CATALOG"])
+    def test_ids_unique_and_contiguous(self, name):
+        cat = getattr(tg, name)
+        ids = [e["id"] for e in cat]
+        assert len(ids) == len(set(ids)), f"{name} has duplicate ids"
+        # Contiguous 1..N so ranges like '1-N' select every entry, and the
+        # picker's max_id == len(catalog) validation lets every id through.
+        assert sorted(ids) == list(range(1, len(cat) + 1)), f"{name} ids not contiguous 1..N"
+
+    @pytest.mark.parametrize("name", ["APP_CATALOG", "AI_CATALOG"])
+    def test_entries_well_formed(self, name):
+        for e in getattr(tg, name):
+            for key in ("id", "name", "cat", "prompt", "desc"):
+                assert str(e.get(key, "")).strip(), f"{name} id {e.get('id')} missing {key}"
+
+    def test_selection_parses_full_range(self):
+        # 'select all' must map to every catalog id.
+        ids = tg._parse_app_selection(f"1-{len(tg.APP_CATALOG)}", max_id=len(tg.APP_CATALOG))
+        assert ids == list(range(1, len(tg.APP_CATALOG) + 1))
+
+    def test_new_headliners_present(self):
+        app_names = {e["name"] for e in tg.APP_CATALOG}
+        ai_names = {e["name"] for e in tg.AI_CATALOG}
+        assert {"Bitwarden", "Syncthing", "Lutris", "Wireshark"} <= app_names
+        assert {"Cursor", "Windsurf", "Zed", "GitHub Copilot CLI"} <= ai_names
+
+
+class TestCrashGuardExtra:
+    def setup_method(self):
+        self._orig = tg.CRASH_FILE
+        self._tmp = tempfile.mkdtemp()
+        tg.CRASH_FILE = os.path.join(self._tmp, "crash.json")
+
+    def teardown_method(self):
+        tg.CRASH_FILE = self._orig
+
     def test_no_atexit_registration(self):
         # Regression: the counter must NOT be reset via atexit (that reset it
         # even after a real crash, and missed SIGTERM). Ensure _crash_guard

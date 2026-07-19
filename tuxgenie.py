@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.82.0"
+__version__ = "5.83.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5996,6 +5996,67 @@ APP_CATALOG = [
     {"id": 61, "name": "btop / htop",         "cat": "Utilities",      "prompt": "Install btop and htop system monitors",                                                                                         "desc": "Beautiful real-time system monitors"},
     {"id": 62, "name": "neofetch",            "cat": "Utilities",      "prompt": "Install neofetch",                                                                                                              "desc": "System info banner on terminal launch"},
     {"id": 63, "name": "Dev Essentials Pack", "cat": "Utilities",      "prompt": "Install build-essential, curl, wget, git, unzip, htop, tree",                                                                  "desc": "Essential dev tools in one shot"},
+
+    # ═══ Expanded catalog — verified install methods (2026) ═══════════════════
+    # ── More Browsers ─────────────────────────────────────────────────────────
+    {"id": 65, "name": "LibreWolf",           "cat": "Browsers",       "prompt": "Install LibreWolf, a privacy-hardened Firefox fork, via flatpak from Flathub (io.gitlab.librewolf-community). On Debian/Ubuntu the official extrepo/apt repo also works.", "desc": "Privacy-hardened Firefox fork"},
+    {"id": 66, "name": "Zen Browser",         "cat": "Browsers",       "prompt": "Install Zen Browser, a calm Arc-style Firefox-based browser, via flatpak from Flathub: app.zen_browser.zen. Fall back to the official tarball from https://zen-browser.app.", "desc": "Beautiful Arc-style Firefox browser"},
+    {"id": 67, "name": "Tor Browser",         "cat": "Browsers",       "prompt": "Install Tor Browser for anonymous browsing via flatpak from Flathub (org.torproject.torbrowser-launcher), or the distro's torbrowser-launcher package.", "desc": "Anonymous browsing over Tor"},
+    {"id": 68, "name": "Microsoft Edge",      "cat": "Browsers",       "prompt": "Install Microsoft Edge (proprietary Chromium browser) from Microsoft's official repo at https://packages.microsoft.com/repos/edge — add the signing key and apt source, then install microsoft-edge-stable. Debian/Ubuntu only.", "desc": "Microsoft's Chromium browser (proprietary)"},
+    # ── More Communication ─────────────────────────────────────────────────────
+    {"id": 69, "name": "Element",             "cat": "Communication",  "prompt": "Install Element, a secure Matrix chat client, via flatpak from Flathub: im.riot.Riot. On Debian/Ubuntu the official element.io apt repo also works.", "desc": "Secure Matrix team chat"},
+    {"id": 70, "name": "Ferdium",             "cat": "Communication",  "prompt": "Install Ferdium, an all-in-one hub that combines many messaging services, via flatpak from Flathub: org.ferdium.Ferdium.", "desc": "All-in-one messaging hub"},
+    # ── More Office & Notes ─────────────────────────────────────────────────────
+    {"id": 71, "name": "Logseq",              "cat": "Office & Notes", "prompt": "Install Logseq, a privacy-first outliner and knowledge base, via flatpak from Flathub: com.logseq.Logseq.", "desc": "Privacy-first outliner / knowledge base"},
+    {"id": 72, "name": "Zotero",              "cat": "Office & Notes", "prompt": "Install Zotero reference and citation manager via flatpak from Flathub: org.zotero.Zotero.", "desc": "Reference & citation manager"},
+    {"id": 73, "name": "Standard Notes",      "cat": "Office & Notes", "prompt": "Install Standard Notes, an encrypted note-taking app, via flatpak from Flathub: org.standardnotes.standardnotes.", "desc": "Encrypted, cross-device notes"},
+    {"id": 74, "name": "Xournal++",           "cat": "Office & Notes", "prompt": "Install Xournal++ for handwritten notes and PDF annotation via apt (xournalpp) on Debian/Ubuntu, or flatpak from Flathub: com.github.xournalpp.xournalpp.", "desc": "Handwrite notes & annotate PDFs"},
+    # ── More Media ──────────────────────────────────────────────────────────────
+    {"id": 75, "name": "Jellyfin Media Player","cat": "Media",         "prompt": "Install Jellyfin Media Player, the desktop client for the open-source Jellyfin media server, via flatpak from Flathub: com.github.iwalton3.jellyfin-media-player.", "desc": "Desktop client for Jellyfin"},
+    {"id": 76, "name": "Strawberry",          "cat": "Media",          "prompt": "Install Strawberry music player via apt (strawberry) on Debian/Ubuntu or flatpak from Flathub: org.strawberrymusicplayer.strawberry.", "desc": "Music player for audio collectors"},
+    # ── More AV Creation ────────────────────────────────────────────────────────
+    {"id": 77, "name": "Shotcut",             "cat": "AV Creation",    "prompt": "Install Shotcut, a cross-platform video editor, via flatpak from Flathub: org.shotcut.Shotcut.", "desc": "Free cross-platform video editor"},
+    # ── More Graphics ───────────────────────────────────────────────────────────
+    {"id": 78, "name": "Pinta",               "cat": "Graphics",       "prompt": "Install Pinta, a simple Paint.NET-style image editor, via flatpak from Flathub: com.github.PintaProject.Pinta.", "desc": "Simple image editor (Paint.NET-like)"},
+    {"id": 79, "name": "digiKam",             "cat": "Graphics",       "prompt": "Install digiKam professional photo management via flatpak from Flathub: org.kde.digikam.", "desc": "Pro photo management suite"},
+    {"id": 80, "name": "RawTherapee",         "cat": "Graphics",       "prompt": "Install RawTherapee RAW photo developer via flatpak from Flathub: com.rawtherapee.RawTherapee.", "desc": "RAW photo developer (Lightroom alt)"},
+    {"id": 81, "name": "Scribus",             "cat": "Graphics",       "prompt": "Install Scribus open-source desktop publishing via apt (scribus) or flatpak from Flathub: net.scribus.Scribus.", "desc": "Desktop publishing (InDesign alt)"},
+    {"id": 82, "name": "Upscayl",             "cat": "Graphics",       "prompt": "Install Upscayl, an AI image upscaler, via flatpak from Flathub: org.upscayl.Upscayl, or the AppImage from https://github.com/upscayl/upscayl/releases.", "desc": "AI image upscaler"},
+    # ── More Developer Tools ────────────────────────────────────────────────────
+    {"id": 83, "name": "Neovim",              "cat": "Developer",      "prompt": "Install Neovim. For the latest version prefer flatpak (io.neovim.nvim) or the official GitHub release; apt (neovim) works but may be older.", "desc": "Hyperextensible Vim-based editor"},
+    {"id": 84, "name": "GitHub CLI (gh)",     "cat": "Developer",      "prompt": "Install the GitHub CLI (gh) from GitHub's official apt repo at https://cli.github.com/packages — add the signing key and apt source, then install gh. On Fedora use dnf, on Arch use pacman.", "desc": "GitHub from the command line"},
+    {"id": 85, "name": "Insomnia",            "cat": "Developer",      "prompt": "Install Insomnia API client via flatpak from Flathub: rest.insomnia.Insomnia.", "desc": "REST/GraphQL API client (Postman alt)"},
+    {"id": 86, "name": "Meld",                "cat": "Developer",      "prompt": "Install Meld visual diff and merge tool via apt (meld) or flatpak from Flathub: org.gnome.meld.", "desc": "Visual diff & merge tool"},
+    {"id": 87, "name": "Zellij",              "cat": "Developer",      "prompt": "Install Zellij, a modern terminal workspace/multiplexer, using the official install script: bash <(curl -L https://zellij.dev/launch), or the prebuilt binary from https://github.com/zellij-org/zellij/releases placed in /usr/local/bin.", "desc": "Modern terminal workspace"},
+    {"id": 88, "name": "Tabby Terminal",      "cat": "Developer",      "prompt": "Install Tabby, the open-source terminal & SSH client by Eugeny (NOT TabbyML). Download the latest .deb from https://github.com/Eugeny/tabby/releases and install it with apt/dpkg.", "desc": "Modern terminal & SSH client"},
+    {"id": 89, "name": "JetBrains Toolbox",   "cat": "Developer",      "prompt": "Install JetBrains Toolbox (proprietary freeware manager for IntelliJ, PyCharm, etc.) — download the official tarball from https://www.jetbrains.com/toolbox-app/, extract it, and run the jetbrains-toolbox binary.", "desc": "Manager for JetBrains IDEs"},
+    {"id": 90, "name": "Podman",              "cat": "Developer",      "prompt": "Install Podman, the daemonless container engine, via apt (podman) on Debian/Ubuntu or the system package manager.", "desc": "Daemonless container engine"},
+    {"id": 91, "name": "Modern CLI Pack",     "cat": "Developer",      "prompt": "Install a bundle of fast modern CLI tools via the package manager: ripgrep, fd-find, bat, eza, fzf, zoxide. Note: on Debian/Ubuntu bat runs as 'batcat' and fd-find as 'fdfind'; if eza isn't in the repo, add its official repo or fetch the GitHub binary.", "desc": "ripgrep · fd · bat · eza · fzf · zoxide"},
+    # ── More System Tools ───────────────────────────────────────────────────────
+    {"id": 92, "name": "Flatpak + Flathub",   "cat": "System Tools",   "prompt": "Install Flatpak and enable the Flathub app store: install the flatpak package, then run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo. Tell the user to re-login so Flathub apps appear.", "desc": "Enable the universal Flathub app store"},
+    {"id": 93, "name": "GNOME Tweaks",        "cat": "System Tools",   "prompt": "Install GNOME Tweaks for advanced desktop settings via apt (gnome-tweaks) on GNOME-based systems.", "desc": "Advanced GNOME settings"},
+    {"id": 94, "name": "Cockpit",             "cat": "System Tools",   "prompt": "Install Cockpit, a web-based server admin dashboard, via apt (cockpit). Afterwards tell the user to open https://localhost:9090.", "desc": "Web-based server admin dashboard"},
+    {"id": 95, "name": "Fastfetch",           "cat": "System Tools",   "prompt": "Install Fastfetch (a fast neofetch replacement) via apt (fastfetch) on Ubuntu 24.04+/Debian 13+; on older releases use the PPA ppa:zhangsongcui3371/fastfetch or the GitHub .deb.", "desc": "Fast system-info banner"},
+    # ── More Files & Sync ───────────────────────────────────────────────────────
+    {"id": 96, "name": "Syncthing",           "cat": "Files & Sync",   "prompt": "Install Syncthing continuous file sync from the official apt repo at https://apt.syncthing.net — add the key and source, then install syncthing and enable the user service.", "desc": "Continuous peer-to-peer file sync"},
+    {"id": 97, "name": "LocalSend",           "cat": "Files & Sync",   "prompt": "Install LocalSend (AirDrop-style local file sharing) via flatpak from Flathub: org.localsend.localsend_app.", "desc": "AirDrop-style local file sharing"},
+    {"id": 98, "name": "Cryptomator",         "cat": "Files & Sync",   "prompt": "Install Cryptomator for encrypted cloud vaults via flatpak from Flathub: org.cryptomator.Cryptomator.", "desc": "Encrypt files before cloud upload"},
+    {"id": 99, "name": "Bitwarden",           "cat": "Files & Sync",   "prompt": "Install the Bitwarden desktop password manager via flatpak from Flathub: com.bitwarden.desktop.", "desc": "Open-source password manager"},
+    {"id": 100,"name": "Déjà Dup Backups",    "cat": "Files & Sync",   "prompt": "Install Déjà Dup, a simple encrypted backup tool, via apt (deja-dup) or flatpak from Flathub: org.gnome.DejaDup.", "desc": "Simple, encrypted backups"},
+    # ── More Utilities ──────────────────────────────────────────────────────────
+    {"id": 101,"name": "balenaEtcher",        "cat": "Utilities",      "prompt": "Install balenaEtcher to flash OS images to USB/SD cards — download the latest .deb (or AppImage) from https://github.com/balena-io/etcher/releases and install it.", "desc": "Flash OS images to USB / SD"},
+    {"id": 102,"name": "Kooha",               "cat": "Utilities",      "prompt": "Install Kooha, a simple Wayland-friendly screen recorder, via flatpak from Flathub: io.github.seadve.Kooha.", "desc": "Simple screen recorder"},
+    {"id": 103,"name": "Czkawka",             "cat": "Utilities",      "prompt": "Install Czkawka duplicate-file and clutter finder via flatpak from Flathub: com.github.qarmin.czkawka.", "desc": "Find duplicate files & free space"},
+    {"id": 104,"name": "OnionShare",          "cat": "Utilities",      "prompt": "Install OnionShare to share files anonymously over Tor via flatpak from Flathub: org.onionshare.OnionShare, or apt (onionshare).", "desc": "Share files anonymously over Tor"},
+    # ── Gaming ──────────────────────────────────────────────────────────────────
+    {"id": 105,"name": "Lutris",              "cat": "Gaming",         "prompt": "Install Lutris, the open gaming platform/launcher, via flatpak from Flathub (net.lutris.Lutris) or apt (lutris).", "desc": "Open gaming platform / launcher"},
+    {"id": 106,"name": "Heroic Games Launcher","cat": "Gaming",        "prompt": "Install Heroic Games Launcher (Epic, GOG, Amazon games) via flatpak from Flathub: com.heroicgameslauncher.hgl.", "desc": "Epic / GOG / Amazon games launcher"},
+    {"id": 107,"name": "Bottles",             "cat": "Gaming",         "prompt": "Install Bottles to run Windows software and games via Wine, via flatpak from Flathub (the only officially supported method): com.usebottles.bottles.", "desc": "Run Windows apps/games via Wine"},
+    {"id": 108,"name": "ProtonUp-Qt",         "cat": "Gaming",         "prompt": "Install ProtonUp-Qt to install and manage Proton-GE / Wine-GE compatibility tools via flatpak from Flathub: net.davidotek.pupgui2.", "desc": "Manage Proton-GE for Steam/Lutris"},
+    # ── Security ────────────────────────────────────────────────────────────────
+    {"id": 109,"name": "Gufw Firewall",       "cat": "Security",       "prompt": "Install Gufw, a graphical firewall (UFW) frontend, via apt (gufw). Tell the user to enable the firewall inside the app.", "desc": "Easy graphical firewall"},
+    {"id": 110,"name": "ClamAV + ClamTk",     "cat": "Security",       "prompt": "Install the ClamAV antivirus engine and the ClamTk GUI via apt (clamav clamtk), then update the virus database with freshclam.", "desc": "Open-source antivirus + GUI"},
+    {"id": 111,"name": "Wireshark",           "cat": "Security",       "prompt": "Install Wireshark network protocol analyzer via apt (wireshark). If prompted, allow non-root packet capture.", "desc": "Network protocol analyzer"},
 ]
 
 
@@ -6037,14 +6098,21 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
     hdr(title)
     print(f"\n  {DIM}{intro}{R}")
 
-    last_cat = None
+    # Group by category, preserving the order each category first appears in
+    # the catalog. This lets new entries be appended anywhere in the list and
+    # still render under the right heading (no duplicate category headers).
+    cats, by_cat = [], {}
     for entry in catalog:
-        if entry["cat"] != last_cat:
-            print(f"\n  {BOLD}{CYAN}{entry['cat'].upper()}{R}")
-            last_cat = entry["cat"]
-        num = f"[{entry['id']:>2}]"
-        name = f"{BOLD}{entry['name']}{R}".ljust(38 + len(BOLD) + len(R))
-        print(f"   {C(num, GREEN)}  {name}  {DIM}{entry['desc']}{R}")
+        if entry["cat"] not in by_cat:
+            by_cat[entry["cat"]] = []
+            cats.append(entry["cat"])
+        by_cat[entry["cat"]].append(entry)
+    for cat in cats:
+        print(f"\n  {BOLD}{CYAN}{cat.upper()}{R}")
+        for entry in by_cat[cat]:
+            num = f"[{entry['id']:>3}]"
+            name = f"{BOLD}{entry['name']}{R}".ljust(38 + len(BOLD) + len(R))
+            print(f"   {C(num, GREEN)}  {name}  {DIM}{entry['desc']}{R}")
 
     print(f"\n  {DIM}Examples:  '1'   '1,3,5'   '1-5'   '1,3-5,8'   'q' to cancel{R}")
     try:
@@ -6085,9 +6153,9 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
 
 
 def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — 64-app catalog covering browsers, communication,
+    """Quick app installer — 111-app catalog covering browsers, communication,
     office, media, graphics, developer tools, system tools, files & sync,
-    and utilities. Each entry maps to a natural-language install prompt;
+    utilities, gaming, and security. Each entry maps to a natural-language install prompt;
     the agentic engine picks the right method (apt / snap / flatpak / vendor
     repo) for the user's distro and confirms before running anything."""
     _run_catalog_picker(
@@ -6102,22 +6170,36 @@ def feat_install_apps(backend, bctx, slog):
 
 
 AI_CATALOG = [
-    # Local LLMs — run AI offline, no API key needed
-    {"id": 1,  "name": "Ollama",                "cat": "Local LLMs",      "prompt": "Install Ollama on this Linux system using the official installer from https://ollama.com/install.sh. After install, verify the ollama service is running and report the local API URL.",                                          "desc": "Run local LLMs offline (Llama, Mistral, Qwen)"},
-    {"id": 2,  "name": "Jan",                   "cat": "Local LLMs",      "prompt": "Install Jan AI desktop app for Linux from the official GitHub releases (jan.ai). Prefer the .deb on Debian/Ubuntu or the AppImage otherwise; create a desktop entry if AppImage.",                                                  "desc": "Open-source ChatGPT alternative"},
-    {"id": 3,  "name": "LM Studio",             "cat": "Local LLMs",      "prompt": "Install LM Studio for Linux: download the official AppImage from lmstudio.ai, place it under ~/Applications, make it executable, and create a .desktop entry so it appears in the launcher.",                                       "desc": "GUI to download and run any GGUF model"},
-    # AI Web UIs
-    {"id": 4,  "name": "Open WebUI",            "cat": "AI Web UIs",      "prompt": "Install Open WebUI (a ChatGPT-style web UI for Ollama) using the official Docker container: docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main. Tell the user to open http://localhost:3000 once running.", "desc": "ChatGPT-style browser UI for local models"},
-    # Coding AI
-    {"id": 5,  "name": "Claude Code",           "cat": "Coding AI",       "prompt": "Install Anthropic's Claude Code CLI globally via npm (npm install -g @anthropic-ai/claude-code). Make sure Node.js LTS is installed first. Tell the user to set the ANTHROPIC_API_KEY env var afterwards.",                            "desc": "Anthropic's terminal coding agent"},
-    {"id": 6,  "name": "Aider",                 "cat": "Coding AI",       "prompt": "Install aider-chat (the AI pair-programmer for the terminal). Prefer pipx (pipx install aider-chat) so it lives in its own venv. Make sure pipx and Python 3 are installed first.",                                                  "desc": "AI pair-programmer in your terminal"},
-    {"id": 7,  "name": "Continue.dev",          "cat": "Coding AI",       "prompt": "Install the Continue.dev open-source AI extension for VS Code: code --install-extension Continue.continue. Make sure VS Code is installed first; if not, install it first.",                                                       "desc": "Open-source AI extension for VS Code"},
-    # Voice & Speech
-    {"id": 8,  "name": "Whisper",               "cat": "Voice & Speech",  "prompt": "Install OpenAI Whisper for offline speech-to-text via pipx (pipx install openai-whisper) and ensure ffmpeg is also installed via apt.",                                                                                                "desc": "Offline speech-to-text"},
-    # Cloud AI Apps
-    {"id": 9,  "name": "ChatGPT Desktop",       "cat": "Cloud AI Apps",   "prompt": "Install a ChatGPT desktop client for Linux. If no official OpenAI .deb exists yet for this distro, install the well-maintained community 'chatgpt' Snap (sudo snap install chatgpt-desktop) or a Flatpak as a clearly-labelled alternative — explain to the user it is community-maintained.", "desc": "Desktop client for OpenAI ChatGPT"},
-    # Starter Pack
-    {"id": 10, "name": "Local AI Starter Pack", "cat": "Starter Packs",   "prompt": "Set up a complete local AI stack on this machine in three steps: 1) Install Ollama via the official installer (https://ollama.com/install.sh). 2) Pull the llama3.2:3b model (small, fast, fits on most laptops). 3) Install Open WebUI via the official Docker container on port 3000. At the end, tell the user the local URL to open and how to start chatting.", "desc": "Ollama + Open WebUI + llama3.2:3b — zero to local AI"},
+    # ── AI Code Editors ───────────────────────────────────────────────────────
+    {"id": 1,  "name": "Cursor",                "cat": "AI Editors",      "prompt": "Install Cursor, the AI-first code editor (a VS Code fork by Anysphere). Download the official Linux AppImage from https://cursor.com/download (x64), save it under ~/Applications, make it executable, and create a ~/.local/share/applications/cursor.desktop launcher so it shows in the app menu. Optionally also install the Cursor CLI agent with: curl https://cursor.com/install -fsS | bash.", "desc": "AI-first code editor (VS Code fork)"},
+    {"id": 2,  "name": "Windsurf",              "cat": "AI Editors",      "prompt": "Install Windsurf, the agentic AI code editor. Use the official apt repo: add the key from https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/windsurf.gpg, add the deb source 'https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/apt stable main', then apt update && apt install windsurf. If that URL has changed, get current instructions from https://windsurf.com/download.", "desc": "Agentic AI code editor"},
+    {"id": 3,  "name": "Zed",                   "cat": "AI Editors",      "prompt": "Install Zed, the fast open-source code editor with built-in AI, using the official installer: curl -f https://zed.dev/install.sh | sh.", "desc": "Fast open-source editor with AI"},
+    # ── Coding AI (CLIs & agents) ───────────────────────────────────────────────
+    {"id": 4,  "name": "Claude Code",           "cat": "Coding AI",       "prompt": "Install Anthropic's Claude Code CLI globally via npm (npm install -g @anthropic-ai/claude-code). Make sure Node.js LTS is installed first. Tell the user to set the ANTHROPIC_API_KEY env var afterwards.", "desc": "Anthropic's terminal coding agent"},
+    {"id": 5,  "name": "OpenAI Codex CLI",      "cat": "Coding AI",       "prompt": "Install OpenAI Codex CLI, a terminal coding agent, globally via npm: npm install -g @openai/codex. Ensure Node.js LTS is installed first, then tell the user to sign in or set their OpenAI API key.", "desc": "OpenAI's terminal coding agent"},
+    {"id": 6,  "name": "Gemini CLI",            "cat": "Coding AI",       "prompt": "Install Google's Gemini CLI globally via npm: npm install -g @google/gemini-cli. Ensure Node.js 18+ is installed first.", "desc": "Google Gemini AI in your terminal"},
+    {"id": 7,  "name": "GitHub Copilot CLI",    "cat": "Coding AI",       "prompt": "Install GitHub's agentic Copilot CLI via npm: npm install -g @github/copilot (needs Node.js 22+); it launches with the 'copilot' command. Do NOT use the retired 'gh extension install github/gh-copilot' — that is deprecated.", "desc": "GitHub's agentic AI coding CLI"},
+    {"id": 8,  "name": "Aider",                 "cat": "Coding AI",       "prompt": "Install aider-chat (the AI pair-programmer for the terminal). Prefer pipx (pipx install aider-chat) so it lives in its own venv. Make sure pipx and Python 3 are installed first.", "desc": "AI pair-programmer in your terminal"},
+    {"id": 9,  "name": "Goose",                 "cat": "Coding AI",       "prompt": "Install Goose, the open-source on-machine AI agent (Agentic AI Foundation), using the official installer: curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash. Docs are at goose-docs.ai.", "desc": "Open-source local AI agent"},
+    {"id": 10, "name": "Cline",                 "cat": "Coding AI",       "prompt": "Install Cline, the autonomous AI coding agent for VS Code: code --install-extension saoudrizwan.claude-dev. Install VS Code first if it isn't present.", "desc": "Autonomous AI agent for VS Code"},
+    {"id": 11, "name": "Continue.dev",          "cat": "Coding AI",       "prompt": "Install the Continue.dev open-source AI extension for VS Code: code --install-extension Continue.continue. Make sure VS Code is installed first; if not, install it first.", "desc": "Open-source AI extension for VS Code"},
+    # ── Local LLMs — run AI offline, no API key needed ──────────────────────────
+    {"id": 12, "name": "Ollama",                "cat": "Local LLMs",      "prompt": "Install Ollama on this Linux system using the official installer from https://ollama.com/install.sh. After install, verify the ollama service is running and report the local API URL.", "desc": "Run local LLMs offline (Llama, Mistral, Qwen)"},
+    {"id": 13, "name": "GPT4All",               "cat": "Local LLMs",      "prompt": "Install GPT4All by Nomic to run local LLMs offline with a desktop GUI. Download the official Linux installer from https://github.com/nomic-ai/gpt4all/releases and run it.", "desc": "Run local LLMs offline (desktop GUI)"},
+    {"id": 14, "name": "Msty",                  "cat": "Local LLMs",      "prompt": "Install Msty, a desktop app for local and cloud AI chat. Download the official Linux AppImage or .deb from https://msty.ai (see https://docs.msty.app) and install it, creating a launcher entry if it's an AppImage.", "desc": "Local + cloud AI chat, one app"},
+    {"id": 15, "name": "Jan",                   "cat": "Local LLMs",      "prompt": "Install Jan AI desktop app for Linux from the official GitHub releases (jan.ai). Prefer the .deb on Debian/Ubuntu or the AppImage otherwise; create a desktop entry if AppImage.", "desc": "Open-source ChatGPT alternative"},
+    {"id": 16, "name": "LM Studio",             "cat": "Local LLMs",      "prompt": "Install LM Studio for Linux: download the official AppImage from lmstudio.ai, place it under ~/Applications, make it executable, and create a .desktop entry so it appears in the launcher.", "desc": "GUI to download and run any GGUF model"},
+    # ── AI Web UIs & Servers ────────────────────────────────────────────────────
+    {"id": 17, "name": "Open WebUI",            "cat": "AI Web UIs & Servers", "prompt": "Install Open WebUI (a ChatGPT-style web UI for Ollama) using the official Docker container: docker run -d -p 3000:8080 --add-host=host.docker.internal:host-gateway -v open-webui:/app/backend/data --name open-webui --restart always ghcr.io/open-webui/open-webui:main. Tell the user to open http://localhost:3000 once running.", "desc": "ChatGPT-style browser UI for local models"},
+    {"id": 18, "name": "LocalAI",               "cat": "AI Web UIs & Servers", "prompt": "Install LocalAI, a self-hosted OpenAI-compatible API server, via Docker: docker run -d -p 8080:8080 --name local-ai --restart always localai/localai:latest. Ensure Docker is installed first, then tell the user the API is at http://localhost:8080.", "desc": "Self-hosted OpenAI-compatible API"},
+    # ── AI Terminals ──────────────────────────────────────────────────────────
+    {"id": 19, "name": "Warp",                  "cat": "AI Terminals",    "prompt": "Install Warp, the AI-powered modern terminal, from its official apt repo: add the key from https://releases.warp.dev/linux/keys/warp.asc, add the deb source 'https://releases.warp.dev/linux/deb stable main', then apt update && apt install warp-terminal. (Downloading the official .deb and running 'apt install ./warp-terminal.deb' also sets up the repo.)", "desc": "AI-powered modern terminal"},
+    # ── Voice & Speech ──────────────────────────────────────────────────────────
+    {"id": 20, "name": "Whisper",               "cat": "Voice & Speech",  "prompt": "Install OpenAI Whisper for offline speech-to-text via pipx (pipx install openai-whisper) and ensure ffmpeg is also installed via apt.", "desc": "Offline speech-to-text"},
+    # ── Cloud AI Apps ─────────────────────────────────────────────────────────
+    {"id": 21, "name": "ChatGPT Desktop",       "cat": "Cloud AI Apps",   "prompt": "Install a ChatGPT desktop client for Linux. If no official OpenAI .deb exists yet for this distro, install the well-maintained community 'chatgpt' Snap (sudo snap install chatgpt-desktop) or a Flatpak as a clearly-labelled alternative — explain to the user it is community-maintained.", "desc": "Desktop client for OpenAI ChatGPT"},
+    # ── Starter Pack ────────────────────────────────────────────────────────────
+    {"id": 22, "name": "Local AI Starter Pack", "cat": "Starter Packs",   "prompt": "Set up a complete local AI stack on this machine in three steps: 1) Install Ollama via the official installer (https://ollama.com/install.sh). 2) Pull the llama3.2:3b model (small, fast, fits on most laptops). 3) Install Open WebUI via the official Docker container on port 3000. At the end, tell the user the local URL to open and how to start chatting.", "desc": "Ollama + Open WebUI + llama3.2:3b — zero to local AI"},
 ]
 
 
@@ -7079,8 +7161,8 @@ def feat_install_ai_tools(backend, bctx, slog):
         backend, bctx, slog,
         catalog=AI_CATALOG,
         title="AI Tools — Quick Catalog",
-        intro="Pick one or more AI tools. Privacy-first ordering — local "
-              "LLMs and offline tools first, cloud apps last.",
+        intro="Pick one or more AI tools — AI code editors and coding agents, "
+              "local offline LLMs, self-hosted UIs, then cloud apps.",
         item_label="AI tool(s)",
         history_tag="install_ai_tools",
     )
@@ -7404,9 +7486,9 @@ MENU_ITEMS = [
     ("29", "ssh",       "SSH Setup",          "Set up & harden SSH securely",                   feat_ssh),
     ("30", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "64-app catalog (Brave, Signal, Obsidian, Blender, Zoho Mail…)", feat_install_apps),
+    ("77", "apps",      "Install Apps",       "111-app catalog (Brave, Signal, Obsidian, Blender, Bitwarden, Zoho Mail…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
-    ("99", "ai",        "AI Tools",           "Install Ollama, Claude Code, ChatGPT, Whisper…", feat_install_ai_tools),
+    ("99", "ai",        "AI Tools",           "22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
     ("s",  "settings",  "Settings",           "Configure API key and model",                    feat_settings),
     ("i",  "shell",     "Shell Integration",  "Install tg!! shortcut in your terminal",         feat_shell_integration),
@@ -7475,9 +7557,9 @@ def show_menu():
     _item("30", "Git Helper",          "Fix conflicts, undo commits, explain diffs")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
-    _item("77", "Install Apps",        "🎁 64 apps: Brave, Signal, Obsidian, Blender, KeePassXC, Arattai, Zoho Mail…")
+    _item("77", "Install Apps",        "🎁 111 apps: Brave, Signal, Obsidian, Blender, Bitwarden, Steam, Zoho Mail…")
     _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
-    _item("99", "AI Tools",            "🤖 Ollama, Claude Code, ChatGPT, Whisper, local AI pack…")
+    _item("99", "AI Tools",            "🤖 22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI, GPT4All…")
 
     print(f"""
   {DIM}{'─' * 65}{R}

@@ -159,9 +159,9 @@ You never *have* to pick a number — just type what you need in plain English. 
 
 | # | Feature | What it does |
 |---|---------|--------------|
-| 77 | **Install Apps** | One-tap catalog of 64 popular Linux apps — Brave, Signal, Obsidian, Blender, Zoho Mail … |
+| 77 | **Install Apps** | One-tap catalog of **111 popular Linux apps** — browsers, messaging, office, media, graphics, dev tools, gaming, security … (Brave, Signal, Obsidian, Blender, Bitwarden, Steam, Zoho Mail …) |
 | 88 | **Cloud Sync** | Guided rclone wrapper — Google Drive, Dropbox, OneDrive, S3, WebDAV from a single menu |
-| 99 | **AI Tools** | One-tap installer for Ollama, Claude Code, ChatGPT, Whisper and a local-AI starter pack |
+| 99 | **AI Tools** | One-tap installer for **22 AI tools** — Cursor, Windsurf, Zed, Ollama, Claude Code, GitHub Copilot CLI, Gemini CLI, GPT4All, Whisper, a local-AI starter pack … |
 
 **Letter shortcuts**
 
