@@ -211,9 +211,11 @@ footer{background:#ffffff;border-top:1px solid var(--border);padding:24px 0}
 .mq-outer::before,.mq-outer::after{content:'';position:absolute;top:0;bottom:0;width:80px;z-index:2;pointer-events:none}
 .mq-outer::before{left:0;background:linear-gradient(90deg,#fff,transparent)}
 .mq-outer::after{right:0;background:linear-gradient(-90deg,#fff,transparent)}
-.mq-track{display:flex;animation:mq-scroll 36s linear infinite;width:max-content}
+.mq-track{display:flex;animation:mq-scroll var(--mq-dur,36s) linear infinite;width:max-content;will-change:transform}
 .mq-track:hover{animation-play-state:paused}
-@keyframes mq-scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+/* Shift by exactly one base set (set by JS in px) so the loop is seamless. */
+@keyframes mq-scroll{from{transform:translateX(0)}to{transform:translateX(calc(-1 * var(--mq-shift,50%)))}}
+@media(prefers-reduced-motion:reduce){.mq-track{animation:none}}
 /* ── FAQ ───────────────────────────────────────────────────────────────────── */
 .faq-wrap{max-width:740px;margin:0 auto}
 .faq-item{border-bottom:1px solid var(--border)}
@@ -249,6 +251,12 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
 @media(max-width:860px){.foot-grid{grid-template-columns:1fr 1fr;gap:24px}}
 @media(max-width:500px){.foot-grid{grid-template-columns:1fr}}
 </style>
+<!-- If JS is disabled, reveal all scroll-animated content and open FAQs so the
+     page is fully readable rather than blank. -->
+<noscript><style>
+.fade{opacity:1!important;transform:none!important}
+.faq-body{max-height:none!important;padding-bottom:20px!important}
+</style></noscript>
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -378,6 +386,8 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     <p class="distros-label">Works on every major Linux distribution</p>
   </div>
   <div class="mq-outer">
+    <!-- Single base set. JS clones it to ≥2× the viewport and shifts by exactly
+         one set, so the scroll is seamless at any screen width (no blank gap). -->
     <div class="mq-track" id="mq-track">
       <div class="dlogo"><img src="https://cdn.simpleicons.org/ubuntu/E95420" alt="Ubuntu" loading="lazy"><span>Ubuntu</span></div>
       <div class="dlogo"><img src="https://cdn.simpleicons.org/debian/A81D33" alt="Debian" loading="lazy"><span>Debian</span></div>
@@ -391,19 +401,6 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       <div class="dlogo"><img src="https://cdn.simpleicons.org/raspberrypi/A22846" alt="Raspberry Pi" loading="lazy"><span>Raspberry Pi</span></div>
       <div class="dlogo"><img src="https://cdn.simpleicons.org/centos/262577" alt="CentOS" loading="lazy"><span>CentOS</span></div>
       <div class="dlogo"><img src="https://cdn.simpleicons.org/rockylinux/10B981" alt="Rocky" loading="lazy"><span>Rocky</span></div>
-      <!-- duplicate for seamless loop -->
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/ubuntu/E95420" alt="" loading="lazy"><span>Ubuntu</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/debian/A81D33" alt="" loading="lazy"><span>Debian</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/fedora/51A2DA" alt="" loading="lazy"><span>Fedora</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/archlinux/1793D1" alt="" loading="lazy"><span>Arch</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/linuxmint/87CF3E" alt="" loading="lazy"><span>Mint</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/popos/48B9C7" alt="" loading="lazy"><span>Pop!_OS</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/manjaro/35BF5C" alt="" loading="lazy"><span>Manjaro</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/kalilinux/268BEE" alt="" loading="lazy"><span>Kali</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/opensuse/73BA25" alt="" loading="lazy"><span>openSUSE</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/raspberrypi/A22846" alt="" loading="lazy"><span>Raspberry Pi</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/centos/262577" alt="" loading="lazy"><span>CentOS</span></div>
-      <div class="dlogo" aria-hidden="true"><img src="https://cdn.simpleicons.org/rockylinux/10B981" alt="" loading="lazy"><span>Rocky</span></div>
     </div>
   </div>
 </section>
@@ -691,6 +688,29 @@ function toggleM(){const m=document.getElementById('mob');const b=document.getEl
 function closeM(){document.getElementById('mob').classList.remove('open');}
 document.addEventListener('click',e=>{const n=document.querySelector('.nav');if(!n.contains(e.target))closeM();});
 
+// Seamless distro marquee: clone the base set until the track is ≥ 2× the
+// viewport, then shift by exactly one set width. Guarantees no blank gap at
+// any screen size, with a roughly constant scroll speed.
+(function(){
+  const track=document.getElementById('mq-track');
+  if(!track) return;
+  const base=track.innerHTML;
+  function fill(){
+    track.style.animation='none';
+    track.innerHTML=base+base;                 // always at least two sets
+    let sets=2, guard=0;
+    while(track.scrollWidth < window.innerWidth*2 && guard++<24){ track.innerHTML+=base; sets++; }
+    const setW=track.scrollWidth/sets;
+    track.style.setProperty('--mq-shift', setW+'px');
+    track.style.setProperty('--mq-dur', Math.max(18, setW/45).toFixed(1)+'s');
+    track.querySelectorAll('img').forEach(i=>{ i.onerror=function(){ this.style.display='none'; }; });
+    void track.offsetWidth;                     // force reflow → restart animation
+    track.style.animation='';
+  }
+  fill();
+  let rt; window.addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(fill,200); });
+})();
+
 const distros=[
   {id:'ubuntu',name:'Ubuntu',icon:'https://cdn.simpleicons.org/ubuntu/E95420',family:'deb'},
   {id:'debian',name:'Debian',icon:'https://cdn.simpleicons.org/debian/A81D33',family:'deb'},
@@ -736,7 +756,7 @@ function installHtml(d){
   distros.forEach(d=>{
     const b=document.createElement('button');
     b.id='dp-'+d.id;b.className='dp-btn';
-    b.innerHTML=`<img src="${d.icon}" alt="${d.name}"><span>${d.name}</span>`;
+    b.innerHTML=`<img src="${d.icon}" alt="${d.name}" onerror="this.style.display='none'"><span>${d.name}</span>`;
     b.addEventListener('click',()=>select(d.id));
     picker.appendChild(b);
   });
@@ -830,7 +850,7 @@ fetch('https://api.github.com/repos/ramchandragada/tuxgenie')
     const fmt=n>=1000?(n/1000).toFixed(1)+'k':n;
     document.querySelectorAll('.gh-stars').forEach(el=>el.textContent=fmt);
   })
-  .catch(()=>{});
+  .catch(()=>{document.querySelectorAll('.gh-stars').forEach(el=>el.textContent='★');});
 </script>
 </body>
 </html>
