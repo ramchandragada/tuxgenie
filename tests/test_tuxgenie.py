@@ -133,6 +133,189 @@ class TestVersionGap:
         assert tg._version_gap("5.79.0", "6.5.0") >= 10
         assert tg._version_gap("5.79.0", "7.0.0") >= 10
 
+    def test_ver_tolerates_suffix_and_v_prefix(self):
+        assert tg._ver("5.80.0") == (5, 80, 0)
+        assert tg._ver("v5.80.0") == (5, 80, 0)
+        assert tg._ver("5.80.0-rc1") == (5, 80, 0)  # not (0,) — would hide updates
+        assert tg._ver("5.80.0-rc1") > tg._ver("5.79.0")
+
+
+# ── Update download verification ─────────────────────────────────────────────
+
+class TestDownloadVerified:
+    def _serve(self, monkeypatch, payload):
+        import io, contextlib
+
+        class _Resp(io.BytesIO):
+            def __init__(self, data):
+                super().__init__(data)
+                self.headers = {"Content-Length": str(len(data))}
+            def read(self, n=-1):
+                return super().read(n)
+
+        @contextlib.contextmanager
+        def fake_urlopen(url, timeout=0):
+            yield _Resp(payload)
+
+        monkeypatch.setattr(tg.urllib.request, "urlopen", fake_urlopen)
+
+    def test_good_digest_passes(self, monkeypatch, tmp_path):
+        import hashlib
+        payload = b"fake-deb-contents"
+        self._serve(monkeypatch, payload)
+        digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+        dest = str(tmp_path / "x.deb")
+        ok, reason = tg._download_verified("http://x/y.deb", dest, digest)
+        assert ok, reason
+
+    def test_bad_digest_fails(self, monkeypatch, tmp_path):
+        self._serve(monkeypatch, b"tampered-contents")
+        dest = str(tmp_path / "x.deb")
+        ok, reason = tg._download_verified("http://x/y.deb", dest, "sha256:" + "0" * 64)
+        assert not ok and "checksum" in reason
+
+    def test_no_digest_still_ok(self, monkeypatch, tmp_path):
+        # Backward-compat: releases without a digest still install (completeness only).
+        self._serve(monkeypatch, b"some-bytes")
+        dest = str(tmp_path / "x.deb")
+        ok, reason = tg._download_verified("http://x/y.deb", dest, None)
+        assert ok, reason
+
+    def test_empty_download_fails(self, monkeypatch, tmp_path):
+        self._serve(monkeypatch, b"")
+        dest = str(tmp_path / "x.deb")
+        ok, reason = tg._download_verified("http://x/y.deb", dest, None)
+        assert not ok
+
+
+# ── Crash guard: healthy-checkpoint semantics ────────────────────────────────
+
+class TestCrashGuard:
+    def setup_method(self):
+        self._orig = tg.CRASH_FILE
+        self._tmp = tempfile.mkdtemp()
+        tg.CRASH_FILE = os.path.join(self._tmp, "crash.json")
+
+    def teardown_method(self):
+        tg.CRASH_FILE = self._orig
+
+    def test_startup_increments_and_checkpoint_resets(self):
+        # First run of a version starts the counter at 1.
+        tg._crash_guard()
+        assert tg._crash_read().get("crashes") == 1
+        # A second startup without reaching the healthy checkpoint increments
+        # (this is the "crashed during startup again" case).
+        tg._crash_guard()
+        assert tg._crash_read().get("crashes") == 2
+        # Reaching the healthy checkpoint clears it — so a normal run that
+        # started fine never accumulates toward a rollback.
+        tg._crash_mark_clean()
+        assert tg._crash_read().get("crashes") == 0
+
+    def test_no_atexit_registration(self):
+        # Regression: the counter must NOT be reset via atexit (that reset it
+        # even after a real crash, and missed SIGTERM). Ensure _crash_guard
+        # does not register an atexit handler.
+        import atexit
+        seen = []
+        orig = atexit.register
+        try:
+            atexit.register = lambda f, *a, **k: seen.append(f) or orig(f, *a, **k)
+            tg._crash_guard()
+        finally:
+            atexit.register = orig
+        assert tg._crash_mark_clean not in seen
+
+
+# ── Approval gate: read-only detection ───────────────────────────────────────
+
+class TestIsReadOnly:
+    @pytest.mark.parametrize("cmd", [
+        "systemctl status nginx",
+        "journalctl -xe",
+        "ls -la /etc",
+        "cat /etc/os-release",
+        "ps aux | grep python",
+        "df -h",
+        "ip addr show",
+        "docker ps",
+        "git status",
+        "apt list --installed",
+        "dpkg -l",
+        "grep -r foo /var/log",
+        "find /tmp -name '*.log'",
+    ])
+    def test_read_only_true(self, cmd):
+        assert tg._is_read_only(cmd), f"should be read-only: {cmd!r}"
+
+    @pytest.mark.parametrize("cmd", [
+        "systemctl restart nginx",         # mutating sub-command
+        "apt install cowsay",              # install
+        "sudo systemctl status nginx",     # sudo → always confirm
+        "rm -f /tmp/x",                    # not in read-only set
+        "docker rm mycontainer",           # mutating
+        "git push origin main",            # mutating
+        "echo hi > /etc/foo",              # redirection = write
+        "sed -i s/a/b/ file",              # in-place edit (sed not read-only)
+        "find / -delete",                  # destructive find
+        "ip link set eth0 down",           # mutating ip
+        "dpkg -i pkg.deb",                 # install
+        "sysctl -w vm.swappiness=10",      # write
+    ])
+    def test_read_only_false(self, cmd):
+        assert not tg._is_read_only(cmd), f"should NOT be read-only: {cmd!r}"
+
+
+class TestApprovalGate:
+    class _Backend:
+        auto_approve = False
+
+    def test_auto_approve_backend_runs_everything(self):
+        b = self._Backend(); b.auto_approve = True
+        assert tg._approval_gate("apt install cowsay", False, b, {}) is True
+
+    def test_approve_all_state_runs_everything(self):
+        b = self._Backend()
+        assert tg._approval_gate("apt install cowsay", False, b, {"all": True}) is True
+
+    def test_read_only_runs_without_prompt(self, monkeypatch):
+        b = self._Backend()
+        # If this prompted, input() would raise in the test env; it must not.
+        monkeypatch.setattr("builtins.input", lambda *a: (_ for _ in ()).throw(AssertionError("prompted")))
+        assert tg._approval_gate("systemctl status nginx", False, b, {"all": False}) is True
+
+    def test_mutating_yes(self, monkeypatch):
+        b = self._Backend()
+        monkeypatch.setattr("sys.stdin", type("T", (), {"isatty": staticmethod(lambda: True)})())
+        monkeypatch.setattr("builtins.input", lambda *a: "y")
+        assert tg._approval_gate("apt install cowsay", False, b, {"all": False}) is True
+
+    def test_mutating_skip(self, monkeypatch):
+        b = self._Backend()
+        monkeypatch.setattr("sys.stdin", type("T", (), {"isatty": staticmethod(lambda: True)})())
+        monkeypatch.setattr("builtins.input", lambda *a: "n")
+        assert tg._approval_gate("apt install cowsay", False, b, {"all": False}) is False
+
+    def test_mutating_approve_all_sets_state(self, monkeypatch):
+        b = self._Backend()
+        monkeypatch.setattr("sys.stdin", type("T", (), {"isatty": staticmethod(lambda: True)})())
+        monkeypatch.setattr("builtins.input", lambda *a: "A")
+        state = {"all": False}
+        assert tg._approval_gate("apt install cowsay", False, b, state) is True
+        assert state["all"] is True
+
+    def test_abort_raises(self, monkeypatch):
+        b = self._Backend()
+        monkeypatch.setattr("sys.stdin", type("T", (), {"isatty": staticmethod(lambda: True)})())
+        monkeypatch.setattr("builtins.input", lambda *a: "a")
+        with pytest.raises(tg._AbortSession):
+            tg._approval_gate("apt install cowsay", False, b, {"all": False})
+
+    def test_noninteractive_skips_mutation(self, monkeypatch):
+        b = self._Backend()
+        monkeypatch.setattr("sys.stdin", type("T", (), {"isatty": staticmethod(lambda: False)})())
+        assert tg._approval_gate("apt install cowsay", False, b, {"all": False}) is False
+
 
 # ── clean_json ────────────────────────────────────────────────────────────────
 
