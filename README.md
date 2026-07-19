@@ -17,7 +17,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-  TuxGenie v3.9 — Powered by Claude · Free forever · Open Source
+  TuxGenie v5.79 — Powered by Claude · Free forever · Open Source
 ```
 
 ---
@@ -54,7 +54,7 @@ TuxGenie > my nginx won't start after I edited the config
 ### Debian / Ubuntu / Linux Mint
 ```bash
 # Download the latest .deb from GitHub Releases, then:
-sudo dpkg -i tuxgenie_3.9.0_all.deb
+sudo dpkg -i tuxgenie_5.79.0_all.deb
 ```
 [Download latest .deb →](https://github.com/ramchandragada/tuxgenie/releases/latest)
 
@@ -88,28 +88,91 @@ Get a free API key at [console.anthropic.com](https://console.anthropic.com).
 
 ## Features
 
+You never *have* to pick a number — just type what you need in plain English. But every capability also has a menu entry:
+
+**🚀 Start here**
+
 | # | Feature | What it does |
 |---|---------|--------------|
-| 1 | **Fix my problem** | Describe any issue in plain English — TuxGenie diagnoses and fixes it |
-| 2 | **System Health** | Full health dashboard: CPU, memory, disk, temps, failed services |
-| 3 | **Network Diagnostics** | DNS, routing, firewall, connectivity — finds the real problem |
-| 4 | **Security Audit** | Checks open ports, failed logins, weak permissions, exposed configs |
-| 5 | **Disk Management** | Finds space hogs, cleans safely, analyses usage |
-| 6 | **Service Control** | Manage and debug systemd services with AI explanations |
-| 7 | **Log Analyser** | Parses journals and log files, explains errors in plain English |
-| 8 | **Update Advisor** | Safe upgrade analysis — flags packages likely to break things |
-| 9 | **Script Generator** | Describe what you want, get a tested bash script |
-| 10 | **Cron Scheduler** | Create and debug cron jobs with natural language |
-| 11 | **Permission Fixer** | Diagnoses and fixes broken file permissions |
-| 12 | **Boot Repair** | Diagnoses boot failures, GRUB issues, kernel panics |
-| 13 | **Docker Manager** | Container health, network issues, log analysis |
-| 14 | **SSH Diagnostics** | Key auth, config issues, connectivity debugging |
-| 15 | **Process Manager** | Find CPU/memory hogs, diagnose runaway processes |
-| 16 | **Config Backup** | Safe backup of system configs before changes |
-| 77 | **Install Apps** | One-tap catalog of 64 popular Linux apps — Brave, Signal, Obsidian, … |
+| 1 | **Fix a Problem** | Describe any issue in plain English — TuxGenie diagnoses and fixes it |
+| 2 | **Health Check** | Full dashboard: CPU, memory, disk, temps, failed services |
+
+**🔧 Fix something**
+
+| # | Feature | What it does |
+|---|---------|--------------|
+| 3 | **Internet / WiFi** | DNS, routing, firewall, connectivity — finds the real problem |
+| 4 | **Sound / Audio** | No audio, mic not working, HDMI sound |
+| 5 | **Display** | Wrong resolution, monitor not detected |
+| 6 | **Bluetooth** | Pairing fails, device keeps disconnecting |
+| 7 | **Printer Setup** | Install a printer or fix printing problems |
+| 8 | **Webcam Fix** | Camera not detected or black screen in Zoom / Teams / Meet |
+| 9 | **Missing Drivers** | Detect & install missing WiFi / GPU / printer drivers |
+| 10 | **Permissions** | Diagnose & fix "permission denied" errors |
+
+**📦 Install & update**
+
+| # | Feature | What it does |
+|---|---------|--------------|
+| 11 | **Install Software** | Find & install software by description |
+| 12 | **Check for Updates** | Safe upgrade analysis — flags packages likely to break things |
+| 13 | **Upgrade OS Version** | Move to the latest Ubuntu / Fedora / Debian release |
+| 14 | **Find Linux App** | Find Linux equivalents of Windows / macOS apps |
+
+**🛡️ Protect & recover**
+
+| # | Feature | What it does |
+|---|---------|--------------|
+| 15 | **Security Check** | Harden firewall, SSH, open ports; find weak permissions |
+| 16 | **Backup Settings** | Snapshot all system configs to a `.tar.gz` before changes |
+| 17 | **Undo Changes** | Roll back changes TuxGenie made in a previous session |
+
+**⚡ Speed & maintenance**
+
+| # | Feature | What it does |
+|---|---------|--------------|
+| 18 | **Performance Boost** | Full audit + apply all safe speed fixes |
+| 19 | **Disk Cleanup** | Find space hogs & clean up safely |
+| 20 | **Speed Up Boot** | Find why boot is slow & fix it |
+| 21 | **Battery & Power** | Improve battery life, fix overheating |
+| 22 | **Manage Services** | Optimise startup & debug systemd services |
+
+**📊 Inspect**
+
+| # | Feature | What it does |
+|---|---------|--------------|
+| 23 | **Hardware Info** | Full hardware report & health check |
+| 24 | **Running Programs** | Tame CPU / memory hogs & zombie processes |
+| 25 | **Explain Logs** | Decode cryptic errors & system logs in plain English |
+
+**⚙️ For developers**
+
+| # | Feature | What it does |
+|---|---------|--------------|
+| 26 | **Generate Script** | Describe a task → get a tested bash script |
+| 27 | **Schedule Task** | Create & debug cron jobs in plain English |
+| 28 | **Docker Help** | Container health, network issues, log analysis |
+| 29 | **SSH Setup** | Set up & harden SSH securely |
+| 30 | **Git Helper** | Understand diffs, fix conflicts, undo commits |
+
+**🎁 One-tap catalogs**
+
+| # | Feature | What it does |
+|---|---------|--------------|
+| 77 | **Install Apps** | One-tap catalog of 64 popular Linux apps — Brave, Signal, Obsidian, Blender, Zoho Mail … |
 | 88 | **Cloud Sync** | Guided rclone wrapper — Google Drive, Dropbox, OneDrive, S3, WebDAV from a single menu |
 | 99 | **AI Tools** | One-tap installer for Ollama, Claude Code, ChatGPT, Whisper and a local-AI starter pack |
-| u | **Self-Update** | Type `u` to check for and install the latest TuxGenie |
+
+**Letter shortcuts**
+
+| Key | Feature | What it does |
+|-----|---------|--------------|
+| s | **Settings** | Configure API key and model |
+| i | **Shell Integration** | Install the `tg!!` shortcut in your terminal |
+| m | **Error Monitor** | Background daemon that notifies you on system errors |
+| u | **Self-Update** | Check for and install the latest TuxGenie |
+| h | **History** | Show recent tasks |
+| f | **Feature Request** | Suggest a new feature |
 
 ---
 
@@ -155,7 +218,7 @@ You describe the problem
   Command output fed back to Claude
         │
         ▼
-  Claude iterates (up to 6 rounds) until resolved
+  Claude iterates (up to 25 rounds) until resolved
 ```
 
 ---
