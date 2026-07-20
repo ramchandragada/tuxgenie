@@ -396,6 +396,43 @@ class TestGeminiBackend:
         assert resp.usage.input_tokens == 10 and resp.usage.output_tokens == 4
         assert captured["tools"][0]["name"] == "run_command"    # tools were translated
 
+    def test_pick_model_prefers_newest_stable_flash(self):
+        avail = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.5-pro",
+                 "gemini-2.5-flash", "gemini-flash-latest-preview",
+                 "text-embedding-004", "imagen-3.0"]
+        assert tg._gemini_pick_model(avail) == "gemini-3.5-flash"
+        # never returns a non-text model
+        assert tg._gemini_pick_model(["text-embedding-004", "imagen-3.0"]) is None
+        # falls back to whatever gemini chat model exists
+        assert tg._gemini_pick_model(["gemini-4.0-flash"]) == "gemini-4.0-flash"
+
+    def test_gen_auto_heals_on_404(self, monkeypatch):
+        # A retired model (404) should trigger discovery + retry with a new model.
+        b = tg.GeminiBackend("fake-key")
+        b.model = "gemini-2.5-flash"
+        monkeypatch.setattr(b, "_resolve_model", lambda: "gemini-3.5-flash")
+        monkeypatch.setattr(tg, "save_cfg", lambda *a, **k: None)
+        calls = {"n": 0}
+        import urllib.error, io
+        real_urlopen = tg.urllib.request.urlopen
+        def fake_urlopen(req, timeout=0):
+            calls["n"] += 1
+            if calls["n"] == 1:  # first call → 404 (retired model)
+                raise urllib.error.HTTPError(req.full_url, 404, "gone", {},
+                                             io.BytesIO(b'{"error":{"message":"no longer available"}}'))
+            class R:
+                def __enter__(s): return s
+                def __exit__(s, *a): pass
+                def read(s): return b'{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}'
+            return R()
+        monkeypatch.setattr(tg.urllib.request, "urlopen", fake_urlopen)
+        try:
+            out = b._gen([], "sys", None, 100)
+        finally:
+            monkeypatch.setattr(tg.urllib.request, "urlopen", real_urlopen)
+        assert calls["n"] == 2 and b.model == "gemini-3.5-flash"
+        assert out["candidates"][0]["content"]["parts"][0]["text"] == "ok"
+
     def test_ask_text_mocked(self, monkeypatch):
         b = tg.GeminiBackend("fake-key")
         monkeypatch.setattr(b, "_gen", lambda *a, **k:

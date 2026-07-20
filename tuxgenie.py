@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.88.0"
+__version__ = "5.89.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -268,7 +268,7 @@ _COMPLEX_KEYWORDS = [
 _HAIKU_MODEL  = "claude-haiku-4-5-20251001"
 _SONNET_MODEL = "claude-sonnet-4-6"
 _OPUS_MODEL   = "claude-opus-4-8"
-_GEMINI_MODEL = "gemini-2.5-flash"   # Google's free-tier model (no credit card needed)
+_GEMINI_MODEL = "gemini-3.5-flash"   # Google's current free-tier model (auto-heals if retired)
 
 
 def _try_pip_install():
@@ -748,6 +748,41 @@ def _gem_usage(data):
     return _GUsage(um.get("promptTokenCount", 0) or 0, um.get("candidatesTokenCount", 0) or 0)
 
 
+def _gemini_list_models(api_key):
+    """Ask Google which models this key can use for generateContent."""
+    req = urllib.request.Request(f"{_GEMINI_ENDPOINT}?pageSize=200",
+                                 headers={"x-goog-api-key": api_key})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        data = json.loads(r.read().decode("utf-8"))
+    return [(m.get("name", "") or "").replace("models/", "")
+            for m in data.get("models", [])
+            if "generateContent" in (m.get("supportedGenerationMethods") or [])]
+
+
+def _gemini_pick_model(available):
+    """Choose the best general chat model: newest full 'flash' preferred, stable
+    over preview/experimental, skipping non-text (vision/embedding/tts/image)."""
+    def score(name):
+        n = name.lower()
+        if "gemini" not in n:
+            return -1000
+        if any(x in n for x in ("vision", "embedding", "imagen", "tts", "image", "aqa", "learnlm")):
+            return -1000
+        s = 100 if "flash" in n else (60 if "pro" in n else 0)
+        m = re.search(r'(\d+)\.(\d+)', n)
+        if m:
+            s += int(m.group(1)) * 10 + int(m.group(2))
+        if "lite" in n:
+            s -= 2            # full flash beats flash-lite for agentic reasoning
+        if "exp" in n or "preview" in n:
+            s -= 6            # prefer stable
+        if "latest" in n:
+            s += 1
+        return s
+    cands = [m for m in (available or []) if score(m) > -1000]
+    return max(cands, key=score) if cands else None
+
+
 class _GeminiMessages:
     def __init__(self, backend):
         self._b = backend
@@ -797,7 +832,14 @@ class GeminiBackend:
         return (f"Google Gemini free tier · no API charges  "
                 f"(session: ~{self._session_input_tokens:,} in + ~{self._session_output_tokens:,} out tokens)")
 
-    def _gen(self, contents, system_text, tools_decl, max_tokens):
+    def _resolve_model(self):
+        """Ask Google for an available model when the current one is retired."""
+        try:
+            return _gemini_pick_model(_gemini_list_models(self.api_key))
+        except Exception:
+            return None
+
+    def _gen(self, contents, system_text, tools_decl, max_tokens, _retry=True):
         body = {"contents": contents,
                 "generationConfig": {"maxOutputTokens": max(max_tokens or 4096, 1), "temperature": 0.6}}
         if system_text:
@@ -817,6 +859,15 @@ class GeminiBackend:
                 detail = json.loads(e.read().decode()).get("error", {}).get("message", "")
             except Exception:
                 pass
+            # Model retired/unavailable → discover a working one and retry once.
+            if e.code == 404 and _retry:
+                alt = self._resolve_model()
+                if alt and alt != self.model:
+                    print(f"\r  {DIM}Gemini model updated to {alt} (previous one was retired).{R}")
+                    self.model = alt; self.base_model = alt
+                    save_cfg({"gemini_model": alt})
+                    return self._gen(contents, system_text, tools_decl, max_tokens, _retry=False)
+                raise RuntimeError(f"Gemini model unavailable and no alternative found for this key. {detail}")
             if e.code in (400, 403) and ("key" in detail.lower() or e.code == 403):
                 raise RuntimeError(f"Gemini API key rejected — check it at https://aistudio.google.com/apikey. {detail}")
             if e.code == 429:
