@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.89.0"
+__version__ = "5.90.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -613,10 +613,17 @@ _GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
 
 
 class _GBlock:
-    """Mimics an Anthropic content block (text | tool_use) for the engines."""
+    """Mimics an Anthropic content block for the engines. Matches the real SDK's
+    duck typing: a text block exposes ONLY .text; a tool_use block exposes ONLY
+    .name/.input/.id. (Setting .text=None on tool_use blocks made engine code
+    like `hasattr(b,'text') and b.text.strip()` crash — the SDK's tool_use
+    blocks have no .text attribute at all.)"""
     def __init__(self, type, text=None, name=None, input=None, id=None):
-        self.type = type; self.text = text; self.name = name
-        self.input = input; self.id = id
+        self.type = type
+        if type == "text":
+            self.text = "" if text is None else text
+        else:
+            self.name = name; self.input = input; self.id = id
 
 
 class _GUsage:

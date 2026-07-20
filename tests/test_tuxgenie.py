@@ -361,6 +361,18 @@ class TestGeminiBackend:
         assert fr["name"] == "run_command"          # mapped from id c1, not the id
         assert fr["response"]["result"] == "wlan0 down"
 
+    def test_tool_use_block_has_no_text_attr(self):
+        # Regression: agentic_engine does `hasattr(b,'text') and b.text.strip()`.
+        # A tool_use block must NOT expose .text (or it crashes on None.strip()).
+        tb = tg._GBlock("text", text="hi")
+        ub = tg._GBlock("tool_use", name="run_command", input={"command": "x"}, id="c1")
+        assert tb.type == "text" and tb.text == "hi"
+        assert ub.type == "tool_use" and not hasattr(ub, "text")
+        # emulate the exact engine loop that crashed
+        for b in (tb, ub):
+            if hasattr(b, "text") and b.text.strip():
+                pass  # must not raise
+
     def test_response_parsing(self):
         # text response → end_turn
         blocks, stop = tg._gem_blocks_from_response(
