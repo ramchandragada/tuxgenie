@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.8.0"
+__version__ = "6.9.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1022,10 +1022,14 @@ def _oai_tools_from_anthropic(tools):
 
 
 # Some Llama models on OpenAI-compatible APIs (Groq) emit tool calls as TEXT in
-# their chat template — e.g. <function/run_command>{...}</function> or
-# <function=run_command>{...}</function> — instead of the structured tool_calls
-# field. We parse that as a fallback so the agentic engine still runs the step.
-_OAI_TEXT_TOOLCALL_RE = re.compile(r'<function[=/]([A-Za-z0-9_\-]+)>\s*(\{.*?\})\s*</function>', re.S)
+# their chat template instead of the structured tool_calls field, and the exact
+# punctuation varies between model versions, e.g. all of these:
+#   <function/run_command>{...}</function>
+#   <function=run_command>{...}</function>
+#   <function(run_command)({...})</function>
+# So we don't pin the delimiters: within each <function…>…</function> block we
+# take the first identifier as the name and the first JSON object as the args.
+_OAI_FUNC_BLOCK_RE = re.compile(r'<function\b(.*?)</function>', re.S)
 
 
 def _oai_extract_text_toolcalls(text):
@@ -1035,13 +1039,25 @@ def _oai_extract_text_toolcalls(text):
     calls = []
 
     def _sub(m):
-        try:
-            args = json.loads(m.group(2))
-        except (ValueError, TypeError):
-            return m.group(0)          # leave unparseable text alone
-        calls.append((m.group(1), args if isinstance(args, dict) else {}))
+        inner = m.group(1)
+        nm = re.search(r'[A-Za-z_][A-Za-z0-9_\-]*', inner)   # first identifier = name
+        greedy = re.search(r'\{.*\}', inner, re.S)           # first '{' … last '}'
+        if not nm or not greedy:
+            return m.group(0)                                # not a call — leave as-is
+        args = None
+        lazy = re.search(r'\{.*?\}', inner, re.S)            # shortest '{ … }'
+        for cand in (greedy.group(0), lazy.group(0) if lazy else None):
+            if cand is None:
+                continue
+            try:
+                args = json.loads(cand); break
+            except (ValueError, TypeError):
+                continue
+        if not isinstance(args, dict):
+            return m.group(0)
+        calls.append((nm.group(0), args))
         return ""
-    cleaned = _OAI_TEXT_TOOLCALL_RE.sub(_sub, text).strip()
+    cleaned = _OAI_FUNC_BLOCK_RE.sub(_sub, text).strip()
     return cleaned, calls
 
 

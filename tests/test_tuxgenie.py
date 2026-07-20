@@ -863,6 +863,26 @@ class TestOpenAICompatBackend:
         assert [b for b in blocks if b.type == "text"][0].text == "Sure!"
         assert [b for b in blocks if b.type == "tool_use"][0].input["command"] == "ls"
 
+    def test_text_format_toolcall_all_llama_variants(self):
+        """Llama's text tool-call punctuation varies by model version — parse all."""
+        variants = [
+            '<function/run_command>{"command":"a"}</function>',
+            '<function=run_command>{"command":"a"}</function>',
+            '<function(run_command)({"command":"a","requires_root":true})</function>',
+        ]
+        for content in variants:
+            blocks, stop = tg._oai_blocks_from_response(
+                {"choices": [{"message": {"content": content}}]})
+            tus = [b for b in blocks if b.type == "tool_use"]
+            assert stop == "tool_use" and len(tus) == 1, content
+            assert tus[0].name == "run_command" and "command" in tus[0].input, content
+            assert not [b for b in blocks if b.type == "text"], content
+
+    def test_text_format_toolcall_brace_in_argument(self):
+        content = '<function=run_command>{"command": "echo }x", "requires_root": false}</function>'
+        blocks, _ = tg._oai_blocks_from_response({"choices": [{"message": {"content": content}}]})
+        assert [b for b in blocks if b.type == "tool_use"][0].input["command"] == "echo }x"
+
     def test_tool_use_block_has_no_text_attr(self):
         # Regression guard (same class of bug fixed for Gemini): tool_use blocks
         # must not carry a .text attribute, or `hasattr(b,'text') and b.text.strip()` crashes.
