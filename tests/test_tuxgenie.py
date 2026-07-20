@@ -750,6 +750,21 @@ class TestMenuIntegrity:
             assert callable(by_num[num][1]), f"{num} not callable"
             assert by_num[num][1].__name__ == fnname, f"{num} wrong function"
 
+    def test_compact_menu_is_short_and_complete(self):
+        """The startup (compact) menu must fit a laptop screen yet list every
+        feature number."""
+        import io, re, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            tg.show_menu(compact=True)
+        out = buf.getvalue()
+        assert out.count("\n") <= 25, "compact menu should stay short (one screen)"
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", out)
+        for num in [str(n) for n in range(1, 41)] + ["77", "88", "99"]:
+            # 31 exists; 39/40 exist; every dispatchable number should appear.
+            if num in {n for n, *_ in tg.MENU_ITEMS}:
+                assert f"[{num}]" in plain, f"compact menu missing [{num}]"
+
     def test_suggest_routes_to_matching_setup(self, monkeypatch):
         """The plain-language chooser must launch the mapped setup."""
         called = {}

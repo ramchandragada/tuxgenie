@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.99.0"
+__version__ = "6.0.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8470,7 +8470,7 @@ MENU_ITEMS = [
 ]
 
 
-def show_menu():
+def show_menu(compact=False):
     def _cat(bg, icon, title, subtitle):
         # No background box — the coloured backgrounds washed the bright-white
         # title out on many terminals. Use one consistent dark, high-contrast
@@ -8482,6 +8482,30 @@ def show_menu():
         num_s   = f"[{num}]".ljust(5)
         label_s = label.ljust(26)
         print(f"    {BLUE}{BOLD}{num_s}{R}  {BOLD}{label_s}{R}  {DIM}{tip}{R}")
+
+    # ── Compact one-screen view (default at startup) ─────────────────────────
+    # Each category on ~one line so the whole map fits a laptop screen. The full
+    # descriptive menu is one keystroke away: type `menu`.
+    if compact:
+        def _row(icon, title, items):
+            its = "  ".join(f"{BLUE}{BOLD}[{n}]{R} {s}" for n, s in items)
+            print(f"  {INDIGO}{BOLD}{icon} {title.ljust(11)}{R} {its}")
+        print(f"\n  {INDIGO}{BOLD}🐧 What would you like to do today?{R}  {DIM}(just type it, or pick a number){R}\n")
+        _row("🚀", "Start",       [("1", "Fix a Problem"), ("2", "Health Check")])
+        _row("🔧", "Fix",         [("3","WiFi"),("4","Sound"),("5","Display"),("6","Bluetooth"),("7","Printer"),("8","Webcam"),("9","Drivers"),("10","Permissions")])
+        _row("📦", "Install",     [("11","Install"),("12","Updates"),("13","Upgrade OS"),("14","Find app")])
+        _row("🛡️", "Protect",     [("15","Security"),("16","Backup"),("17","Undo")])
+        _row("⚡", "Speed",       [("18","Boost"),("19","Disk"),("20","Boot"),("21","Battery"),("22","Services")])
+        _row("📊", "Inspect",     [("23","Hardware"),("24","Programs"),("25","Logs")])
+        _row("⚙️", "Developers",  [("26","Script"),("27","Schedule"),("28","Docker"),("29","SSH"),("30","Git")])
+        _row("🎮", "Gaming",      [("31","Gaming Setup")])
+        _row("🧭", "Setups",      [("39","Suggest ⭐"),("32","New-to-Linux"),("33","Dev"),("34","Creator"),("35","Privacy"),("36","Student"),("37","Homelab"),("38","Access"),("40","Dev Envs")])
+        _row("🎁", "Catalogs",    [("77","Apps"),("88","Cloud"),("99","AI Tools")])
+        print(f"\n  {DIM}{'─' * 65}{R}")
+        print(f"  {C('[s]',GOLD,BOLD)} Settings · {C('[i]',LIME,BOLD)} Shell · {C('[u]',BCYAN,BOLD)} Update · {C('[h]',BMAGENTA,BOLD)} History · {C('[q]',BRED,BOLD)} Quit"
+              f"   {DIM}· type {BOLD}menu{R}{DIM} for full descriptions{R}")
+        print(f"  {BGREEN}{BOLD}💡 Or just tell me what you need{R} — {BLUE}\"my wifi is not working\"{R}  {BLUE}\"install chrome\"{R}  {BLUE}\"why is it slow?\"{R}")
+        return
 
     print(f"\n  {INDIGO}{BOLD}🐧 What would you like to do today?{R}")
 
@@ -8790,7 +8814,7 @@ def main():
     first_run_check()
     quick_health_check()
     _weekly_digest()
-    show_menu()
+    show_menu(compact=True)
     if backend._no_key:
         _line = f"  {DIM}{'─'*54}{R}"
         print(f"\n{_line}")
