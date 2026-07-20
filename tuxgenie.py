@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.7.0"
+__version__ = "6.8.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -947,6 +947,11 @@ _OAI_PROVIDERS = {
         "default_model": "llama-3.3-70b-versatile", "cfg_key": "groq_api_key",
         "model_key": "groq_model", "keys_url": "https://console.groq.com/keys",
         "env": ("GROQ_API_KEY",), "free": True,
+        # Groq's free tier is ~12k tokens/minute. The per-request check counts
+        # prompt + reserved output, so keep the output reservation small —
+        # agentic steps are tiny (one command). This is the biggest lever for
+        # staying under the TPM limit.
+        "max_tokens": 3072,
     },
 }
 
@@ -1241,8 +1246,27 @@ class OpenAICompatBackend:
                     f"accept any pending terms in the {lbl} console, or switch provider (Settings → 8)."
                     + (f"\n  ({lbl} said: {detail})" if detail else "\n  (Server returned no reason.)"))
             if e.code == 429:
+                # Free-tier tokens-per-minute limit. Groq tells us how long to
+                # wait ("try again in 51.9s"); honour it once so the agentic loop
+                # continues instead of failing, as long as the wait is reasonable.
+                m = re.search(r'try again in ([\d.]+)\s*s', detail, re.I)
+                wait = 0.0
+                if m:
+                    try:
+                        wait = float(m.group(1))
+                    except ValueError:
+                        wait = 0.0
+                if _retry and 0 < wait <= 65:
+                    secs = int(wait) + 2
+                    print(f"\r  {YELLOW}{lbl} free-tier limit — waiting {secs}s for the "
+                          f"per-minute quota to reset, then continuing…{R}          ", flush=True)
+                    try:
+                        time.sleep(secs)
+                    except KeyboardInterrupt:
+                        raise RuntimeError(f"{lbl} rate-limit wait cancelled.")
+                    return self._gen(system_text, messages, tools, max_tokens, _retry=False)
                 raise RuntimeError(
-                    f"{lbl} limit reached (HTTP 429). Free tiers cap requests per minute and per day — "
+                    f"{lbl} limit reached (HTTP 429). Free tiers cap tokens per minute and per day — "
                     f"wait a minute and retry, or switch provider (Settings → 8)."
                     + (f"\n  ({lbl} said: {detail})" if detail else ""))
             raise RuntimeError(f"{lbl} API error {e.code}: {detail or 'no details returned'}")

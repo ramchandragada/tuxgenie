@@ -909,13 +909,57 @@ class TestOpenAICompatBackend:
 
         monkeypatch.setattr(tg.urllib.request, "urlopen", fake_open)
         be._gen("sys", [{"role": "user", "content": "hi"}], None, 16000)
-        assert captured["max_tokens"] == 8192
+        # Groq's free tier is ~12k TPM, so its reservation is kept small.
+        assert captured["max_tokens"] == 3072
 
     def test_headers_have_real_user_agent(self):
         be = tg.OpenAICompatBackend(api_key="gsk_" + "y" * 40, provider="groq")
         h = be._headers()
         assert h["User-Agent"].startswith("TuxGenie/")
         assert "Python-urllib" not in h["User-Agent"]
+
+    def test_429_waits_then_retries(self, monkeypatch):
+        """A free-tier TPM 429 with a 'try again in Ns' hint should wait once and
+        retry, so the agentic loop continues instead of failing."""
+        import io, json, urllib.error
+        be = tg.OpenAICompatBackend(api_key="gsk_" + "z" * 40, provider="groq")
+        calls = {"n": 0}
+
+        class _OK:
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+            def read(s):
+                return json.dumps({"choices": [{"message": {"content": "ok"},
+                                   "finish_reason": "stop"}]}).encode()
+
+        def fake_open(req, timeout=0):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                body = json.dumps({"error": {"message": "Rate limit reached … Please try again in 2s."}}).encode()
+                raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
+            return _OK()
+
+        slept = {}
+        monkeypatch.setattr(tg.urllib.request, "urlopen", fake_open)
+        monkeypatch.setattr(tg.time, "sleep", lambda s: slept.setdefault("s", s))
+        data = be._gen("s", [{"role": "user", "content": "hi"}], None, 3072)
+        assert calls["n"] == 2          # retried once
+        assert slept.get("s") == 4      # 2s hint + 2s buffer
+        assert data.get("choices")      # succeeded on retry
+
+    def test_429_giving_up_message_is_actionable(self, monkeypatch):
+        import io, json, urllib.error
+        be = tg.OpenAICompatBackend(api_key="gsk_" + "q" * 40, provider="groq")
+
+        def fake_open(req, timeout=0):
+            body = json.dumps({"error": {"message": "daily limit exceeded"}}).encode()
+            raise urllib.error.HTTPError(req.full_url, 429, "Too Many Requests", {}, io.BytesIO(body))
+        monkeypatch.setattr(tg.urllib.request, "urlopen", fake_open)
+        try:
+            be._gen("s", [{"role": "user", "content": "hi"}], None, 3072)
+            assert False, "should have raised"
+        except RuntimeError as e:
+            assert "Settings" in str(e)  # offers the switch-provider escape hatch
 
 
 class TestKeyChangeRouting:
