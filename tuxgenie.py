@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.91.0"
+__version__ = "5.92.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -973,6 +973,9 @@ def _setup_wizard(cfg):
         sys.exit(0)
     if choice == "2":
         print(f"\n  {DIM}Free Gemini key: {CYAN}https://aistudio.google.com/apikey{R}")
+        print(f"  {DIM}Heads-up: on Google's {BOLD}free{R}{DIM} tier, Google may use your prompts")
+        print(f"  {DIM}& responses to improve their products. Great for everyday use —")
+        print(f"  {DIM}pick Claude for confidential machines. Full details: PRIVACY.md{R}")
         try:
             key = input("  Paste your Gemini API key: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -1208,6 +1211,9 @@ def feat_settings(backend, bctx, slog):
             save_cfg({"provider": "claude", "api_key": k})
             ok("Switched to Claude. Restart TuxGenie for it to take effect.")
         elif p == "2":
+            print(f"  {DIM}Note: on Google's {BOLD}free{R}{DIM} tier, Google may use your prompts &")
+            print(f"  {DIM}responses to improve their products. Prefer Claude for sensitive")
+            print(f"  {DIM}systems. Full details in PRIVACY.md.{R}")
             k = load_cfg().get("gemini_api_key", "").strip()
             if not k:
                 print(f"  {DIM}Free Gemini key: {CYAN}https://aistudio.google.com/apikey{R}")

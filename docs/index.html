@@ -676,7 +676,11 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     <div class="faq-wrap fade">
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Is my API key safe? Does TuxGenie send my data anywhere?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p>Your API key is stored locally in <code>~/.config/tuxgenie/config.json</code> and never leaves your machine. Requests go directly from your computer to Anthropic's servers — TuxGenie itself has no backend and collects zero telemetry.</p></div>
+        <div class="faq-body"><p>Your API key is stored locally in <code>~/.config/tuxgenie/config.json</code> with owner-only permissions (<code>chmod 600</code>) and never leaves your machine. <strong>TuxGenie has no backend and collects zero telemetry</strong> — nothing is sent anywhere unless you run an AI task, and then only your chosen provider (Anthropic or Google) sees it, never us. Your sudo password is held in memory for the session only — never saved, never sent. Full details on our <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a> page.</p></div>
+      </div>
+      <div class="faq-item">
+        <button class="faq-btn" aria-expanded="false">Which should I pick — Claude or Gemini? Any privacy difference?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p><strong>Both work great.</strong> Gemini's free tier costs nothing (no credit card) and is perfect for everyday use. One honest note: on Google's <em>free</em> tier, Google may use your prompts and the AI's responses to improve their products. Anthropic does <strong>not</strong> train on API data, so for a confidential machine, prefer <strong>Claude</strong> (or a paid Gemini plan). We tell you this at the point you choose, too. See <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a>.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">What does it actually cost per month?<span class="faq-chevron">+</span></button>
@@ -688,7 +692,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Does it work offline?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p>Common commands (apt, systemctl, ls, grep, etc.) run offline instantly — TuxGenie only calls Claude for complex diagnostics and fixes. So basic usage works without internet. Full AI-powered fixes need a connection to reach Anthropic's API.</p></div>
+        <div class="faq-body"><p>Common commands (apt, systemctl, ls, grep, etc.) run offline instantly — TuxGenie only calls the AI for complex diagnostics and fixes. So basic usage works without internet. Full AI-powered fixes need a connection to reach your chosen AI provider (Claude or Gemini).</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Which Linux distributions are supported?<span class="faq-chevron">+</span></button>
@@ -760,9 +764,9 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
     </div>
     <div class="trust-grid">
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>Paste an <a href="https://console.anthropic.com" target="_blank" rel="noopener">Anthropic API key</a> at first run and you're done. Sign-up is free; ~$0.01 per session. Top up $5 once and it lasts months.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>At first run, pick <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a> (free tier, no credit card) or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> (~$0.01/session — $5 lasts months). Paste the key and you're done.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. Smart routing uses the cheapest model that handles the task — Claude Haiku by default, escalates to Sonnet only when needed.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔒</div><h4 style="color:#7e22ce">Privacy First</h4><p>No backend. No telemetry. Your data goes directly from your machine to Anthropic's API. TuxGenie is fully open source — read every line at <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">GitHub</a>.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔒</div><h4 style="color:#7e22ce">Privacy First</h4><p>No backend. No telemetry. No accounts. Your data goes directly from your machine to the AI provider you chose — never to us. Read the whole thing: it's one file. See our <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a> page.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔄</div><h4 style="color:#4338ca">Verified Auto-Updates</h4><p>New versions verify a <strong>SHA-256 checksum</strong> before installing, then apply at startup when sudo is cached. A corrupted or tampered download is refused — never installed.</p></div>
       <div class="tcard crash-card fade"><div style="font-size:22px;margin-bottom:10px">🛡️</div><h4>Crash Guard</h4><p>If a new version crashes 3 times in a row, TuxGenie automatically rolls back to the last known-good version and restarts. <strong>TuxGenie does not have the option of staying broken.</strong></p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">↩</div><h4 style="color:#15803d">You Stay in Control</h4><p>Anything that changes your system asks for your OK first. Every command is logged, option <code>[16]</code> rolls back any session, and destructive commands are hard-blocked. Always.</p></div>
@@ -803,9 +807,10 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
       <div class="foot-col">
         <h5>Legal</h5>
+        <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a>
         <a href="https://github.com/ramchandragada/tuxgenie/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
         <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">Open Source</a>
-        <a href="https://www.anthropic.com/privacy" target="_blank" rel="noopener">Anthropic Privacy</a>
+        <a href="https://www.anthropic.com/legal/privacy" target="_blank" rel="noopener">Anthropic Privacy</a>
       </div>
     </div>
     <div class="foot-divider"></div>

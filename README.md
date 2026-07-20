@@ -17,7 +17,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-  TuxGenie v5.79 — Powered by Claude · Free forever · Open Source
+  TuxGenie — Claude or Gemini · Free forever · Open Source
 ```
 
 ---
@@ -229,10 +229,21 @@ a corrupted or tampered download is refused, never installed.
 ## Requirements
 
 - Python 3.8+
-- An Anthropic API key ([get one free](https://console.anthropic.com))
 - Linux
+- An AI key — either **Google Gemini** ([free tier, no credit card](https://aistudio.google.com/apikey))
+  or **Anthropic Claude** ([get one](https://console.anthropic.com)). Terminal
+  commands (apt, systemctl, …) run with no key at all.
 
-The `anthropic` Python package is installed automatically on first run if missing.
+The `anthropic` Python package is installed automatically on first run if missing
+(only needed for Claude; the Gemini backend uses the standard library).
+
+## Privacy & transparency
+
+TuxGenie has **no backend, no telemetry, no analytics, and no accounts** —
+nothing is sent anywhere unless you run an AI task, and then only to the
+provider you chose. Your API key is stored locally (`chmod 600`) and your sudo
+password is never saved or sent. Full, plain-English details in
+**[PRIVACY.md](PRIVACY.md)**.
 
 ---
 
@@ -245,16 +256,16 @@ You describe the problem
   System context collected silently (OS, kernel, services, logs…)
         │
         ▼
-  Claude API → structured fix plan with risk levels
+  AI provider (Claude or Gemini) → structured fix plan with risk levels
         │
         ▼
   Each step shown with risk badge — you approve or skip
         │
         ▼
-  Command output fed back to Claude
+  Command output fed back to the AI
         │
         ▼
-  Claude iterates (up to 25 rounds) until resolved
+  The AI iterates (up to 25 rounds) until resolved
 ```
 
 ---

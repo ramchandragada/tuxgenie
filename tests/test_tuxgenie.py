@@ -746,3 +746,35 @@ class TestVersion:
         parts = tg.__version__.split(".")
         assert len(parts) == 3
         assert all(p.isdigit() for p in parts)
+
+
+class TestTransparency:
+    """Lock in the 100%-transparency promises so they can't silently regress."""
+
+    _ROOT = os.path.dirname(os.path.dirname(__file__))
+
+    def _src(self):
+        return open(os.path.join(self._ROOT, "tuxgenie.py")).read()
+
+    def test_privacy_doc_exists(self):
+        path = os.path.join(self._ROOT, "PRIVACY.md")
+        assert os.path.exists(path), "PRIVACY.md must exist"
+        body = open(path).read().lower()
+        # The promises users rely on must be stated explicitly.
+        for phrase in ("no telemetry", "chmod 600", "sudo password", "free tier"):
+            assert phrase in body, f"PRIVACY.md must mention '{phrase}'"
+
+    def test_no_telemetry_in_source(self):
+        """No analytics/telemetry SDKs or phone-home network posts."""
+        src = self._src().lower()
+        for banned in ("posthog", "mixpanel", "segment.io", "google-analytics"):
+            assert banned not in src, f"unexpected telemetry reference: {banned}"
+
+    def test_gemini_free_tier_disclosure_at_point_of_choice(self):
+        """Picking Gemini must disclose the free-tier data-usage caveat."""
+        src = self._src()
+        # Both the setup wizard and the settings provider-switch show it.
+        assert src.count("improve their products") >= 2, (
+            "Gemini free-tier data note must appear in both the setup wizard "
+            "and the Settings provider switch"
+        )
