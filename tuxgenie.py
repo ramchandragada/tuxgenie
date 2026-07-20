@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.95.0"
+__version__ = "5.96.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5228,6 +5228,163 @@ Additional instructions for GAMING SETUP mode:
 """ + _sys_ctx_block(ctx)
     fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
 
+# ── FEATURE 32: New to Linux — First-Day Setup ───────────────────────────────
+def feat_newbie_setup(backend, bctx, slog):
+    hdr("New to Linux — First-Day Setup")
+    print(f"  {DIM}Just switched from Windows or Mac? Let's get your PC set up with the")
+    print(f"  {DIM}everyday essentials — apps, media playback, drivers and updates.{R}")
+    with Spinner("Looking at what's already set up…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "browser":      "for b in firefox google-chrome chromium brave-browser vivaldi; do command -v $b >/dev/null && echo $b; done",
+            "office":       "for a in libreoffice onlyoffice-desktopeditors; do command -v $a >/dev/null && echo $a; done",
+            "codecs":       "dpkg -l ubuntu-restricted-extras 2>/dev/null | grep -q '^ii' && echo 'codecs installed' || echo 'codecs missing'",
+            "flatpak":      "command -v flatpak >/dev/null && (flatpak remotes 2>/dev/null | grep -qi flathub && echo 'flatpak+flathub' || echo 'flatpak-no-flathub') || echo 'no-flatpak'",
+            "gpu":          "lspci | grep -iE 'vga|3d|display'",
+            "media_player": "for m in vlc mpv; do command -v $m >/dev/null && echo $m; done",
+            "updates_due":  "apt-get -s upgrade 2>/dev/null | grep -c '^Inst' || echo 0",
+            "desktop":      "echo ${XDG_CURRENT_DESKTOP:-unknown}",
+        })}
+    try:
+        want = input(f"\n{BOLD}What would you like to set up? (Enter = full first-day setup · 'q' = back):{R}\n"
+                     f"{C('(e.g. install a browser + office, enable video playback, get the basics)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(want):
+        return
+    if not want:
+        want = "I just switched to Linux — set this machine up with the everyday essentials."
+    sys_p = BASE_SYS + """
+Additional instructions for NEW-TO-LINUX FIRST-DAY SETUP mode:
+- The user likely just switched from Windows/macOS. Be extra friendly and explain each step in plain language. Never assume prior Linux knowledge.
+- Goal: a comfortable everyday desktop. Cover, based on what the context shows is missing:
+  * System updates first (refresh package lists and apply pending updates).
+  * A web browser if none is installed (Firefox is usually preinstalled; offer Chrome/Brave if they want one).
+  * Media playback / codecs so videos and MP3s just work (e.g. ubuntu-restricted-extras on Ubuntu/Debian, or the distro equivalent; VLC or mpv as a player).
+  * An office suite (LibreOffice is often preinstalled; mention OnlyOffice for the best MS Office compatibility).
+  * Flatpak + Flathub enabled, since it's the easiest way for a beginner to get more apps later.
+  * A quick driver check (offer the Missing Drivers flow if the GPU or WiFi needs proprietary drivers).
+- Point them to the App Catalog [77] for one-tap installs and to 'Find Linux App' [14] for replacements of Windows/Mac software they miss.
+- Keep it to the essentials — do NOT overwhelm a first-day user with dozens of installs. Ask what they mainly do (browsing, office, media) if unsure.
+- Prefer the distro's package manager; use Flathub for GUI apps when that's cleanest.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
+
+# ── FEATURE 33: Developer Setup ──────────────────────────────────────────────
+def feat_dev_setup(backend, bctx, slog):
+    hdr("Developer Setup — Tools & languages, configured for you")
+    with Spinner("Checking your current dev environment…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "python":  "python3 --version 2>/dev/null; pip3 --version 2>/dev/null | head -1",
+            "node":    "node --version 2>/dev/null; npm --version 2>/dev/null",
+            "go":      "go version 2>/dev/null",
+            "rust":    "rustc --version 2>/dev/null",
+            "gcc":     "gcc --version 2>/dev/null | head -1",
+            "java":    "java -version 2>&1 | head -1",
+            "docker":  "command -v docker >/dev/null && (docker --version; groups | grep -qw docker && echo 'in docker group' || echo 'NOT in docker group') || echo 'no docker'",
+            "git":     "git --version 2>/dev/null; echo name=$(git config --global user.name 2>/dev/null); echo email=$(git config --global user.email 2>/dev/null)",
+            "editor":  "for e in code codium subl nvim vim; do command -v $e >/dev/null && echo $e; done",
+            "shell":   "echo $SHELL; command -v zsh >/dev/null && echo 'zsh available'",
+            "ssh_key": "ls ~/.ssh/id_*.pub 2>/dev/null || echo 'no ssh key'",
+        })}
+    try:
+        want = input(f"\n{BOLD}What do you want to set up? (Enter = general dev setup · 'q' = back):{R}\n"
+                     f"{C('(e.g. Python + VS Code, Node & Docker, set up git and an SSH key, install Rust)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(want):
+        return
+    if not want:
+        want = "Set this machine up as a general-purpose development environment."
+    sys_p = BASE_SYS + """
+Additional instructions for DEVELOPER SETUP mode:
+- Help the user build a working dev environment. Ask which languages/stack they want if they didn't say (Python, Node.js, Go, Rust, Java, C/C++, Docker).
+- Install toolchains the cleanest way for the distro:
+  * Base build tools (build-essential / base-devel), git, curl.
+  * Python: python3, pip, venv; mention pipx for CLI tools. Only suggest pyenv if they need multiple versions.
+  * Node.js: prefer the distro package, or nvm if they need multiple versions.
+  * Rust: rustup. Go: the distro package or official tarball. Java: the distro OpenJDK.
+- Editor: offer VS Code (or VSCodium, the telemetry-free build) if no editor is installed.
+- git identity: if user.name / user.email are unset (see context), ASK for their name and email, then run the 'git config --global' commands.
+- SSH key: if there's no key (see context), offer to generate an ed25519 key with ssh-keygen, then DISPLAY the public key so they can add it to GitHub/GitLab. NEVER display or copy the private key.
+- Docker: if installed but the user is NOT in the docker group, offer 'sudo usermod -aG docker $USER' and explain they must log out/in. If not installed, install Docker Engine the distro-recommended way.
+- Shell niceties (optional, ask first): zsh + a prompt like starship. Don't force it.
+- Explain the 'why' of each step — developers appreciate it. Prefer the package manager; avoid piping curl|sh unless it's the official documented installer (e.g. rustup), and say so.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
+
+# ── FEATURE 34: Creator / Streaming Setup ────────────────────────────────────
+def feat_creator_setup(backend, bctx, slog):
+    hdr("Creator & Streaming Setup — Record, edit and go live")
+    with Spinner("Checking your audio, video & capture setup…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "obs":        "command -v obs >/dev/null && echo installed || (flatpak list 2>/dev/null | grep -qi obsproject && echo 'installed (flatpak)' || echo missing)",
+            "editors":    "for a in kdenlive shotcut openshot flowblade; do command -v $a >/dev/null && echo $a; done",
+            "audio_apps": "for a in audacity ardour; do command -v $a >/dev/null && echo $a; done",
+            "audio_srv":  "pactl info 2>/dev/null | grep -i 'server name' | head -1",
+            "v4l2loop":   "lsmod | grep -q v4l2loopback && echo 'virtual camera ready' || echo 'no v4l2loopback'",
+            "webcam":     "ls /dev/video* 2>/dev/null; v4l2-ctl --list-devices 2>/dev/null | head -8",
+            "mics":       "pactl list sources short 2>/dev/null | head -6",
+            "gpu":        "lspci | grep -iE 'vga|3d|display'; command -v vainfo >/dev/null && vainfo 2>/dev/null | grep -i 'VAProfile' | head -3",
+        })}
+    try:
+        want = input(f"\n{BOLD}What are you setting up? (Enter = full creator setup · 'q' = back):{R}\n"
+                     f"{C('(e.g. set up OBS for streaming, install a video editor, get my virtual camera working)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(want):
+        return
+    if not want:
+        want = "Set this machine up for content creation and live streaming."
+    sys_p = BASE_SYS + """
+Additional instructions for CREATOR / STREAMING SETUP mode:
+- Help the user record, edit and stream. Ask their focus if unclear (live streaming, video editing, podcast/audio).
+- Core apps: OBS Studio (streaming/recording), a video editor (Kdenlive is the best free default; Shotcut/OpenShot as alternatives), Audacity for audio, and GIMP/Krita/Inkscape for thumbnails/graphics (catalog [77]).
+- Virtual camera: if v4l2loopback is missing (see context), install it (the dkms package) so OBS's Virtual Camera and video-call apps work. Explain OBS 'Start Virtual Camera'.
+- Audio routing: most modern distros use PipeWire. For routing mic/desktop/app audio, offer qpwgraph or Helvum (patch-bay GUIs); mention Carla for advanced setups. Explain the concept simply.
+- Hardware encoding: detect the GPU. NVIDIA → suggest NVENC in OBS; AMD/Intel → suggest VAAPI (ensure the VAAPI drivers are present). This offloads encoding from the CPU.
+- Webcam/mic: help confirm the camera (/dev/video*) and microphone are detected and selected.
+- Prefer the distro package manager or Flathub. Explain steps plainly — many creators are not sysadmins.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
+
+# ── FEATURE 35: Privacy & Security Setup ─────────────────────────────────────
+def feat_privacy_setup(backend, bctx, slog):
+    hdr("Privacy & Security Setup — Lock down your PC")
+    with Spinner("Checking your current privacy & security posture…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "firewall":   "command -v ufw >/dev/null && ufw status 2>/dev/null | head -1 || echo 'ufw not installed'",
+            "pwd_mgr":    "for a in keepassxc bitwarden bitwarden-desktop; do command -v $a >/dev/null && echo $a; done",
+            "vpn":        "for a in wg wireguard-tools protonvpn-app mullvad openvpn; do command -v $a >/dev/null && echo $a; done",
+            "tor":        "command -v torbrowser-launcher >/dev/null && echo 'tor launcher'; command -v tor >/dev/null && echo 'tor daemon'",
+            "signal":     "command -v signal-desktop >/dev/null && echo installed || echo missing",
+            "encryption": "lsblk -o NAME,FSTYPE 2>/dev/null | grep -qi crypto_LUKS && echo 'LUKS disk encryption detected' || echo 'no LUKS encryption detected'",
+            "dns":        "resolvectl status 2>/dev/null | grep -iE 'Current DNS|DNSOverTLS' | head -4 || (grep -i nameserver /etc/resolv.conf 2>/dev/null | head -3)",
+            "open_ports": "ss -tuln 2>/dev/null | grep LISTEN | head -10",
+            "ssh":        "systemctl is-active ssh 2>/dev/null || systemctl is-active sshd 2>/dev/null || echo 'ssh inactive'",
+        })}
+    try:
+        want = input(f"\n{BOLD}What would you like to harden? (Enter = full privacy setup · 'q' = back):{R}\n"
+                     f"{C('(e.g. set up a firewall, install a password manager + Signal, turn on a VPN)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(want):
+        return
+    if not want:
+        want = "Set this machine up for good everyday privacy and security."
+    sys_p = BASE_SYS + """
+Additional instructions for PRIVACY & SECURITY SETUP mode:
+- Help the user improve everyday privacy and security WITHOUT breaking their system or locking themselves out. Explain the tradeoff of every change in plain language.
+- Password manager: offer KeePassXC (local) or Bitwarden (sync). Recommend this as step one.
+- Private messaging / browsing: offer Signal, Tor Browser (torbrowser-launcher), and a privacy browser (Brave, or hardened Firefox) from catalog [77].
+- VPN: offer WireGuard, or an app like Proton VPN / Mullvad. Explain a VPN hides traffic from the local network/ISP but is not total anonymity.
+- Firewall: if ufw is installed but inactive, offer a sensible default — 'sudo ufw default deny incoming', 'sudo ufw default allow outgoing', 'sudo ufw enable'. CRITICAL: if SSH is active (see context) and this could be a remote machine, add 'sudo ufw allow ssh' FIRST and warn clearly, so the user is never locked out of a remote session.
+- DNS: offer encrypted DNS (DNS-over-TLS via systemd-resolved) and explain it.
+- Disk encryption: report whether LUKS is detected. Full-disk encryption can only be set up at install time, so if it's absent, explain that and suggest an encrypted vault for sensitive files (e.g. gocryptfs / Cryptomator) instead. NEVER attempt to encrypt the running root filesystem in place.
+- If SSH is exposed, point to SSH Setup [29] and Security Check [15] for deeper hardening.
+- NEVER weaken security (disabling the firewall, opening ports widely, chmod 777). If the user asks for something risky, explain the danger and offer a safer alternative.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
+
 # ── FEATURE 22: Sound Fix ────────────────────────────────────────────────────
 def feat_sound(backend, bctx, slog):
     hdr("Sound Fix — Fix audio problems")
@@ -8040,6 +8197,11 @@ MENU_ITEMS = [
     ("30", "git",       "Git Helper",         "Understand diffs, fix conflicts, undo commits",  feat_git),
     # ── Gaming ───────────────────────────────────────────────────────────────
     ("31", "gaming",    "Gaming Setup",       "Get game-ready: Steam+Proton, GPU drivers, GameMode", feat_gaming_setup),
+    # ── Guided persona setups ────────────────────────────────────────────────
+    ("32", "newbie",    "New to Linux Setup", "First-day setup for switchers: apps, codecs, drivers, updates", feat_newbie_setup),
+    ("33", "devsetup",  "Developer Setup",    "Toolchains, VS Code, git, SSH keys, Docker, shell",   feat_dev_setup),
+    ("34", "creator",   "Creator / Streaming","OBS, editors, virtual camera, audio routing",         feat_creator_setup),
+    ("35", "privacy",   "Privacy & Security", "VPN, password manager, Tor, firewall, encryption check", feat_privacy_setup),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
     ("77", "apps",      "Install Apps",       "128-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
@@ -8114,6 +8276,12 @@ def show_menu():
     _cat(BG_FOREST, "🎮", "GAMING", "Play on Linux")
     _item("31", "Gaming Setup",        "Steam + Proton, GPU drivers, GameMode — get game-ready")
     print(f"    {DIM}🎮 Free games — SuperTuxKart, 0 A.D., Minetest, Veloren… — live in the App Catalog ({BOLD}77{R}{DIM}).{R}")
+
+    _cat(BG_TEAL, "🧭", "GUIDED SETUPS", "Set your PC up for how you use it")
+    _item("32", "New to Linux",        "Just switched from Windows/Mac? Full first-day setup")
+    _item("33", "Developer Setup",     "Languages, VS Code, git, SSH keys, Docker, shell")
+    _item("34", "Creator / Streaming", "OBS, video/audio editors, virtual camera, mic setup")
+    _item("35", "Privacy & Security",  "VPN, password manager, Tor, firewall, encryption")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
     _item("77", "Install Apps",        "🎁 128 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")

@@ -166,6 +166,16 @@ You never *have* to pick a number — just type what you need in plain English. 
 | 29 | **SSH Setup** | Set up & harden SSH securely |
 | 30 | **Git Helper** | Understand diffs, fix conflicts, undo commits |
 
+**🧭 Guided setups** — get your PC ready for how you actually use it
+
+| # | Feature | What it does |
+|---|---------|--------------|
+| 31 | **Gaming Setup** | Steam + Proton, GPU drivers, GameMode/MangoHud, controllers — get game-ready |
+| 32 | **New to Linux** | Just switched from Windows/Mac? Guided first-day setup: apps, media codecs, drivers, updates |
+| 33 | **Developer Setup** | Pick a stack → toolchains, VS Code, git identity, SSH keys, Docker, shell |
+| 34 | **Creator / Streaming** | OBS, video/audio editors, virtual camera, PipeWire audio routing, hardware encoding |
+| 35 | **Privacy & Security** | Password manager, Signal, Tor, VPN, guided firewall, encrypted DNS, encryption check |
+
 **🎁 One-tap catalogs**
 
 | # | Feature | What it does |

@@ -730,6 +730,21 @@ class TestMenuIntegrity:
         kws = [kw for _, kw, *_ in tg.MENU_ITEMS]
         assert "git" in kws
 
+    def test_persona_setups_present_and_wired(self):
+        """The guided persona setups (32-35) must be registered and callable."""
+        by_num = {num: (kw, fn) for num, kw, name, desc, fn in tg.MENU_ITEMS}
+        expected = {
+            "32": ("newbie",   "feat_newbie_setup"),
+            "33": ("devsetup",  "feat_dev_setup"),
+            "34": ("creator",   "feat_creator_setup"),
+            "35": ("privacy",   "feat_privacy_setup"),
+        }
+        for num, (kw, fnname) in expected.items():
+            assert num in by_num, f"menu number {num} missing"
+            assert by_num[num][0] == kw, f"{num} keyword mismatch"
+            assert callable(by_num[num][1]), f"{num} not callable"
+            assert by_num[num][1].__name__ == fnname, f"{num} wrong function"
+
     def test_settings_present(self):
         kws = [kw for _, kw, *_ in tg.MENU_ITEMS]
         assert "settings" in kws
