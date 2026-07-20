@@ -96,11 +96,18 @@ jobs:
             pip install --upgrade tuxgenie
             ```
 
-            **Set your API key**
+            **Pick your AI on first run — no credit card needed**
+            - **Google Gemini** — free tier: https://aistudio.google.com/apikey
+            - **Anthropic Claude** — best quality (~$0.01/session): https://console.anthropic.com
+
+            You can also skip the prompt with an env var:
             ```bash
-            export ANTHROPIC_API_KEY="sk-ant-..."
+            export GEMINI_API_KEY="..."          # Google Gemini (free tier)
+            # or
+            export ANTHROPIC_API_KEY="sk-ant-..." # Anthropic Claude
             ```
-            Get a key at https://console.anthropic.com
+            Terminal commands (apt, systemctl, …) run with no key at all.
+            Your data & privacy: https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md
 
             **Run**
             ```bash
