@@ -6,7 +6,7 @@
 <meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. 42 built-in tools, app catalog, AI tools installer, cross-session memory. Free forever.">
 <meta name="author" content="Aspera Technologies">
 <meta property="og:title" content="TuxGenie — AI-Powered Linux Assistant">
-<meta property="og:description" content="Fix any Linux problem by describing it in plain English. 42 built-in tools, app catalog, AI tools installer. Powered by Claude AI. Free forever.">
+<meta property="og:description" content="Fix any Linux problem by describing it in plain English. Two free AI options (Google Gemini · Groq) or Claude. 42 built-in tools, app catalog, AI tools installer. Free forever.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tuxgenie.com/">
 <meta property="og:image" content="https://opengraph.githubassets.com/1/ramchandragada/tuxgenie">
@@ -452,8 +452,8 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
       <div class="step step-2 fade">
         <div class="step-num">2</div>
-        <h3>Add your Claude key</h3>
-        <p>Paste an Anthropic API key from <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">console.anthropic.com</a>. Sign-up is free; usage is metered (a few cents per session). Change the key anytime with <code style="background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-family:var(--fm);font-weight:600">k</code>.</p>
+        <h3>Pick your AI — two free options</h3>
+        <p>On first launch, choose a <strong>free</strong> key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Google Gemini</a> or <a href="https://console.groq.com/keys" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Groq</a> (no credit card), or <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Claude</a> for best quality. Change it anytime with <code style="background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-family:var(--fm);font-weight:600">k</code>.</p>
       </div>
       <div class="step step-3 fade">
         <div class="step-num">3</div>
@@ -690,7 +690,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">What does it actually cost per month?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p><strong>It can be completely free.</strong> Choose <strong>Google Gemini's free tier</strong> on first launch — no credit card, nothing to pay. Prefer top quality? Use Claude and you pay Anthropic only for what it uses — typically <strong>~$0.01 per session</strong> ($5 lasts months). Either way, simple commands (ls, apt, systemctl…) bypass the AI entirely and cost nothing.</p></div>
+        <div class="faq-body"><p><strong>It can be completely free.</strong> Pick a free tier on first launch — <strong>Google Gemini</strong> or <strong>Groq</strong> — no credit card, nothing to pay. Prefer top quality? Use Claude and you pay Anthropic only for what it uses — typically <strong>~$0.01 per session</strong> ($5 lasts months). Either way, simple commands (ls, apt, systemctl…) bypass the AI entirely and cost nothing.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Can it break my system or run dangerous commands?<span class="faq-chevron">+</span></button>
@@ -772,7 +772,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     </div>
     <div class="trust-grid">
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>At first run, pick a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a> or <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a>, or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> (~$0.01/session — $5 lasts months). Paste the key and you're done.</p></div>
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. Smart routing uses the cheapest model that handles the task — Claude Haiku by default, escalates to Sonnet only when needed.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. On Claude, smart routing picks the cheapest model that fits — Haiku first, escalating to Sonnet only when a task needs it.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔒</div><h4 style="color:#7e22ce">Privacy First</h4><p>No backend. No telemetry. No accounts. Your data goes directly from your machine to the AI provider you chose — never to us. Read the whole thing: it's one file. See our <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a> page.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔄</div><h4 style="color:#4338ca">Verified Auto-Updates</h4><p>New versions verify a <strong>SHA-256 checksum</strong> before installing, then apply at startup when sudo is cached. A corrupted or tampered download is refused — never installed.</p></div>
       <div class="tcard crash-card fade"><div style="font-size:22px;margin-bottom:10px">🛡️</div><h4>Crash Guard</h4><p>If a new version crashes 3 times in a row, TuxGenie automatically rolls back to the last known-good version and restarts. <strong>TuxGenie does not have the option of staying broken.</strong></p></div>
