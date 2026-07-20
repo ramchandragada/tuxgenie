@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.92.0"
+__version__ = "5.93.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1194,7 +1194,9 @@ def feat_settings(backend, bctx, slog):
         cur = "Google Gemini (free)" if isinstance(backend, GeminiBackend) else "Claude (Anthropic)"
         print(f"\n  {DIM}Currently using: {BOLD}{cur}{R}")
         print(f"  {C('[1]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
         print(f"  {C('[2]',CYAN)} Google Gemini — {GREEN}free tier, no credit card{R} {DIM}(beta){R}")
+        print(f"      {DIM}Get a free key: {CYAN}https://aistudio.google.com/apikey{R}")
         try:
             p = input(f"\n  {BOLD}Choose provider [1/2] (or Enter to cancel):{R} ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -1202,6 +1204,7 @@ def feat_settings(backend, bctx, slog):
         if p == "1":
             k = load_cfg().get("api_key", "").strip()
             if not k:
+                print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
                 try:
                     k = input("  Paste your Anthropic API key (sk-ant-…): ").strip()
                 except (EOFError, KeyboardInterrupt):
