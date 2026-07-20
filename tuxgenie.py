@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.94.0"
+__version__ = "5.95.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -963,15 +963,15 @@ def _setup_wizard(cfg):
     print(f"{_line}")
     print(f"\n  TuxGenie uses an AI to understand and fix Linux problems.")
     print(f"  Pick one — you can change it anytime in Settings:\n")
-    print(f"  {C('[1]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
-    print(f"      {DIM}Free trial credit, then ~$0.01/session · console.anthropic.com{R}")
-    print(f"  {C('[2]',CYAN,BOLD)} {BOLD}Google Gemini{R} — {GREEN}free tier, no credit card{R} {DIM}(beta){R}")
-    print(f"      {DIM}Get a free key at aistudio.google.com/apikey{R}\n")
+    print(f"  {C('[1]',CYAN,BOLD)} {BOLD}Google Gemini{R} — {GREEN}free tier, no credit card{R} {DIM}(recommended){R}")
+    print(f"      {DIM}Get a free key at aistudio.google.com/apikey{R}")
+    print(f"  {C('[2]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
+    print(f"      {DIM}Free trial credit, then ~$0.01/session · console.anthropic.com{R}\n")
     try:
-        choice = input(f"  Choose {BOLD}1{R} or {BOLD}2{R} (or press {BOLD}Enter{R} to skip for now): ").strip()
+        choice = input(f"  Choose {BOLD}1{R} or {BOLD}2{R}  {DIM}(Enter = 1, the free option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
-    if choice == "2":
+    if choice in ("", "1"):   # Google Gemini — the free default
         print(f"\n  {DIM}Free Gemini key: {CYAN}https://aistudio.google.com/apikey{R}")
         print(f"  {DIM}Heads-up: on Google's {BOLD}free{R}{DIM} tier, Google may use your prompts")
         print(f"  {DIM}& responses to improve their products. Great for everyday use —")
@@ -981,8 +981,8 @@ def _setup_wizard(cfg):
         except (EOFError, KeyboardInterrupt):
             return ("skip", None)
         return ("gemini", key) if key else ("skip", None)
-    if choice == "1":
-        print(f"\n  {DIM}Free Claude key: {CYAN}https://console.anthropic.com{R}")
+    if choice == "2":
+        print(f"\n  {DIM}Claude key: {CYAN}https://console.anthropic.com{R}")
         try:
             key = input("  Paste your Anthropic API key: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -1040,8 +1040,10 @@ def load_backend():
     if kind == "claude":
         save_cfg({"provider": "claude", "backend": "claude", "api_key": value})
         return _make_backend(cfg, "claude", value)
+    # Skipped setup — no key yet. Default the placeholder to Gemini (the free
+    # option) so the eventual `k` prompt offers the free path first.
     save_cfg({"backend": "none"})
-    return _make_backend(cfg, "claude", _NO_KEY)
+    return _make_backend(cfg, "gemini", _NO_KEY)
 
 AVAILABLE_MODELS = [
     ("claude-haiku-4-5-20251001", "Fast & cheapest — handles 90% of tasks perfectly (recommended)"),
@@ -1137,7 +1139,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
-    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Claude · or Google Gemini — free tier){R}")
+    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Google Gemini — free · or Claude){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -1219,27 +1221,15 @@ def feat_settings(backend, bctx, slog):
     elif ch == "8":
         cur = "Google Gemini (free)" if isinstance(backend, GeminiBackend) else "Claude (Anthropic)"
         print(f"\n  {DIM}Currently using: {BOLD}{cur}{R}")
-        print(f"  {C('[1]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
-        print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
-        print(f"  {C('[2]',CYAN)} Google Gemini — {GREEN}free tier, no credit card{R} {DIM}(beta){R}")
+        print(f"  {C('[1]',CYAN)} Google Gemini — {GREEN}free tier, no credit card{R} {DIM}(recommended){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://aistudio.google.com/apikey{R}")
+        print(f"  {C('[2]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
         try:
             p = input(f"\n  {BOLD}Choose provider [1/2] (or Enter to cancel):{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             return
         if p == "1":
-            k = load_cfg().get("api_key", "").strip()
-            if not k:
-                print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
-                try:
-                    k = input("  Paste your Anthropic API key (sk-ant-…): ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    return
-                if not k:
-                    warn("No key entered — provider unchanged."); return
-            save_cfg({"provider": "claude", "api_key": k})
-            ok("Switched to Claude. Restart TuxGenie for it to take effect.")
-        elif p == "2":
             print(f"  {DIM}Note: on Google's {BOLD}free{R}{DIM} tier, Google may use your prompts &")
             print(f"  {DIM}responses to improve their products. Prefer Claude for sensitive")
             print(f"  {DIM}systems. Full details in PRIVACY.md.{R}")
@@ -1254,6 +1244,18 @@ def feat_settings(backend, bctx, slog):
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "gemini", "gemini_api_key": k})
             ok("Switched to Google Gemini (free tier). Restart TuxGenie for it to take effect.")
+        elif p == "2":
+            k = load_cfg().get("api_key", "").strip()
+            if not k:
+                print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
+                try:
+                    k = input("  Paste your Anthropic API key (sk-ant-…): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if not k:
+                    warn("No key entered — provider unchanged."); return
+            save_cfg({"provider": "claude", "api_key": k})
+            ok("Switched to Claude. Restart TuxGenie for it to take effect.")
         else:
             info("Provider unchanged.")
 
@@ -8365,7 +8367,10 @@ def main():
         print(f"\n{_line}")
         print(f"  {YELLOW}{BOLD}⚠  No API key — AI features are disabled{R}")
         print(f"  {GREEN}✔  Terminal commands work fine without a key{R}")
-        print(f"  {DIM}Type {BOLD}k{R}{DIM} to add your Anthropic key anytime{R}")
+        _keyhint = ("free Google Gemini key · aistudio.google.com/apikey"
+                    if isinstance(backend, GeminiBackend)
+                    else "Anthropic key · console.anthropic.com")
+        print(f"  {DIM}Type {BOLD}k{R}{DIM} to add your {_keyhint} anytime{R}")
         print(f"{_line}")
 
     while True:

@@ -791,6 +791,32 @@ class TestKeyChangeRouting:
         assert not cfg.get("api_key")
 
 
+class TestSetupWizardDefault:
+    """Gemini must be the first/default choice; Claude second."""
+
+    def _wizard(self, inputs, monkeypatch):
+        it = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: next(it))
+        return tg._setup_wizard({})
+
+    def test_enter_defaults_to_gemini(self, monkeypatch):
+        # First input = choice (blank → default), second = the key.
+        kind, key = self._wizard(["", "AIza" + "z" * 35], monkeypatch)
+        assert kind == "gemini"
+
+    def test_one_is_gemini(self, monkeypatch):
+        kind, key = self._wizard(["1", "AIza" + "z" * 35], monkeypatch)
+        assert kind == "gemini"
+
+    def test_two_is_claude(self, monkeypatch):
+        kind, key = self._wizard(["2", "sk-ant-" + "a" * 70], monkeypatch)
+        assert kind == "claude"
+
+    def test_s_skips(self, monkeypatch):
+        kind, key = self._wizard(["s"], monkeypatch)
+        assert kind == "skip"
+
+
 class TestTransparency:
     """Lock in the 100%-transparency promises so they can't silently regress."""
 
