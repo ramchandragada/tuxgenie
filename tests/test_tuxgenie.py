@@ -842,6 +842,27 @@ class TestOpenAICompatBackend:
         tu = [x for x in b if x.type == "tool_use"][0]
         assert tu.name == "run" and tu.input == {"cmd": "ls"} and tu.id == "c1"
 
+    def test_text_format_toolcall_is_parsed(self):
+        """Llama models sometimes emit the tool call as TEXT
+        (<function/run_command>{...}</function>) — we must still run it."""
+        resp = {"choices": [{"message": {"content":
+            '<function/run_command>{"command": "sudo apt install -y chromium-browser", '
+            '"requires_root": true, "risk": "moderate"}</function>'}, "finish_reason": "stop"}]}
+        blocks, stop = tg._oai_blocks_from_response(resp)
+        assert stop == "tool_use"
+        tus = [b for b in blocks if b.type == "tool_use"]
+        assert len(tus) == 1 and tus[0].name == "run_command"
+        assert tus[0].input["command"].startswith("sudo apt install")
+        assert not [b for b in blocks if b.type == "text"]
+
+    def test_text_format_toolcall_with_surrounding_text(self):
+        resp = {"choices": [{"message": {"content":
+            'Sure!<function=run_command>{"command":"ls"}</function>'}}]}
+        blocks, stop = tg._oai_blocks_from_response(resp)
+        assert stop == "tool_use"
+        assert [b for b in blocks if b.type == "text"][0].text == "Sure!"
+        assert [b for b in blocks if b.type == "tool_use"][0].input["command"] == "ls"
+
     def test_tool_use_block_has_no_text_attr(self):
         # Regression guard (same class of bug fixed for Gemini): tool_use blocks
         # must not carry a .text attribute, or `hasattr(b,'text') and b.text.strip()` crashes.

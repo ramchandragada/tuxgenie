@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.6.0"
+__version__ = "6.7.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1016,25 +1016,66 @@ def _oai_tools_from_anthropic(tools):
     return out
 
 
+# Some Llama models on OpenAI-compatible APIs (Groq) emit tool calls as TEXT in
+# their chat template — e.g. <function/run_command>{...}</function> or
+# <function=run_command>{...}</function> — instead of the structured tool_calls
+# field. We parse that as a fallback so the agentic engine still runs the step.
+_OAI_TEXT_TOOLCALL_RE = re.compile(r'<function[=/]([A-Za-z0-9_\-]+)>\s*(\{.*?\})\s*</function>', re.S)
+
+
+def _oai_extract_text_toolcalls(text):
+    """Return (text_without_calls, [(name, args_dict), …]) for inline text calls."""
+    if not text or "<function" not in text:
+        return text, []
+    calls = []
+
+    def _sub(m):
+        try:
+            args = json.loads(m.group(2))
+        except (ValueError, TypeError):
+            return m.group(0)          # leave unparseable text alone
+        calls.append((m.group(1), args if isinstance(args, dict) else {}))
+        return ""
+    cleaned = _OAI_TEXT_TOOLCALL_RE.sub(_sub, text).strip()
+    return cleaned, calls
+
+
 def _oai_blocks_from_response(data):
     """OpenAI chat response → (Anthropic-shaped blocks, stop_reason)."""
     choice = (data.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
-    blocks = []
-    if msg.get("content"):
-        blocks.append(_GBlock("text", text=msg["content"]))
+    content = msg.get("content")
     calls = msg.get("tool_calls") or []
-    for c in calls:
-        fn = c.get("function") or {}
-        raw = fn.get("arguments") or "{}"
-        try:
-            parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
-        except (ValueError, TypeError):
-            parsed = {}
-        blocks.append(_GBlock("tool_use", name=fn.get("name"),
-                              input=parsed, id=c.get("id") or f"call_{len(blocks)}"))
+    blocks = []
+
+    # 1. Structured tool calls — the normal path.
+    if calls:
+        if content:
+            blocks.append(_GBlock("text", text=content))
+        for c in calls:
+            fn = c.get("function") or {}
+            raw = fn.get("arguments") or "{}"
+            try:
+                parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except (ValueError, TypeError):
+                parsed = {}
+            blocks.append(_GBlock("tool_use", name=fn.get("name"),
+                                  input=parsed, id=c.get("id") or f"call_{len(blocks)}"))
+        return blocks, "tool_use"
+
+    # 2. Fallback — a model that wrote the call as text instead of structured.
+    if content:
+        cleaned, text_calls = _oai_extract_text_toolcalls(content)
+        if text_calls:
+            if cleaned:
+                blocks.append(_GBlock("text", text=cleaned))
+            for i, (name, args) in enumerate(text_calls):
+                blocks.append(_GBlock("tool_use", name=name, input=args, id=f"call_txt_{i}"))
+            return blocks, "tool_use"
+        blocks.append(_GBlock("text", text=content))
+
     fr = choice.get("finish_reason", "")
-    stop = "tool_use" if calls else ("max_tokens" if fr == "length" else "end_turn")
+    stop = "max_tokens" if fr == "length" else "end_turn"
     if not blocks:
         blocks.append(_GBlock("text", text=""))
     return blocks, stop
