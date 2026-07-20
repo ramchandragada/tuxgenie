@@ -168,6 +168,9 @@ You never *have* to pick a number — just type what you need in plain English. 
 
 **🧭 Guided setups** — get your PC ready for how you actually use it
 
+> **Not sure which one?** Type **`suggest`** (or `39`) — answer one plain-English
+> question and TuxGenie takes you straight into the right setup.
+
 | # | Feature | What it does |
 |---|---------|--------------|
 | 31 | **Gaming Setup** | Steam + Proton, GPU drivers, GameMode/MangoHud, controllers — get game-ready |
@@ -178,6 +181,7 @@ You never *have* to pick a number — just type what you need in plain English. 
 | 36 | **Student Setup** | Free study tools: notes (Obsidian/Xournal++), citations (Zotero), flashcards (Anki), office, optional LaTeX |
 | 37 | **Homelab Setup** | Self-hosting stack: Docker + Portainer, Tailscale, Syncthing, Samba/NFS, monitoring, scheduled backups |
 | 38 | **Accessibility** | Screen reader (Orca), magnifier, on-screen keyboard, high contrast, larger text — guided per desktop |
+| 39 | **Suggest a Setup** | Not sure? Answer one plain-English question → TuxGenie opens the right setup for you |
 
 **🎁 One-tap catalogs**
 

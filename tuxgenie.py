@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.97.0"
+__version__ = "5.98.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5502,6 +5502,43 @@ Additional instructions for ACCESSIBILITY SETUP mode:
 """ + _sys_ctx_block(ctx)
     fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
 
+# ── FEATURE 39: Suggest a Setup (plain-language chooser) ─────────────────────
+def feat_suggest_setup(backend, bctx, slog):
+    """Not sure which guided setup you need? Answer one plain question and
+    TuxGenie takes you straight into the right one. No jargon required."""
+    hdr("Not sure where to start? Let's find the right setup for you")
+    print(f"  {DIM}Answer one simple question — I'll take you to the right setup.{R}\n")
+    opts = [
+        ("I just switched from Windows or Mac",       feat_newbie_setup),
+        ("Everyday use — web, email, documents",      feat_newbie_setup),
+        ("Coding / software development",             feat_dev_setup),
+        ("Gaming",                                    feat_gaming_setup),
+        ("Videos, streaming or making content",       feat_creator_setup),
+        ("Studying — school, college, exams",         feat_student_setup),
+        ("Privacy & staying safe online",             feat_privacy_setup),
+        ("Running my own home server",                feat_homelab_setup),
+        ("Make the screen easier to see / use",       feat_accessibility_setup),
+    ]
+    for i, (label, _) in enumerate(opts, 1):
+        print(f"  {C(f'[{i}]', CYAN, BOLD)} {label}")
+    print(f"  {C('[q]', DIM)} Back to menu")
+    try:
+        ch = input(f"\n  {BOLD}What do you mainly use this computer for? [1-{len(opts)}]:{R} ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(ch):
+        return
+    try:
+        idx = int(ch) - 1
+        if not (0 <= idx < len(opts)):
+            raise ValueError
+    except ValueError:
+        warn("Didn't catch that — just type the number next to the option that fits best.")
+        return
+    label, fn = opts[idx]
+    info(f"Great — let's get you set up for: {label}")
+    fn(backend, bctx, slog)
+
 # ── FEATURE 22: Sound Fix ────────────────────────────────────────────────────
 def feat_sound(backend, bctx, slog):
     hdr("Sound Fix — Fix audio problems")
@@ -8322,6 +8359,7 @@ MENU_ITEMS = [
     ("36", "student",   "Student Setup",      "Notes, citations, flashcards, office — free study tools", feat_student_setup),
     ("37", "homelab",   "Homelab Setup",      "Docker, Portainer, Tailscale, Syncthing, backups",    feat_homelab_setup),
     ("38", "access",    "Accessibility",      "Screen reader, magnifier, on-screen keyboard, contrast", feat_accessibility_setup),
+    ("39", "suggest",   "Suggest a Setup",    "Not sure? Answer one question, get the right setup",  feat_suggest_setup),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
     ("77", "apps",      "Install Apps",       "128-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
@@ -8398,6 +8436,7 @@ def show_menu():
     print(f"    {DIM}🎮 Free games — SuperTuxKart, 0 A.D., Minetest, Veloren… — live in the App Catalog ({BOLD}77{R}{DIM}).{R}")
 
     _cat(BG_TEAL, "🧭", "GUIDED SETUPS", "Set your PC up for how you use it")
+    print(f"    {BGREEN}{BOLD}👉 Not sure which?{R} Type {BOLD}suggest{R} {DIM}(or 39){R} — one question and I'll pick the right one for you.")
     _item("32", "New to Linux",        "Just switched from Windows/Mac? Full first-day setup")
     _item("33", "Developer Setup",     "Languages, VS Code, git, SSH keys, Docker, shell")
     _item("34", "Creator / Streaming", "OBS, video/audio editors, virtual camera, mic setup")

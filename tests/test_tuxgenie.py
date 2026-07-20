@@ -741,12 +741,21 @@ class TestMenuIntegrity:
             "36": ("student",   "feat_student_setup"),
             "37": ("homelab",   "feat_homelab_setup"),
             "38": ("access",    "feat_accessibility_setup"),
+            "39": ("suggest",   "feat_suggest_setup"),
         }
         for num, (kw, fnname) in expected.items():
             assert num in by_num, f"menu number {num} missing"
             assert by_num[num][0] == kw, f"{num} keyword mismatch"
             assert callable(by_num[num][1]), f"{num} not callable"
             assert by_num[num][1].__name__ == fnname, f"{num} wrong function"
+
+    def test_suggest_routes_to_matching_setup(self, monkeypatch):
+        """The plain-language chooser must launch the mapped setup."""
+        called = {}
+        monkeypatch.setattr(tg, "feat_dev_setup", lambda *a, **k: called.setdefault("dev", True))
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "3")  # Coding / development
+        tg.feat_suggest_setup(None, {}, None)
+        assert called.get("dev"), "option 3 should launch the developer setup"
 
     def test_settings_present(self):
         kws = [kw for _, kw, *_ in tg.MENU_ITEMS]
