@@ -79,6 +79,8 @@ just press Enter):
 
 - **Google Gemini** — **free tier, no credit card** *(recommended)*.
   Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+- **Groq** — **also free, very fast** (Llama models).
+  Get a free key at [console.groq.com/keys](https://console.groq.com/keys).
 - **Claude (Anthropic)** — best quality. Free trial credit, then ~$0.01/session.
   Get a key at [console.anthropic.com](https://console.anthropic.com).
 
@@ -86,6 +88,8 @@ You can also set a key via environment variable and skip the prompt:
 
 ```bash
 export GEMINI_API_KEY="..."             # Google Gemini (free tier)
+# or
+export GROQ_API_KEY="gsk_..."           # Groq (free tier)
 # or
 export ANTHROPIC_API_KEY="sk-ant-..."   # Claude
 
@@ -249,9 +253,10 @@ a corrupted or tampered download is refused, never installed.
 
 - Python 3.8+
 - Linux
-- An AI key — either **Google Gemini** ([free tier, no credit card](https://aistudio.google.com/apikey))
-  or **Anthropic Claude** ([get one](https://console.anthropic.com)). Terminal
-  commands (apt, systemctl, …) run with no key at all.
+- An AI key — a **free** one from **Google Gemini** ([get it](https://aistudio.google.com/apikey))
+  or **Groq** ([get it](https://console.groq.com/keys)), or **Anthropic Claude**
+  ([get one](https://console.anthropic.com)) for best quality. Terminal commands
+  (apt, systemctl, …) run with no key at all.
 
 The `anthropic` Python package is installed automatically on first run if missing
 (only needed for Claude; the Gemini backend uses the standard library).

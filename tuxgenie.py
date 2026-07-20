@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.2.0"
+__version__ = "6.3.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -931,6 +931,284 @@ class GeminiBackend:
         return _GResponse(blocks, stop, _gem_usage(data))
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  OpenAI-compatible backend — powers Groq (FREE tier) and any OpenAI-style API
+# ═══════════════════════════════════════════════════════════════════════════════
+# A huge number of providers speak the identical /chat/completions format: Groq,
+# OpenRouter, Cerebras, Mistral, Together, GitHub Models, and local Ollama. This
+# ONE backend serves them all — choose a provider and it sets the base URL +
+# default model. Same interface the engines use (.ask() text + .client.messages
+# .create() tool-use), reusing the Anthropic-shaped _GBlock/_GUsage/_GResponse
+# adapters. Pure translation helpers so they unit-test offline. Claude/Gemini
+# code is untouched; this only runs when the user opts into an OpenAI-style provider.
+_OAI_PROVIDERS = {
+    "groq": {
+        "label": "Groq", "base_url": "https://api.groq.com/openai/v1",
+        "default_model": "llama-3.3-70b-versatile", "cfg_key": "groq_api_key",
+        "model_key": "groq_model", "keys_url": "https://console.groq.com/keys",
+        "env": ("GROQ_API_KEY",), "free": True,
+    },
+}
+
+
+def _oai_messages_from_anthropic(system_text, messages):
+    """Anthropic system + messages → an OpenAI chat 'messages' array. Assistant
+    tool_use blocks become one assistant message with tool_calls; tool_result
+    blocks become their own 'tool' messages (order preserved, as OpenAI needs)."""
+    out = []
+    if system_text:
+        out.append({"role": "system", "content": system_text})
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content")
+        if isinstance(content, str):
+            if content:
+                out.append({"role": role, "content": content})
+            continue
+        text_parts, tool_calls, tool_results = [], [], []
+        for b in content or []:
+            typ = _gem_bget(b, "type")
+            if typ == "text":
+                t = _gem_bget(b, "text", "")
+                if t:
+                    text_parts.append(t)
+            elif typ == "tool_use":
+                tool_calls.append({
+                    "id": _gem_bget(b, "id") or f"call_{len(tool_calls)}",
+                    "type": "function",
+                    "function": {"name": _gem_bget(b, "name"),
+                                 "arguments": json.dumps(_gem_bget(b, "input") or {})},
+                })
+            elif typ == "tool_result":
+                resc = _gem_bget(b, "content", "")
+                if isinstance(resc, list):
+                    resc = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in resc)
+                if not isinstance(resc, str):
+                    resc = json.dumps(resc)
+                tool_results.append({"role": "tool",
+                                     "tool_call_id": _gem_bget(b, "tool_use_id") or "",
+                                     "content": resc})
+        if role == "assistant" and (tool_calls or text_parts):
+            msg = {"role": "assistant", "content": "\n".join(text_parts)}
+            if tool_calls:
+                msg["tool_calls"] = tool_calls
+            out.append(msg)
+        if tool_results:
+            out.extend(tool_results)
+        elif role != "assistant" and text_parts:
+            out.append({"role": role, "content": "\n".join(text_parts)})
+    return out
+
+
+def _oai_tools_from_anthropic(tools):
+    """Anthropic tools → OpenAI 'tools' (function) array."""
+    if not tools:
+        return None
+    out = []
+    for t in tools:
+        params = _gem_clean_schema(t.get("input_schema") or {}) or {}
+        params.setdefault("type", "object")
+        params.setdefault("properties", {})
+        out.append({"type": "function",
+                    "function": {"name": t.get("name"),
+                                 "description": t.get("description", ""),
+                                 "parameters": params}})
+    return out
+
+
+def _oai_blocks_from_response(data):
+    """OpenAI chat response → (Anthropic-shaped blocks, stop_reason)."""
+    choice = (data.get("choices") or [{}])[0]
+    msg = choice.get("message") or {}
+    blocks = []
+    if msg.get("content"):
+        blocks.append(_GBlock("text", text=msg["content"]))
+    calls = msg.get("tool_calls") or []
+    for c in calls:
+        fn = c.get("function") or {}
+        raw = fn.get("arguments") or "{}"
+        try:
+            parsed = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except (ValueError, TypeError):
+            parsed = {}
+        blocks.append(_GBlock("tool_use", name=fn.get("name"),
+                              input=parsed, id=c.get("id") or f"call_{len(blocks)}"))
+    fr = choice.get("finish_reason", "")
+    stop = "tool_use" if calls else ("max_tokens" if fr == "length" else "end_turn")
+    if not blocks:
+        blocks.append(_GBlock("text", text=""))
+    return blocks, stop
+
+
+def _oai_usage(data):
+    u = data.get("usage") or {}
+    return _GUsage(u.get("prompt_tokens", 0) or 0, u.get("completion_tokens", 0) or 0)
+
+
+def _oai_pick_model(available):
+    """Choose the best general chat model from a provider's model list."""
+    for p in ("llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant"):
+        if p in (available or []):
+            return p
+
+    def score(n):
+        n = n.lower()
+        if any(x in n for x in ("whisper", "embed", "guard", "tts", "vision")):
+            return -1000
+        s = 0
+        if "llama" in n: s += 50
+        if "70b" in n or "versatile" in n: s += 20
+        if "gpt-oss" in n: s += 15
+        if "instant" in n or "8b" in n: s += 5
+        return s
+    cands = [m for m in (available or []) if score(m) > -1000]
+    return max(cands, key=score) if cands else None
+
+
+class _OAIMessages:
+    def __init__(self, backend):
+        self._b = backend
+
+    def create(self, **kw):
+        return self._b._create(kw.get("system"), kw.get("tools"),
+                               kw.get("messages"), kw.get("max_tokens", 4096))
+
+
+class _OAIClient:
+    def __init__(self, backend):
+        self.messages = _OAIMessages(backend)
+
+
+class OpenAICompatBackend:
+    """Backend for any OpenAI-compatible chat API. Powers Groq's free tier today;
+    ready for OpenRouter/Cerebras/Mistral/Ollama by adding an _OAI_PROVIDERS entry."""
+    def __init__(self, api_key, model=None, provider="groq", base_url=None):
+        prov = _OAI_PROVIDERS.get(provider, _OAI_PROVIDERS["groq"])
+        self.provider = provider
+        self._prov = prov
+        self._no_key = (api_key == _NO_KEY)
+        self.api_key = "" if self._no_key else api_key
+        self.base_url = (base_url or prov["base_url"]).rstrip("/")
+        self.model = model or prov["default_model"]
+        self.base_model = self.model
+        self.auto_model = False
+        self.expert_mode = False
+        self.auto_approve = False
+        self.client = _OAIClient(self)
+        self._session_input_tokens = 0
+        self._session_output_tokens = 0
+        self._session_cache_creation_tokens = 0
+        self._session_cache_read_tokens = 0
+
+    def label(self):
+        return f"{self._prov['label']} · {self.model}" + (" (free)" if self._prov.get("free") else "")
+
+    def select_model_for_task(self, user_text="", round_num=1):
+        return  # single model — no routing
+
+    def _set_key(self, key):
+        self.api_key = key; self._no_key = False
+        save_cfg({"provider": self.provider, self._prov["cfg_key"]: key})
+        ok(f"{self._prov['label']} key saved! AI features are now enabled"
+           + (" (free tier)." if self._prov.get("free") else "."))
+
+    def _record_usage(self, usage):
+        self._session_input_tokens += getattr(usage, "input_tokens", 0) or 0
+        self._session_output_tokens += getattr(usage, "output_tokens", 0) or 0
+
+    def session_cost_estimate(self):
+        tag = "free tier · no API charges" if self._prov.get("free") else "usage-billed"
+        return (f"{self._prov['label']} {tag}  "
+                f"(session: ~{self._session_input_tokens:,} in + ~{self._session_output_tokens:,} out tokens)")
+
+    def _list_models(self):
+        req = urllib.request.Request(f"{self.base_url}/models",
+                                     headers={"Authorization": f"Bearer {self.api_key}"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
+
+    def _resolve_model(self):
+        try:
+            return _oai_pick_model(self._list_models())
+        except Exception:
+            return None
+
+    def _gen(self, system_text, messages, tools, max_tokens, _retry=True):
+        body = {"model": self.model,
+                "messages": _oai_messages_from_anthropic(system_text, messages),
+                "max_tokens": max(max_tokens or 4096, 1), "temperature": 0.6}
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = "auto"
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(body).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {self.api_key}"})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = json.loads(e.read().decode()).get("error", {}).get("message", "")
+            except Exception:
+                pass
+            model_gone = (e.code == 404 or "decommission" in detail.lower()
+                          or (e.code == 400 and "model" in detail.lower()))
+            if model_gone and _retry:
+                alt = self._resolve_model()
+                if alt and alt != self.model:
+                    print(f"\r  {DIM}{self._prov['label']} model updated to {alt} (previous one was retired).{R}")
+                    self.model = alt; self.base_model = alt
+                    save_cfg({self._prov["model_key"]: alt})
+                    return self._gen(system_text, messages, tools, max_tokens, _retry=False)
+            if model_gone:
+                raise RuntimeError(f"{self._prov['label']} model unavailable and no alternative found. {detail}")
+            if e.code in (401, 403):
+                raise RuntimeError(f"{self._prov['label']} API key rejected — check it at {self._prov['keys_url']}. {detail}")
+            if e.code == 429:
+                raise RuntimeError(f"{self._prov['label']} rate limit hit — wait a moment and retry. {detail}")
+            raise RuntimeError(f"{self._prov['label']} API error {e.code}: {detail or e}")
+
+    def _prompt_for_key(self):
+        p = self._prov
+        print(f"\n  {YELLOW}{BOLD}🔑 AI features need a {p['label']} API key.{R}")
+        pre = "It's free — no credit card. " if p.get("free") else ""
+        print(f"  {DIM}{pre}Get one at:{R} {CYAN}{p['keys_url']}{R}\n")
+        try:
+            key = input(f"  Paste {p['label']} key now (or press Enter to cancel): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if not key:
+            info(f"Cancelled. Type {BOLD}k{R} at the menu anytime to add your key.")
+            return False
+        self._set_key(key)
+        return True
+
+    def ask(self, system, messages, max_tokens=4096, cache_system=False):
+        """Text completion — used by fix_engine (returns a plain string)."""
+        if self._no_key and not self._prompt_for_key():
+            return ""
+        print(f"\r  {CYAN}⚡ Asking {self._prov['label']}…{R}   ", end="", flush=True)
+        data = self._gen(_gem_system_to_text(system), messages, None, max_tokens)
+        self._record_usage(_oai_usage(data))
+        blocks, _ = _oai_blocks_from_response(data)
+        text = "".join(b.text for b in blocks if b.type == "text" and getattr(b, "text", ""))
+        print(f"\r  {GREEN}✓ Response received ({len(text)} chars)   {R}")
+        return text
+
+    def _create(self, system, tools, messages, max_tokens):
+        """Anthropic-shaped tool-use call — used by agentic_engine."""
+        if self._no_key and not self._prompt_for_key():
+            return _GResponse([_GBlock("text", text="")], "end_turn", _GUsage(0, 0))
+        data = self._gen(_gem_system_to_text(system), messages,
+                         _oai_tools_from_anthropic(tools), max_tokens or 4096)
+        blocks, stop = _oai_blocks_from_response(data)
+        return _GResponse(blocks, stop, _oai_usage(data))
+
+
 # ── Config / API key ─────────────────────────────────────────────────────────
 _NO_KEY = "__NO_KEY__"   # sentinel — user chose to skip key setup
 
@@ -965,10 +1243,12 @@ def _setup_wizard(cfg):
     print(f"  Pick one — you can change it anytime in Settings:\n")
     print(f"  {C('[1]',CYAN,BOLD)} {BOLD}Google Gemini{R} — {GREEN}free tier, no credit card{R} {DIM}(recommended){R}")
     print(f"      {DIM}Get a free key at aistudio.google.com/apikey{R}")
-    print(f"  {C('[2]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
+    print(f"  {C('[2]',CYAN,BOLD)} {BOLD}Groq{R} — {GREEN}also free, very fast{R} {DIM}(Llama models){R}")
+    print(f"      {DIM}Get a free key at console.groq.com/keys{R}")
+    print(f"  {C('[3]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
     print(f"      {DIM}Free trial credit, then ~$0.01/session · console.anthropic.com{R}\n")
     try:
-        choice = input(f"  Choose {BOLD}1{R} or {BOLD}2{R}  {DIM}(Enter = 1, the free option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
+        choice = input(f"  Choose {BOLD}1{R}, {BOLD}2{R} or {BOLD}3{R}  {DIM}(Enter = 1, the free option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
     if choice in ("", "1"):   # Google Gemini — the free default
@@ -982,6 +1262,15 @@ def _setup_wizard(cfg):
             return ("skip", None)
         return ("gemini", key) if key else ("skip", None)
     if choice == "2":
+        print(f"\n  {DIM}Free Groq key: {CYAN}https://console.groq.com/keys{R}")
+        print(f"  {DIM}Heads-up: check Groq's terms for how free-tier data is used.")
+        print(f"  {DIM}Great for everyday use — pick Claude for confidential machines.{R}")
+        try:
+            key = input("  Paste your Groq API key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return ("skip", None)
+        return ("groq", key) if key else ("skip", None)
+    if choice == "3":
         print(f"\n  {DIM}Claude key: {CYAN}https://console.anthropic.com{R}")
         try:
             key = input("  Paste your Anthropic API key: ").strip()
@@ -997,6 +1286,10 @@ def _make_backend(cfg, provider, key):
     """Build the right backend and apply shared user preferences."""
     if provider == "gemini":
         b = GeminiBackend(api_key=key, model=cfg.get("gemini_model", _GEMINI_MODEL))
+    elif provider in _OAI_PROVIDERS:
+        prov = _OAI_PROVIDERS[provider]
+        b = OpenAICompatBackend(api_key=key, provider=provider,
+                                model=cfg.get(prov["model_key"], prov["default_model"]))
     else:
         b = AnthropicBackend(api_key=key, model=cfg.get("model", _HAIKU_MODEL))
     b.expert_mode  = bool(cfg.get("expert_mode", False))
@@ -1020,6 +1313,17 @@ def load_backend():
             save_cfg({"provider": "gemini", "gemini_api_key": gkey})
             return _make_backend(cfg, "gemini", gkey)
 
+    # 1b. Explicit OpenAI-compatible provider (Groq, …) with a saved/env key.
+    if provider in _OAI_PROVIDERS:
+        prov = _OAI_PROVIDERS[provider]
+        okey = ""
+        for ev in prov.get("env", ()):
+            okey = okey or os.environ.get(ev, "").strip()
+        okey = okey or cfg.get(prov["cfg_key"], "").strip()
+        if okey:
+            save_cfg({"provider": provider, prov["cfg_key"]: okey})
+            return _make_backend(cfg, provider, okey)
+
     # 2. Saved/env Claude key (the default, unchanged path).
     key = _load_api_key(cfg)
     if key:
@@ -1037,6 +1341,9 @@ def load_backend():
     if kind == "gemini":
         save_cfg({"provider": "gemini", "gemini_api_key": value})
         return _make_backend(cfg, "gemini", value)
+    if kind in _OAI_PROVIDERS:
+        save_cfg({"provider": kind, _OAI_PROVIDERS[kind]["cfg_key"]: value})
+        return _make_backend(cfg, kind, value)
     if kind == "claude":
         save_cfg({"provider": "claude", "backend": "claude", "api_key": value})
         return _make_backend(cfg, "claude", value)
@@ -1057,17 +1364,28 @@ def feat_set_api_key(backend):
     the Claude key. If you paste a key that clearly belongs to the *other*
     provider, it's routed there and the provider is switched — never stored in
     the wrong slot."""
-    is_gemini = isinstance(backend, GeminiBackend)
-    if is_gemini:
-        hdr("Google Gemini API Key")
-        info(f"Current: {backend.label()}")
-        print(f"\n  Get a free key at: {CYAN}{BOLD}https://aistudio.google.com/apikey{R}")
-        print(f"  {DIM}Gemini's free tier needs no credit card.{R}\n")
+    # Which provider are we on right now?
+    if isinstance(backend, GeminiBackend):
+        cur = "gemini"
+    elif isinstance(backend, OpenAICompatBackend):
+        cur = backend.provider          # e.g. "groq"
     else:
-        hdr("Claude API Key")
-        info(f"Current: {backend.label()}")
-        print(f"\n  Get your key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
-        print(f"  {DIM}Sign-up is free. Anthropic charges by usage (a few cents/session).{R}\n")
+        cur = "claude"
+
+    LABELS = {"claude": "Claude (Anthropic)", "gemini": "Google Gemini", "groq": "Groq"}
+    HEAD = {
+        "claude": ("Claude API Key", "https://console.anthropic.com",
+                   "Sign-up is free. Anthropic charges by usage (a few cents/session)."),
+        "gemini": ("Google Gemini API Key", "https://aistudio.google.com/apikey",
+                   "Gemini's free tier needs no credit card."),
+        "groq":   ("Groq API Key", "https://console.groq.com/keys",
+                   "Groq's free tier needs no credit card — and it's very fast."),
+    }
+    title, url, note = HEAD[cur]
+    hdr(title)
+    info(f"Current: {backend.label()}")
+    print(f"\n  Get your key at: {CYAN}{BOLD}{url}{R}")
+    print(f"  {DIM}{note}{R}\n")
     try:
         key = input("  Paste API key (or press Enter to cancel): ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -1076,45 +1394,45 @@ def feat_set_api_key(backend):
         warn("No key entered. Nothing changed.")
         return
 
-    looks_anthropic = bool(re.match(r'^sk-ant-[a-zA-Z0-9_\-]{60,}$', key))
-    looks_gemini    = bool(re.match(r'^AIza[0-9A-Za-z_\-]{30,}$', key))
-
-    # Pasted a key for the OTHER provider? Route it correctly and switch,
-    # rather than corrupting the current provider's slot.
-    if looks_gemini and not is_gemini:
-        save_cfg({"provider": "gemini", "gemini_api_key": key})
-        ok("That's a Google Gemini key — saved and switched to Gemini (free tier).")
-        info("Restart TuxGenie for the switch to take effect.")
-        return
-    if looks_anthropic and is_gemini:
-        save_cfg({"provider": "claude", "backend": "claude", "api_key": key})
-        ok("That's an Anthropic key — saved and switched to Claude.")
-        info("Restart TuxGenie for the switch to take effect.")
-        return
-
-    # Otherwise treat the key as belonging to the current provider.
-    if is_gemini:
-        if not looks_gemini:
-            warn("That doesn't look like a Google Gemini key (they start with AIza…).")
-            try:
-                confirm = input("  Save it anyway? [y/n]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                confirm = "n"
-            if confirm not in ("y", "yes"):
-                warn("Key not saved."); return
-        backend._set_key(key)   # saves provider=gemini + prints its own confirmation
+    # Detect which provider the pasted key belongs to, by its distinctive prefix.
+    if re.match(r'^sk-ant-[a-zA-Z0-9_\-]{60,}$', key):
+        kind = "claude"
+    elif re.match(r'^AIza[0-9A-Za-z_\-]{30,}$', key):
+        kind = "gemini"
+    elif re.match(r'^gsk_[A-Za-z0-9]{20,}$', key):
+        kind = "groq"
     else:
-        if not looks_anthropic:
-            warn("That doesn't look like a valid Anthropic API key.")
-            info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
-            try:
-                confirm = input("  Save it anyway? [y/n]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                confirm = "n"
-            if confirm not in ("y", "yes"):
-                warn("Key not saved."); return
+        kind = None
+
+    # Pasted a key for a DIFFERENT provider? Route it correctly and switch,
+    # instead of corrupting the current provider's slot.
+    if kind and kind != cur:
+        cfgmap = {
+            "claude": {"provider": "claude", "backend": "claude", "api_key": key},
+            "gemini": {"provider": "gemini", "gemini_api_key": key},
+            "groq":   {"provider": "groq", "groq_api_key": key},
+        }
+        save_cfg(cfgmap[kind])
+        ok(f"That's a {LABELS[kind]} key — saved and switched to {LABELS[kind]}.")
+        info("Restart TuxGenie for the switch to take effect.")
+        return
+
+    # Key doesn't match a known prefix — confirm before saving for the current provider.
+    if kind is None:
+        warn(f"That doesn't look like a {LABELS[cur]} key.")
+        try:
+            confirm = input("  Save it anyway? [y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            confirm = "n"
+        if confirm not in ("y", "yes"):
+            warn("Key not saved."); return
+
+    # Save for the current provider.
+    if cur == "claude":
         save_cfg({"backend": "claude", "provider": "claude", "api_key": key})
         backend._set_key(key)   # re-inits the Anthropic client + prints confirmation
+    else:
+        backend._set_key(key)   # gemini/groq _set_key saves provider+key and prints
 
 def feat_settings(backend, bctx, slog):
     """Settings: view/change API key and model."""
@@ -1139,7 +1457,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
-    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Google Gemini — free · or Claude){R}")
+    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq — both free · or Claude){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -1150,8 +1468,8 @@ def feat_settings(backend, bctx, slog):
         # wrong-provider key to the right place instead of corrupting config.
         feat_set_api_key(backend)
     elif ch == "2":
-        if isinstance(backend, GeminiBackend):
-            info("Model selection applies to Claude. You're on Google Gemini (single free model).")
+        if isinstance(backend, (GeminiBackend, OpenAICompatBackend)):
+            info(f"Model selection applies to Claude. You're on {backend.label()} (single model).")
             return
         print(f"\n  {BOLD}Choose a model:{R}")
         for i, (mid, desc) in enumerate(AVAILABLE_MODELS, 1):
@@ -1219,14 +1537,21 @@ def feat_settings(backend, bctx, slog):
         else:
             ok("Auto-approve OFF — you'll be asked before any command that changes your system.")
     elif ch == "8":
-        cur = "Google Gemini (free)" if isinstance(backend, GeminiBackend) else "Claude (Anthropic)"
+        if isinstance(backend, GeminiBackend):
+            cur = "Google Gemini (free)"
+        elif isinstance(backend, OpenAICompatBackend):
+            cur = f"{backend._prov['label']} (free)" if backend._prov.get("free") else backend._prov["label"]
+        else:
+            cur = "Claude (Anthropic)"
         print(f"\n  {DIM}Currently using: {BOLD}{cur}{R}")
         print(f"  {C('[1]',CYAN)} Google Gemini — {GREEN}free tier, no credit card{R} {DIM}(recommended){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://aistudio.google.com/apikey{R}")
-        print(f"  {C('[2]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        print(f"  {C('[2]',CYAN)} Groq — {GREEN}free tier, very fast{R} {DIM}(Llama models){R}")
+        print(f"      {DIM}Get a free key: {CYAN}https://console.groq.com/keys{R}")
+        print(f"  {C('[3]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
         print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
         try:
-            p = input(f"\n  {BOLD}Choose provider [1/2] (or Enter to cancel):{R} ").strip()
+            p = input(f"\n  {BOLD}Choose provider [1/2/3] (or Enter to cancel):{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             return
         if p == "1":
@@ -1245,6 +1570,20 @@ def feat_settings(backend, bctx, slog):
             save_cfg({"provider": "gemini", "gemini_api_key": k})
             ok("Switched to Google Gemini (free tier). Restart TuxGenie for it to take effect.")
         elif p == "2":
+            print(f"  {DIM}Note: Groq's free tier is rate-limited; check Groq's terms for how")
+            print(f"  {DIM}free-tier data is used. Prefer Claude for sensitive systems.{R}")
+            k = load_cfg().get("groq_api_key", "").strip()
+            if not k:
+                print(f"  {DIM}Free Groq key: {CYAN}https://console.groq.com/keys{R}")
+                try:
+                    k = input("  Paste your Groq API key: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if not k:
+                    warn("No key entered — provider unchanged."); return
+            save_cfg({"provider": "groq", "groq_api_key": k})
+            ok("Switched to Groq (free tier). Restart TuxGenie for it to take effect.")
+        elif p == "3":
             k = load_cfg().get("api_key", "").strip()
             if not k:
                 print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
@@ -8822,9 +9161,12 @@ def main():
         print(f"\n{_line}")
         print(f"  {YELLOW}{BOLD}⚠  No API key — AI features are disabled{R}")
         print(f"  {GREEN}✔  Terminal commands work fine without a key{R}")
-        _keyhint = ("free Google Gemini key · aistudio.google.com/apikey"
-                    if isinstance(backend, GeminiBackend)
-                    else "Anthropic key · console.anthropic.com")
+        if isinstance(backend, GeminiBackend):
+            _keyhint = "free Google Gemini key · aistudio.google.com/apikey"
+        elif isinstance(backend, OpenAICompatBackend):
+            _keyhint = f"free {backend._prov['label']} key · {backend._prov['keys_url']}"
+        else:
+            _keyhint = "Anthropic key · console.anthropic.com"
         print(f"  {DIM}Type {BOLD}k{R}{DIM} to add your {_keyhint} anytime{R}")
         print(f"{_line}")
 

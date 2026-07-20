@@ -808,6 +808,66 @@ class TestVersion:
         assert all(p.isdigit() for p in parts)
 
 
+class TestOpenAICompatBackend:
+    """Offline checks for the reusable OpenAI-compatible backend (Groq etc.)."""
+
+    def test_message_translation_system_and_text(self):
+        m = tg._oai_messages_from_anthropic("SYS", [{"role": "user", "content": "hi"}])
+        assert m[0] == {"role": "system", "content": "SYS"}
+        assert m[1] == {"role": "user", "content": "hi"}
+
+    def test_tool_use_and_result_roundtrip(self):
+        msgs = [
+            {"role": "user", "content": "do it"},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "ok"},
+                {"type": "tool_use", "id": "call_1", "name": "run", "input": {"cmd": "ls"}}]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "call_1", "content": "file1"}]},
+        ]
+        o = tg._oai_messages_from_anthropic("S", msgs)
+        assert [x["role"] for x in o] == ["system", "user", "assistant", "tool"]
+        assert o[2]["tool_calls"][0]["id"] == "call_1"
+        assert o[2]["tool_calls"][0]["function"]["name"] == "run"
+        assert o[3]["tool_call_id"] == "call_1" and o[3]["content"] == "file1"
+
+    def test_response_parse_text_and_toolcall(self):
+        b, stop = tg._oai_blocks_from_response(
+            {"choices": [{"message": {"content": "hello"}, "finish_reason": "stop"}]})
+        assert b[0].type == "text" and b[0].text == "hello" and stop == "end_turn"
+        b, stop = tg._oai_blocks_from_response({"choices": [{"message": {
+            "content": None, "tool_calls": [{"id": "c1", "function": {
+                "name": "run", "arguments": '{"cmd":"ls"}'}}]}, "finish_reason": "tool_calls"}]})
+        assert stop == "tool_use"
+        tu = [x for x in b if x.type == "tool_use"][0]
+        assert tu.name == "run" and tu.input == {"cmd": "ls"} and tu.id == "c1"
+
+    def test_tool_use_block_has_no_text_attr(self):
+        # Regression guard (same class of bug fixed for Gemini): tool_use blocks
+        # must not carry a .text attribute, or `hasattr(b,'text') and b.text.strip()` crashes.
+        b, _ = tg._oai_blocks_from_response({"choices": [{"message": {"content": None,
+            "tool_calls": [{"id": "c1", "function": {"name": "run", "arguments": "{}"}}]}}]})
+        tu = [x for x in b if x.type == "tool_use"][0]
+        assert not hasattr(tu, "text")
+
+    def test_malformed_tool_arguments_dont_crash(self):
+        b, _ = tg._oai_blocks_from_response({"choices": [{"message": {"content": None,
+            "tool_calls": [{"id": "c1", "function": {"name": "run", "arguments": "not json"}}]}}]})
+        tu = [x for x in b if x.type == "tool_use"][0]
+        assert tu.input == {}
+
+    def test_model_picker_prefers_versatile(self):
+        assert tg._oai_pick_model(
+            ["whisper-large-v3", "llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
+        ) == "llama-3.3-70b-versatile"
+
+    def test_backend_basics(self):
+        be = tg.OpenAICompatBackend(api_key=tg._NO_KEY, provider="groq")
+        assert "Groq" in be.label()
+        assert be.model == "llama-3.3-70b-versatile"
+        assert be._no_key and be.base_url == "https://api.groq.com/openai/v1"
+
+
 class TestKeyChangeRouting:
     """The `k` / Settings[1] key change must be provider-aware and must never
     store a key in the wrong provider's slot (regression: pasting a Gemini key
@@ -850,6 +910,22 @@ class TestKeyChangeRouting:
         assert not cfg.get("gemini_api_key")
         assert not cfg.get("api_key")
 
+    def test_groq_key_on_gemini_routes_to_groq(self, monkeypatch):
+        b = tg.GeminiBackend(api_key=tg._NO_KEY)
+        gkey = "gsk_" + "a" * 40
+        cfg = self._run_with_input(b, gkey, monkeypatch)
+        assert cfg.get("provider") == "groq"
+        assert cfg.get("groq_api_key") == gkey
+        assert cfg.get("gemini_api_key", "") != gkey
+
+    def test_groq_key_on_groq_saves_only_groq(self, monkeypatch):
+        b = tg.OpenAICompatBackend(api_key=tg._NO_KEY, provider="groq")
+        gkey = "gsk_" + "b" * 40
+        cfg = self._run_with_input(b, gkey, monkeypatch)
+        assert cfg.get("provider") == "groq"
+        assert cfg.get("groq_api_key") == gkey
+        assert cfg.get("backend") != "claude"
+
 
 class TestSetupWizardDefault:
     """Gemini must be the first/default choice; Claude second."""
@@ -868,8 +944,12 @@ class TestSetupWizardDefault:
         kind, key = self._wizard(["1", "AIza" + "z" * 35], monkeypatch)
         assert kind == "gemini"
 
-    def test_two_is_claude(self, monkeypatch):
-        kind, key = self._wizard(["2", "sk-ant-" + "a" * 70], monkeypatch)
+    def test_two_is_groq(self, monkeypatch):
+        kind, key = self._wizard(["2", "gsk_" + "a" * 40], monkeypatch)
+        assert kind == "groq"
+
+    def test_three_is_claude(self, monkeypatch):
+        kind, key = self._wizard(["3", "sk-ant-" + "a" * 70], monkeypatch)
         assert kind == "claude"
 
     def test_s_skips(self, monkeypatch):

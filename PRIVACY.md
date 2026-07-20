@@ -49,10 +49,12 @@ middle and keeps no copy off your machine.
 |----------|------|---------------|
 | **Claude (Anthropic)** | Free trial credit, then ~$0.01/session | Per Anthropic's API terms, API inputs/outputs are **not used to train their models**. Best choice for sensitive systems. |
 | **Google Gemini** | **Free tier, no credit card** | On the **free tier**, Google may use your prompts and the AI's responses **to improve their products**, and staff may review them. Great for everyday use; **prefer Claude (or a paid Gemini plan) for confidential machines.** |
+| **Groq** | **Free tier, no credit card** | Very fast (open Llama models). Check [Groq's terms](https://groq.com/terms-of-use/) for how free-tier data is handled; as with any free tier, **prefer Claude for confidential machines.** |
 
 Provider terms can change — always the current source of truth:
 [Anthropic Privacy](https://www.anthropic.com/legal/privacy) ·
-[Google Gemini API terms](https://ai.google.dev/gemini-api/terms).
+[Google Gemini API terms](https://ai.google.dev/gemini-api/terms) ·
+[Groq terms](https://groq.com/terms-of-use/).
 
 ## What stays on your machine
 
