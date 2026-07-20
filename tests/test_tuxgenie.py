@@ -765,6 +765,23 @@ class TestMenuIntegrity:
             if num in {n for n, *_ in tg.MENU_ITEMS}:
                 assert f"[{num}]" in plain, f"compact menu missing [{num}]"
 
+    def test_compact_footer_mentions_100(self):
+        import io, re, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            tg.show_menu(compact=True)
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+        assert "100" in plain, "compact menu should tell users to type 100 for the full menu"
+
+    def test_suggest_keyword_not_shadowed_by_feedback(self):
+        """'suggest' must reach feat_suggest_setup, not the feedback form."""
+        import os
+        src = open(os.path.join(self._ROOT, "tuxgenie.py")).read() if hasattr(self, "_ROOT") \
+            else open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "tuxgenie.py")).read()
+        # The feedback-alias dispatch line must no longer capture "suggest".
+        assert '("f", "feedback", "feature", "suggest")' not in src, \
+            "'suggest' must be removed from the feedback aliases so it reaches the setup chooser"
+
     def test_suggest_routes_to_matching_setup(self, monkeypatch):
         """The plain-language chooser must launch the mapped setup."""
         called = {}

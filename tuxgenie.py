@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.1.0"
+__version__ = "6.2.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8503,7 +8503,7 @@ def show_menu(compact=False):
         _row("🎁", "Catalogs",    [("77","Apps"),("88","Cloud"),("99","AI Tools")])
         print(f"\n  {DIM}{'─' * 65}{R}")
         print(f"  {C('[s]',GOLD,BOLD)} Settings · {C('[i]',LIME,BOLD)} Shell · {C('[u]',BCYAN,BOLD)} Update · {C('[h]',BMAGENTA,BOLD)} History · {C('[q]',BRED,BOLD)} Quit"
-              f"   {DIM}· type {BOLD}menu{R}{DIM} for full descriptions{R}")
+              f"   {DIM}· type {C('100',BOLD)}{DIM} (or {BOLD}menu{R}{DIM}) for the full detailed menu{R}")
         print(f"  {BGREEN}{BOLD}💡 Or just tell me what you need{R} — {BLUE}\"my wifi is not working\"{R}  {BLUE}\"install chrome\"{R}  {BLUE}\"why is it slow?\"{R}")
         return
 
@@ -8580,6 +8580,8 @@ def show_menu(compact=False):
   {BGREEN}{BOLD}💡 TIP:{R} {BOLD}You don't need to pick a number!{R}
      Just type what you need, like:
      {BLUE}\"my wifi is not working\"{R}   {BLUE}\"install chrome\"{R}   {BLUE}\"why is it slow?\"{R}
+
+  {DIM}Prefer the compact list? Type {BOLD}short{R}{DIM}.  ·  Show this full menu again: {BOLD}100{R}{DIM}.{R}
 """)
 
 # Last failed passthrough command — used by the !! fix shortcut
@@ -8849,13 +8851,15 @@ def main():
             show_help(); continue
         if choice.lower() in ("h", "history", "hist"):
             show_history(); continue
-        if choice.lower() == "menu":
-            show_menu(); continue
+        if choice.lower() in ("menu", "100", "full", "fullmenu"):
+            show_menu(); continue          # 100 = the full detailed menu
+        if choice.lower() in ("short", "compact"):
+            show_menu(compact=True); continue
         if choice.lower() in ("u", "update"):
             feat_self_update(); continue
         if choice.lower() in ("k", "key", "apikey", "addkey", "setkey", "connect"):
             feat_set_api_key(backend); continue
-        if choice.lower() in ("f", "feedback", "feature", "suggest"):
+        if choice.lower() in ("f", "feedback", "feature"):
             feat_feedback(); continue
         if choice.lower() in ("share-fix", "sharefix", "share"):
             feat_share_fix(); continue
