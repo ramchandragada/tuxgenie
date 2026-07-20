@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.3.0"
+__version__ = "6.4.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1145,7 +1145,7 @@ class OpenAICompatBackend:
             f"{self.base_url}/chat/completions",
             data=json.dumps(body).encode("utf-8"), method="POST",
             headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {self.api_key}"})
+                     "Authorization": f"Bearer {(self.api_key or '').strip()}"})
         try:
             with urllib.request.urlopen(req, timeout=180) as r:
                 return json.loads(r.read().decode("utf-8"))
@@ -1167,7 +1167,14 @@ class OpenAICompatBackend:
             if model_gone:
                 raise RuntimeError(f"{self._prov['label']} model unavailable and no alternative found. {detail}")
             if e.code in (401, 403):
-                raise RuntimeError(f"{self._prov['label']} API key rejected — check it at {self._prov['keys_url']}. {detail}")
+                lbl = self._prov["label"]
+                k = (self.api_key or "").strip()
+                if not k:
+                    raise RuntimeError(f"No {lbl} API key is set. Press 'k' to add one — free at {self._prov['keys_url']}.")
+                why = (f"{lbl} rejected the API key (HTTP {e.code}). This usually means the key is "
+                       f"mistyped, incomplete (it's only shown once when created), or was revoked.\n"
+                       f"  Fix: create a fresh key at {self._prov['keys_url']}, then press 'k' and paste it.")
+                raise RuntimeError(why + (f"\n  ({lbl} said: {detail})" if detail else ""))
             if e.code == 429:
                 raise RuntimeError(f"{self._prov['label']} rate limit hit — wait a moment and retry. {detail}")
             raise RuntimeError(f"{self._prov['label']} API error {e.code}: {detail or e}")
