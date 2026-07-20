@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.4.0"
+__version__ = "6.5.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1121,9 +1121,17 @@ class OpenAICompatBackend:
         return (f"{self._prov['label']} {tag}  "
                 f"(session: ~{self._session_input_tokens:,} in + ~{self._session_output_tokens:,} out tokens)")
 
+    def _headers(self):
+        # A real User-Agent matters: some providers sit behind a WAF (Cloudflare)
+        # that returns 403 to the default 'Python-urllib' agent. Also send an
+        # explicit Accept so intermediaries don't guess.
+        return {"Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": f"TuxGenie/{__version__} (+https://github.com/{_GITHUB_REPO})",
+                "Authorization": f"Bearer {(self.api_key or '').strip()}"}
+
     def _list_models(self):
-        req = urllib.request.Request(f"{self.base_url}/models",
-                                     headers={"Authorization": f"Bearer {self.api_key}"})
+        req = urllib.request.Request(f"{self.base_url}/models", headers=self._headers())
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.loads(r.read().decode("utf-8"))
         return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
@@ -1144,39 +1152,51 @@ class OpenAICompatBackend:
         req = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(body).encode("utf-8"), method="POST",
-            headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {(self.api_key or '').strip()}"})
+            headers=self._headers())
         try:
             with urllib.request.urlopen(req, timeout=180) as r:
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
-            detail = ""
+            lbl = self._prov["label"]; keys_url = self._prov["keys_url"]
+            # Read the body ONCE, then extract the provider's message (or keep raw).
+            raw = ""
             try:
-                detail = json.loads(e.read().decode()).get("error", {}).get("message", "")
+                raw = e.read().decode("utf-8", "replace")
             except Exception:
                 pass
+            detail = ""
+            if raw:
+                try:
+                    detail = ((json.loads(raw).get("error") or {}) or {}).get("message", "") or ""
+                except Exception:
+                    detail = ""
+                if not detail:
+                    detail = raw.strip()[:300]
             model_gone = (e.code == 404 or "decommission" in detail.lower()
                           or (e.code == 400 and "model" in detail.lower()))
             if model_gone and _retry:
                 alt = self._resolve_model()
                 if alt and alt != self.model:
-                    print(f"\r  {DIM}{self._prov['label']} model updated to {alt} (previous one was retired).{R}")
+                    print(f"\r  {DIM}{lbl} model updated to {alt} (previous one was retired).{R}")
                     self.model = alt; self.base_model = alt
                     save_cfg({self._prov["model_key"]: alt})
                     return self._gen(system_text, messages, tools, max_tokens, _retry=False)
             if model_gone:
-                raise RuntimeError(f"{self._prov['label']} model unavailable and no alternative found. {detail}")
-            if e.code in (401, 403):
-                lbl = self._prov["label"]
-                k = (self.api_key or "").strip()
-                if not k:
-                    raise RuntimeError(f"No {lbl} API key is set. Press 'k' to add one — free at {self._prov['keys_url']}.")
-                why = (f"{lbl} rejected the API key (HTTP {e.code}). This usually means the key is "
-                       f"mistyped, incomplete (it's only shown once when created), or was revoked.\n"
-                       f"  Fix: create a fresh key at {self._prov['keys_url']}, then press 'k' and paste it.")
-                raise RuntimeError(why + (f"\n  ({lbl} said: {detail})" if detail else ""))
+                raise RuntimeError(f"{lbl} model unavailable and no alternative found. {detail}")
+            if e.code == 401:
+                if not (self.api_key or "").strip():
+                    raise RuntimeError(f"No {lbl} API key is set. Press 'k' to add one — free at {keys_url}.")
+                raise RuntimeError(f"{lbl} rejected the API key (HTTP 401 — invalid or revoked). "
+                                   f"Create a fresh key at {keys_url}, then press 'k' and paste it."
+                                   + (f"\n  ({lbl} said: {detail})" if detail else ""))
+            if e.code == 403:
+                raise RuntimeError(
+                    f"{lbl} refused the request (HTTP 403 — forbidden). The key may be valid but the "
+                    f"account can't use this model yet. Common fixes: verify your {lbl} account email, "
+                    f"accept any pending terms in the {lbl} console, or switch provider (Settings → 8)."
+                    + (f"\n  ({lbl} said: {detail})" if detail else "\n  (Server returned no reason.)"))
             if e.code == 429:
-                raise RuntimeError(f"{self._prov['label']} rate limit hit — wait a moment and retry. {detail}")
+                raise RuntimeError(f"{lbl} rate limit hit — wait a moment and retry. {detail}")
             raise RuntimeError(f"{self._prov['label']} API error {e.code}: {detail or e}")
 
     def _prompt_for_key(self):
