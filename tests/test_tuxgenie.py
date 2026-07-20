@@ -373,6 +373,20 @@ class TestGeminiBackend:
             if hasattr(b, "text") and b.text.strip():
                 pass  # must not raise
 
+    def test_thought_signature_round_trips(self):
+        # Gemini 3.x: a functionCall's thoughtSignature must be captured on parse
+        # and echoed back on the next request, or tools fail with a 400.
+        resp = {"candidates": [{"content": {"parts": [
+            {"functionCall": {"name": "run_command", "args": {"command": "ls"}},
+             "thoughtSignature": "SIG-ABC"}]}}]}
+        blocks, _ = tg._gem_blocks_from_response(resp)
+        assert blocks[0].thought_signature == "SIG-ABC"
+        # replay: that block, sent back as an assistant turn, must carry the sig
+        contents = tg._gem_contents_from_anthropic([{"role": "assistant", "content": blocks}])
+        part = contents[0]["parts"][0]
+        assert part["functionCall"]["name"] == "run_command"
+        assert part["thoughtSignature"] == "SIG-ABC"
+
     def test_response_parsing(self):
         # text response → end_turn
         blocks, stop = tg._gem_blocks_from_response(

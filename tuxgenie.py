@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.90.0"
+__version__ = "5.91.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -618,8 +618,11 @@ class _GBlock:
     .name/.input/.id. (Setting .text=None on tool_use blocks made engine code
     like `hasattr(b,'text') and b.text.strip()` crash — the SDK's tool_use
     blocks have no .text attribute at all.)"""
-    def __init__(self, type, text=None, name=None, input=None, id=None):
+    def __init__(self, type, text=None, name=None, input=None, id=None, thought_signature=None):
         self.type = type
+        # Gemini 3.x returns an opaque 'thoughtSignature' on parts that MUST be
+        # echoed back on the next turn or function calling fails with a 400.
+        self.thought_signature = thought_signature
         if type == "text":
             self.text = "" if text is None else text
         else:
@@ -713,10 +716,18 @@ def _gem_contents_from_anthropic(messages):
                 if typ == "text":
                     txt = _gem_bget(b, "text", "")
                     if txt:
-                        parts.append({"text": txt})
+                        part = {"text": txt}
+                        sig = _gem_bget(b, "thought_signature")
+                        if sig:
+                            part["thoughtSignature"] = sig
+                        parts.append(part)
                 elif typ == "tool_use":
-                    parts.append({"functionCall": {"name": _gem_bget(b, "name"),
-                                                   "args": _gem_bget(b, "input") or {}}})
+                    part = {"functionCall": {"name": _gem_bget(b, "name"),
+                                             "args": _gem_bget(b, "input") or {}}}
+                    sig = _gem_bget(b, "thought_signature")
+                    if sig:                       # Gemini 3.x requires echoing this back
+                        part["thoughtSignature"] = sig
+                    parts.append(part)
                 elif typ == "tool_result":
                     resc = _gem_bget(b, "content", "")
                     if isinstance(resc, list):
@@ -736,13 +747,15 @@ def _gem_blocks_from_response(data):
     parts = (cand.get("content") or {}).get("parts") or []
     blocks = []; has_call = False; idx = 0
     for p in parts:
+        sig = p.get("thoughtSignature")
         if p.get("text"):
-            blocks.append(_GBlock("text", text=p["text"]))
+            blocks.append(_GBlock("text", text=p["text"], thought_signature=sig))
         elif "functionCall" in p:
             has_call = True; idx += 1
             fc = p["functionCall"]
             blocks.append(_GBlock("tool_use", name=fc.get("name"),
-                                  input=fc.get("args") or {}, id=f"gemcall_{idx}"))
+                                  input=fc.get("args") or {}, id=f"gemcall_{idx}",
+                                  thought_signature=sig))
     fr = cand.get("finishReason", "")
     stop = "tool_use" if has_call else ("max_tokens" if fr == "MAX_TOKENS" else "end_turn")
     if not blocks:
