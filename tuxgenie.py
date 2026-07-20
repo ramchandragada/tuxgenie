@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.98.0"
+__version__ = "5.99.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5502,6 +5502,102 @@ Additional instructions for ACCESSIBILITY SETUP mode:
 """ + _sys_ctx_block(ctx)
     fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
 
+# ── FEATURE 40: Dev Environments / Stacks ────────────────────────────────────
+# Each entry: (key, plain-language label, default request text for the AI).
+_DEV_ENVS = [
+    ("lamp",      "LAMP / LEMP — web server + database + PHP",
+     "Set up a complete LAMP or LEMP stack (Apache or Nginx + MySQL/MariaDB + PHP with the common extensions) for PHP web apps like WordPress, Magento, Laravel or Drupal."),
+    ("node",      "Node.js web — JavaScript web apps",
+     "Set up a Node.js web development environment (Node.js LTS + npm), and offer a database such as PostgreSQL or MongoDB."),
+    ("python",    "Python web — Django / Flask + PostgreSQL",
+     "Set up a Python web development environment: Python 3 + venv + Django or Flask + PostgreSQL."),
+    ("rails",     "Ruby on Rails",
+     "Set up a Ruby on Rails development environment: Ruby + Rails + a database (PostgreSQL by default)."),
+    ("db",        "Databases — install & secure one",
+     "Install and secure a database server the user chooses (MySQL/MariaDB, PostgreSQL, MongoDB or Redis), then create a starter database and a dedicated user."),
+    ("wordpress", "WordPress — a local site to build/test",
+     "Set up a working local WordPress site (LAMP/LEMP + WordPress + WP-CLI), create its database and user, and give the user the local address to open."),
+    ("custom",    "Describe what you need",
+     None),
+]
+
+def feat_dev_environments(backend, bctx, slog):
+    """Guided setup of complete development stacks (LAMP, Node, Python, DBs…) —
+    installs, configures, secures and verifies, on the PC or in containers."""
+    hdr("Dev Environments — set up a ready-to-use stack")
+    print(f"  {DIM}Pick what you want to run. TuxGenie installs and wires it all up —")
+    print(f"  {DIM}server, database, language and config — then gives you the address to open.{R}\n")
+    for i, (k, label, _) in enumerate(_DEV_ENVS, 1):
+        print(f"  {C(f'[{i}]', CYAN, BOLD)} {label}")
+    print(f"  {C('[q]', DIM)} Back to menu")
+    try:
+        ch = input(f"\n  {BOLD}Which environment? [1-{len(_DEV_ENVS)}]:{R} ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(ch):
+        return
+    try:
+        idx = int(ch) - 1
+        if not (0 <= idx < len(_DEV_ENVS)):
+            raise ValueError
+    except ValueError:
+        warn("Just type the number next to the environment you want.")
+        return
+    key, label, req = _DEV_ENVS[idx]
+    if key == "custom":
+        try:
+            req = input(f"\n  {BOLD}Describe the environment you need:{R}\n"
+                        f"  {C('(e.g. the environment to run Magento, a MERN stack, PostgreSQL + Redis)',DIM)}\n  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if _is_back(req) or not req:
+            return
+
+    print(f"\n  {BOLD}How should I set it up?{R}")
+    print(f"  {C('[1]', CYAN, BOLD)} Directly on this PC  {DIM}(what most tutorials assume){R}")
+    print(f"  {C('[2]', CYAN)} Isolated & easy to remove  {DIM}(runs in Docker — clean, delete anytime){R}")
+    try:
+        m = input(f"  {BOLD}Choose [1/2] (Enter = 1):{R} ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    method = "docker" if m == "2" else "native"
+
+    with Spinner("Checking what's already installed…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "apache":   "command -v apache2 >/dev/null && echo apache2; command -v httpd >/dev/null && echo httpd",
+            "nginx":    "command -v nginx >/dev/null && echo nginx",
+            "php":      "php -v 2>/dev/null | head -1",
+            "composer": "command -v composer >/dev/null && echo composer",
+            "mysql":    "command -v mysqld >/dev/null && echo mysqld; command -v mariadbd >/dev/null && echo mariadbd; command -v mysql >/dev/null && echo mysql-client",
+            "postgres": "command -v psql >/dev/null && echo postgres",
+            "mongo":    "command -v mongod >/dev/null && echo mongod",
+            "redis":    "command -v redis-server >/dev/null && echo redis",
+            "node":     "node --version 2>/dev/null; npm --version 2>/dev/null",
+            "python":   "python3 --version 2>/dev/null",
+            "ruby":     "ruby --version 2>/dev/null",
+            "docker":   "command -v docker >/dev/null && (docker --version; groups | grep -qw docker && echo 'in docker group' || echo 'NOT in docker group') || echo 'no docker'",
+            "compose":  "docker compose version 2>/dev/null || echo 'no compose'",
+        })}
+
+    method_note = ("""
+- INSTALL METHOD: DIRECTLY ON THE PC (native). Install the services with the distro package manager, enable/start them via systemd, and configure them on the host. This matches most online tutorials.
+""" if method == "native" else """
+- INSTALL METHOD: ISOLATED CONTAINERS (Docker). Do NOT install the services on the host. If Docker is missing, install Docker Engine + the compose plugin first (and add the user to the docker group, noting the log-out/in). Then create a small docker-compose.yml in a project folder in the user's home directory and start it with 'docker compose up -d'. Tell the user how to stop/remove it later with 'docker compose down'. This keeps their PC clean.
+""")
+    sys_p = BASE_SYS + """
+Additional instructions for DEV ENVIRONMENT / STACK SETUP mode:
+- Goal: leave the user with a WORKING, ready-to-use environment — installed, configured, secured and verified — not just packages. This is the multi-step task that normally takes beginners days; do it carefully and explain each step in plain language.
+- Detect from the context what's already installed and reuse it; do not reinstall what's already present.
+- Databases: after installing, SECURE the server (set/confirm the admin password, remove test/anonymous access), then create a starter database and a dedicated user. Clearly show the user the database name, username and password you set.
+- Web stacks (LAMP/LEMP): install the web server + PHP (with the extensions apps commonly need) + MySQL/MariaDB; enable the right modules (Apache mod_php, or PHP-FPM with Nginx); create a small test page (phpinfo) so the user can confirm it works. Offer phpMyAdmin if they'd like a database GUI.
+- Known apps (WordPress, Magento, etc.): set up the underlying stack, create the app's database + user, and list the app's specific needs (e.g. Magento needs particular PHP extensions, Composer, and a search engine like OpenSearch). Install what you can and clearly list any steps that remain manual.
+- At the END, summarise plainly: what was installed, the local address to open (e.g. http://localhost), any usernames/passwords you created, and how to start/stop it. NEVER invent credentials silently — always show them to the user.
+- SECURITY: bind databases to localhost by default; do NOT expose services to the internet or open firewall ports. Warn clearly if the user asks to.
+""" + method_note + _sys_ctx_block(ctx)
+
+    user_msg = f"{req}\n\n(Install method requested: {'directly on this PC' if method == 'native' else 'isolated Docker containers'}.)"
+    fix_engine(backend, sys_p, [{"role":"user","content":user_msg}], slog)
+
 # ── FEATURE 39: Suggest a Setup (plain-language chooser) ─────────────────────
 def feat_suggest_setup(backend, bctx, slog):
     """Not sure which guided setup you need? Answer one plain question and
@@ -5512,6 +5608,7 @@ def feat_suggest_setup(backend, bctx, slog):
         ("I just switched from Windows or Mac",       feat_newbie_setup),
         ("Everyday use — web, email, documents",      feat_newbie_setup),
         ("Coding / software development",             feat_dev_setup),
+        ("Set up a web / dev environment (LAMP, Node, database…)", feat_dev_environments),
         ("Gaming",                                    feat_gaming_setup),
         ("Videos, streaming or making content",       feat_creator_setup),
         ("Studying — school, college, exams",         feat_student_setup),
@@ -8360,6 +8457,7 @@ MENU_ITEMS = [
     ("37", "homelab",   "Homelab Setup",      "Docker, Portainer, Tailscale, Syncthing, backups",    feat_homelab_setup),
     ("38", "access",    "Accessibility",      "Screen reader, magnifier, on-screen keyboard, contrast", feat_accessibility_setup),
     ("39", "suggest",   "Suggest a Setup",    "Not sure? Answer one question, get the right setup",  feat_suggest_setup),
+    ("40", "env",       "Dev Environments",   "Ready-to-run stacks: LAMP/LEMP, Node, Python, DBs, WordPress", feat_dev_environments),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
     ("77", "apps",      "Install Apps",       "128-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
@@ -8444,6 +8542,7 @@ def show_menu():
     _item("36", "Student Setup",       "Notes, citations, flashcards, office — free study tools")
     _item("37", "Homelab Setup",       "Docker, Portainer, Tailscale, Syncthing, backups")
     _item("38", "Accessibility",       "Screen reader, magnifier, on-screen keyboard, contrast")
+    _item("40", "Dev Environments",    "Ready-to-run stacks: LAMP/LEMP, Node, Python, databases, WordPress")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
     _item("77", "Install Apps",        "🎁 128 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")

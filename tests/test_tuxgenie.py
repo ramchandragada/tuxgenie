@@ -742,6 +742,7 @@ class TestMenuIntegrity:
             "37": ("homelab",   "feat_homelab_setup"),
             "38": ("access",    "feat_accessibility_setup"),
             "39": ("suggest",   "feat_suggest_setup"),
+            "40": ("env",       "feat_dev_environments"),
         }
         for num, (kw, fnname) in expected.items():
             assert num in by_num, f"menu number {num} missing"

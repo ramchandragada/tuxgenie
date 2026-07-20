@@ -182,6 +182,7 @@ You never *have* to pick a number — just type what you need in plain English. 
 | 37 | **Homelab Setup** | Self-hosting stack: Docker + Portainer, Tailscale, Syncthing, Samba/NFS, monitoring, scheduled backups |
 | 38 | **Accessibility** | Screen reader (Orca), magnifier, on-screen keyboard, high contrast, larger text — guided per desktop |
 | 39 | **Suggest a Setup** | Not sure? Answer one plain-English question → TuxGenie opens the right setup for you |
+| 40 | **Dev Environments** | Ready-to-run stacks — LAMP/LEMP, Node.js, Python/Django, Rails, databases, local WordPress — installed, secured & verified, on your PC or in containers. Or just *describe* what you need (e.g. "run Magento"). |
 
 **🎁 One-tap catalogs**
 
