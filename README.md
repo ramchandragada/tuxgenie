@@ -99,6 +99,11 @@ tuxgenie
 Switch providers anytime from **Settings → Switch AI provider**. Terminal
 commands (apt, systemctl, …) run without any key — always free.
 
+**Auto-switch on limits:** if you add keys for *both* free providers (Gemini
+and Groq), TuxGenie automatically falls back from one to the other when a free
+tier hits its rate limit — so a task never stalls. It never auto-switches to
+paid Claude (no surprise charges). Toggle it in **Settings → Auto-switch on limits**.
+
 ---
 
 ## Features

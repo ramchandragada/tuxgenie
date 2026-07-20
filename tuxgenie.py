@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.9.0"
+__version__ = "6.10.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1412,6 +1412,55 @@ def _make_backend(cfg, provider, key):
     return b
 
 
+# ── Automatic provider failover (free → free only, never Claude) ─────────────
+def _provider_name(backend) -> str:
+    if isinstance(backend, GeminiBackend):
+        return "gemini"
+    if isinstance(backend, OpenAICompatBackend):
+        return getattr(backend, "provider", "groq")
+    return "claude"
+
+
+def _is_transient_ai_error(exc) -> bool:
+    """True for capacity/outage errors worth failing over on (NOT auth/config)."""
+    m = str(exc).lower()
+    signals = ("limit reached", "rate limit", "429", "quota", "exhausted",
+               "overloaded", "unavailable", "503", "502", "500", "timeout",
+               "timed out", "temporarily")
+    return any(s in m for s in signals)
+
+
+def _failover_backend(current):
+    """Return a fresh backend for the next FREE provider that has a saved key
+    (Gemini ↔ Groq), or None. Never returns Claude — auto-switch must never
+    silently incur cost. Honours the 'auto_switch_providers' setting."""
+    cfg = load_cfg()
+    if not cfg.get("auto_switch_providers", True):
+        return None
+    cur = _provider_name(current)
+    candidates = []
+    if cur != "gemini":
+        gk = (os.environ.get("GEMINI_API_KEY", "").strip()
+              or os.environ.get("GOOGLE_API_KEY", "").strip()
+              or cfg.get("gemini_api_key", "").strip())
+        if gk:
+            candidates.append(("gemini", gk))
+    if cur != "groq":
+        qk = (os.environ.get("GROQ_API_KEY", "").strip()
+              or cfg.get("groq_api_key", "").strip())
+        if qk:
+            candidates.append(("groq", qk))
+    for prov, key in candidates:
+        try:
+            nb = _make_backend(cfg, prov, key)
+            nb.expert_mode = getattr(current, "expert_mode", False)
+            nb.auto_approve = getattr(current, "auto_approve", False)
+            return nb
+        except Exception:
+            continue
+    return None
+
+
 def load_backend():
     """Load config and return the configured backend. Defaults to Claude and is
     fully back-compatible: existing installs (api_key set, no 'provider') load
@@ -1563,6 +1612,9 @@ def feat_settings(backend, bctx, slog):
     print(f"  {DIM}Expert mode (compact output):{R}{expert_tag}")
     print(f"  {DIM}Cross-session memory:{R}{history_tag}")
     print(f"  {DIM}Auto-approve AI commands (skip per-step confirm):{R}{approve_tag}")
+    failover_on = cfg.get("auto_switch_providers", True)
+    failover_tag = C(" ON", GREEN) if failover_on else C(" OFF", YELLOW)
+    print(f"  {DIM}Auto-switch AI on limits (free → free):{R}{failover_tag}")
     if backend._session_input_tokens > 0:
         print(f"  {DIM}{backend.session_cost_estimate()}{R}")
     print(f"\n  {C('[1]',CYAN)} Change API key")
@@ -1573,6 +1625,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
     print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq — both free · or Claude){R}")
+    print(f"  {C('[9]',CYAN)} Toggle auto-switch on limits  {DIM}(fall back between free providers — never Claude){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -1712,6 +1765,14 @@ def feat_settings(backend, bctx, slog):
             ok("Switched to Claude. Restart TuxGenie for it to take effect.")
         else:
             info("Provider unchanged.")
+    elif ch == "9":
+        new_state = not load_cfg().get("auto_switch_providers", True)
+        save_cfg({"auto_switch_providers": new_state})
+        if new_state:
+            ok("Auto-switch ON — if a free provider hits its limit, TuxGenie falls back to your other free provider automatically (never Claude, so it never costs you).")
+            info("Needs a key saved for a second free provider (Gemini and/or Groq).")
+        else:
+            ok("Auto-switch OFF — TuxGenie stays on your chosen provider and shows the limit message instead.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 3 — SYSTEM CONTEXT COLLECTORS
@@ -2469,6 +2530,14 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 return
             except Exception as e:
                 print(" " * 40, end="\r")
+                # Auto-switch to another FREE provider on a limit/outage (never Claude),
+                # then retry this same turn — the conversation so far is unchanged.
+                nb = _failover_backend(backend) if _is_transient_ai_error(e) else None
+                if nb is not None:
+                    warn(f"{_provider_name(backend).title()} unavailable — switching to {nb.label()} and continuing…")
+                    backend = nb
+                    _is_anthropic = False
+                    continue
                 if _is_anthropic:
                     kind, msg = _classify_anthropic_error(e)
                     if kind == "billing":
@@ -4215,11 +4284,22 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         try:
             raw = ask_ai(backend, system, messages, max_tokens=out_tokens)
         except RuntimeError as e:
-            # Backends raise clear, provider-specific messages (with fix steps) —
-            # show them verbatim rather than a generic guess.
-            msg = str(e)
-            (warn if "429" in msg else err)(msg[:400])
-            return
+            # Auto-switch to another FREE provider on a limit/outage (never Claude).
+            nb = _failover_backend(backend) if _is_transient_ai_error(e) else None
+            if nb is not None:
+                warn(f"{_provider_name(backend).title()} unavailable — switching to {nb.label()} and retrying…")
+                backend = nb
+                out_tokens = 3072 if "haiku" in backend.model else 4096
+                try:
+                    raw = ask_ai(backend, system, messages, max_tokens=out_tokens)
+                except Exception as e2:
+                    err(str(e2)[:400]); return
+            else:
+                # Backends raise clear, provider-specific messages (with fix steps) —
+                # show them verbatim rather than a generic guess.
+                msg = str(e)
+                (warn if "429" in msg else err)(msg[:400])
+                return
         except (urllib.error.URLError, OSError) as e:
             eno = getattr(e, "errno", None)
             if eno == 11:

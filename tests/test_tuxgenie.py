@@ -1100,6 +1100,47 @@ class TestCatalogPage:
                 assert esc(name) in doc, f"catalog page missing feature {name}"
 
 
+class TestProviderFailover:
+    """Auto-switch on limits/outages: free → free only, never Claude, toggleable."""
+
+    def setup_method(self):
+        self._orig = tg.CFG_FILE
+        self._dir = tempfile.mkdtemp()
+        tg.CFG_FILE = os.path.join(self._dir, "config.json")
+
+    def teardown_method(self):
+        tg.CFG_FILE = self._orig
+
+    def test_transient_error_classification(self):
+        assert tg._is_transient_ai_error(RuntimeError("Groq limit reached (HTTP 429)."))
+        assert tg._is_transient_ai_error(RuntimeError("service unavailable 503"))
+        assert not tg._is_transient_ai_error(RuntimeError("API key rejected (HTTP 401)"))
+
+    def test_groq_fails_over_to_gemini(self):
+        tg.save_cfg({"groq_api_key": "gsk_" + "x" * 40, "gemini_api_key": "AIza" + "y" * 35})
+        nb = tg._failover_backend(tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq"))
+        assert nb is not None and tg._provider_name(nb) == "gemini"
+
+    def test_gemini_fails_over_to_groq(self):
+        tg.save_cfg({"groq_api_key": "gsk_" + "x" * 40, "gemini_api_key": "AIza" + "y" * 35})
+        nb = tg._failover_backend(tg.GeminiBackend(api_key="AIza" + "y" * 35))
+        assert nb is not None and tg._provider_name(nb) == "groq"
+
+    def test_never_falls_back_to_claude(self):
+        # Only a Claude key present → no free target → must NOT switch.
+        tg.save_cfg({"api_key": "sk-ant-" + "a" * 70})
+        assert tg._failover_backend(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
+
+    def test_single_free_key_has_no_target(self):
+        tg.save_cfg({"groq_api_key": "gsk_" + "x" * 40})
+        assert tg._failover_backend(tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq")) is None
+
+    def test_toggle_off_disables_failover(self):
+        tg.save_cfg({"auto_switch_providers": False,
+                     "groq_api_key": "gsk_" + "x" * 40, "gemini_api_key": "AIza" + "y" * 35})
+        assert tg._failover_backend(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
+
+
 class TestTransparency:
     """Lock in the 100%-transparency promises so they can't silently regress."""
 
