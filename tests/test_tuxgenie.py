@@ -860,6 +860,35 @@ class TestSetupWizardDefault:
         assert kind == "skip"
 
 
+class TestCatalogPage:
+    """The generated website catalog must cover every app, AI tool, cloud
+    provider and numbered feature — and stay searchable."""
+
+    def _doc(self):
+        import html as _h
+        import build_catalog
+        return build_catalog.build(), _h.escape
+
+    def test_has_search_box(self):
+        doc, _ = self._doc()
+        assert 'id="q"' in doc
+
+    def test_covers_all_apps_and_ai_and_cloud(self):
+        doc, esc = self._doc()
+        for a in tg.APP_CATALOG:
+            assert esc(a["name"]) in doc, f"catalog page missing app {a['name']}"
+        for a in tg.AI_CATALOG:
+            assert esc(a["name"]) in doc, f"catalog page missing AI tool {a['name']}"
+        for c in tg.CLOUD_PROVIDERS:
+            assert esc(c["name"]) in doc, f"catalog page missing cloud {c['name']}"
+
+    def test_covers_numbered_features(self):
+        doc, esc = self._doc()
+        for num, kw, name, desc, fn in tg.MENU_ITEMS:
+            if str(num).isdigit():
+                assert esc(name) in doc, f"catalog page missing feature {name}"
+
+
 class TestTransparency:
     """Lock in the 100%-transparency promises so they can't silently regress."""
 
