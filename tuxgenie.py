@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.93.0"
+__version__ = "5.94.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1050,11 +1050,22 @@ AVAILABLE_MODELS = [
 ]
 
 def feat_set_api_key(backend):
-    """Add or change the Anthropic API key — command: k"""
-    hdr("Claude API Key")
-    info(f"Current: {backend.label()}")
-    print(f"\n  Get your key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
-    print(f"  {DIM}Sign-up is free. Anthropic charges by usage (a few cents/session).{R}\n")
+    """Add or change the API key for the CURRENT AI provider — command: k.
+    Provider-aware: if you're on Gemini this sets the Gemini key, if on Claude
+    the Claude key. If you paste a key that clearly belongs to the *other*
+    provider, it's routed there and the provider is switched — never stored in
+    the wrong slot."""
+    is_gemini = isinstance(backend, GeminiBackend)
+    if is_gemini:
+        hdr("Google Gemini API Key")
+        info(f"Current: {backend.label()}")
+        print(f"\n  Get a free key at: {CYAN}{BOLD}https://aistudio.google.com/apikey{R}")
+        print(f"  {DIM}Gemini's free tier needs no credit card.{R}\n")
+    else:
+        hdr("Claude API Key")
+        info(f"Current: {backend.label()}")
+        print(f"\n  Get your key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
+        print(f"  {DIM}Sign-up is free. Anthropic charges by usage (a few cents/session).{R}\n")
     try:
         key = input("  Paste API key (or press Enter to cancel): ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -1062,19 +1073,46 @@ def feat_set_api_key(backend):
     if not key:
         warn("No key entered. Nothing changed.")
         return
-    if not re.match(r'^sk-ant-[a-zA-Z0-9_\-]{60,}$', key):
-        warn("That doesn't look like a valid Anthropic API key.")
-        info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
-        try:
-            confirm = input("  Save it anyway? [y/n]: ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            confirm = "n"
-        if confirm not in ("y", "yes"):
-            warn("Key not saved.")
-            return
-    save_cfg({"backend": "claude", "api_key": key})
-    backend._set_key(key)
-    ok("Claude key saved.")
+
+    looks_anthropic = bool(re.match(r'^sk-ant-[a-zA-Z0-9_\-]{60,}$', key))
+    looks_gemini    = bool(re.match(r'^AIza[0-9A-Za-z_\-]{30,}$', key))
+
+    # Pasted a key for the OTHER provider? Route it correctly and switch,
+    # rather than corrupting the current provider's slot.
+    if looks_gemini and not is_gemini:
+        save_cfg({"provider": "gemini", "gemini_api_key": key})
+        ok("That's a Google Gemini key — saved and switched to Gemini (free tier).")
+        info("Restart TuxGenie for the switch to take effect.")
+        return
+    if looks_anthropic and is_gemini:
+        save_cfg({"provider": "claude", "backend": "claude", "api_key": key})
+        ok("That's an Anthropic key — saved and switched to Claude.")
+        info("Restart TuxGenie for the switch to take effect.")
+        return
+
+    # Otherwise treat the key as belonging to the current provider.
+    if is_gemini:
+        if not looks_gemini:
+            warn("That doesn't look like a Google Gemini key (they start with AIza…).")
+            try:
+                confirm = input("  Save it anyway? [y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                confirm = "n"
+            if confirm not in ("y", "yes"):
+                warn("Key not saved."); return
+        backend._set_key(key)   # saves provider=gemini + prints its own confirmation
+    else:
+        if not looks_anthropic:
+            warn("That doesn't look like a valid Anthropic API key.")
+            info("Keys start with  sk-ant-api03-…  and are ~100 characters long.")
+            try:
+                confirm = input("  Save it anyway? [y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                confirm = "n"
+            if confirm not in ("y", "yes"):
+                warn("Key not saved."); return
+        save_cfg({"backend": "claude", "provider": "claude", "api_key": key})
+        backend._set_key(key)   # re-inits the Anthropic client + prints confirmation
 
 def feat_settings(backend, bctx, slog):
     """Settings: view/change API key and model."""
@@ -1106,21 +1144,9 @@ def feat_settings(backend, bctx, slog):
     except (EOFError, KeyboardInterrupt):
         return
     if ch == "1":
-        try:
-            key = input("  Paste new Anthropic API key: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            return
-        if key:
-            if not re.match(r'^sk-ant-[a-zA-Z0-9_\-]{60,}$', key):
-                warn("That doesn't look like a valid Anthropic key (should start with sk-ant-…).")
-                try:
-                    confirm = input("  Save anyway? [y/n]: ").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    confirm = "n"
-                if confirm not in ("y", "yes"):
-                    warn("Key not saved."); return
-            backend._set_key(key)
-            ok("API key updated — active now.")
+        # Provider-aware: sets the key for whichever AI you're on, and routes a
+        # wrong-provider key to the right place instead of corrupting config.
+        feat_set_api_key(backend)
     elif ch == "2":
         if isinstance(backend, GeminiBackend):
             info("Model selection applies to Claude. You're on Google Gemini (single free model).")

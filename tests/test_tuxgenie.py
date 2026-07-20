@@ -748,6 +748,49 @@ class TestVersion:
         assert all(p.isdigit() for p in parts)
 
 
+class TestKeyChangeRouting:
+    """The `k` / Settings[1] key change must be provider-aware and must never
+    store a key in the wrong provider's slot (regression: pasting a Gemini key
+    while on Gemini used to also write backend=claude + api_key=<gemini key>)."""
+
+    def setup_method(self):
+        self._orig_cfg = tg.CFG_FILE
+        self._tmpdir = tempfile.mkdtemp()
+        tg.CFG_FILE = os.path.join(self._tmpdir, "config.json")
+
+    def teardown_method(self):
+        tg.CFG_FILE = self._orig_cfg
+
+    def _run_with_input(self, backend, value, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda *a, **k: value)
+        tg.feat_set_api_key(backend)
+        return tg.load_cfg()
+
+    def test_gemini_key_on_gemini_saves_only_gemini(self, monkeypatch):
+        b = tg.GeminiBackend(api_key=tg._NO_KEY)
+        cfg = self._run_with_input(b, "AIza" + "b" * 35, monkeypatch)
+        assert cfg.get("provider") == "gemini"
+        assert cfg.get("gemini_api_key", "").startswith("AIza")
+        # Must NOT have flipped to Claude or stored the key in the Anthropic slot.
+        assert cfg.get("backend") != "claude"
+        assert "api_key" not in cfg or not cfg["api_key"]
+
+    def test_anthropic_key_on_gemini_routes_to_claude(self, monkeypatch):
+        b = tg.GeminiBackend(api_key=tg._NO_KEY)
+        akey = "sk-ant-" + "a" * 70
+        cfg = self._run_with_input(b, akey, monkeypatch)
+        assert cfg.get("provider") == "claude"
+        assert cfg.get("api_key") == akey
+        # A real Anthropic key must never land in the Gemini slot.
+        assert cfg.get("gemini_api_key", "") != akey
+
+    def test_blank_input_changes_nothing(self, monkeypatch):
+        b = tg.GeminiBackend(api_key=tg._NO_KEY)
+        cfg = self._run_with_input(b, "", monkeypatch)
+        assert not cfg.get("gemini_api_key")
+        assert not cfg.get("api_key")
+
+
 class TestTransparency:
     """Lock in the 100%-transparency promises so they can't silently regress."""
 
