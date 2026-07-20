@@ -175,6 +175,9 @@ You never *have* to pick a number — just type what you need in plain English. 
 | 33 | **Developer Setup** | Pick a stack → toolchains, VS Code, git identity, SSH keys, Docker, shell |
 | 34 | **Creator / Streaming** | OBS, video/audio editors, virtual camera, PipeWire audio routing, hardware encoding |
 | 35 | **Privacy & Security** | Password manager, Signal, Tor, VPN, guided firewall, encrypted DNS, encryption check |
+| 36 | **Student Setup** | Free study tools: notes (Obsidian/Xournal++), citations (Zotero), flashcards (Anki), office, optional LaTeX |
+| 37 | **Homelab Setup** | Self-hosting stack: Docker + Portainer, Tailscale, Syncthing, Samba/NFS, monitoring, scheduled backups |
+| 38 | **Accessibility** | Screen reader (Orca), magnifier, on-screen keyboard, high contrast, larger text — guided per desktop |
 
 **🎁 One-tap catalogs**
 

@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.96.0"
+__version__ = "5.97.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5385,6 +5385,123 @@ Additional instructions for PRIVACY & SECURITY SETUP mode:
 """ + _sys_ctx_block(ctx)
     fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
 
+# ── FEATURE 36: Student & Education Setup ────────────────────────────────────
+def feat_student_setup(backend, bctx, slog):
+    hdr("Student & Education Setup — Free tools for studying")
+    print(f"  {DIM}Everything a student needs — notes, citations, flashcards, office —")
+    print(f"  {DIM}all free and open source. No subscriptions, ever.{R}")
+    with Spinner("Checking what's already installed…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "office":   "for a in libreoffice onlyoffice-desktopeditors; do command -v $a >/dev/null && echo $a; done",
+            "notes":    "for a in obsidian xournalpp cherrytree logseq; do command -v $a >/dev/null && echo $a; done",
+            "zotero":   "command -v zotero >/dev/null && echo installed || echo missing",
+            "anki":     "command -v anki >/dev/null && echo installed || echo missing",
+            "pdf":      "for a in okular evince xpdf qpdfview; do command -v $a >/dev/null && echo $a; done",
+            "latex":    "command -v pdflatex >/dev/null && echo 'texlive present' || echo 'no latex'",
+            "python":   "python3 --version 2>/dev/null",
+            "flatpak":  "command -v flatpak >/dev/null && (flatpak remotes 2>/dev/null | grep -qi flathub && echo 'flatpak+flathub' || echo 'flatpak-no-flathub') || echo 'no-flatpak'",
+        })}
+    try:
+        want = input(f"\n{BOLD}What do you want to set up? (Enter = full student setup · 'q' = back):{R}\n"
+                     f"{C('(e.g. note-taking + citations, install office, set up flashcards, get LaTeX)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(want):
+        return
+    if not want:
+        want = "Set this machine up for studying — the free everyday student essentials."
+    sys_p = BASE_SYS + """
+Additional instructions for STUDENT & EDUCATION SETUP mode:
+- Goal: a free, no-subscription study setup. Keep everything free/open-source. Explain plainly — many students are new to Linux.
+- Office & writing: LibreOffice (usually preinstalled) or OnlyOffice for best MS Office compatibility.
+- Note-taking: Obsidian (linked notes), Logseq (outliner), and Xournal++ for handwriting and annotating lecture PDFs on a tablet/touchscreen.
+- Citations/references: Zotero — essential for essays and theses; mention the browser connector.
+- Flashcards / memorisation: Anki (spaced repetition).
+- PDF: a reader/annotator (Okular is great for markup; Evince is lightweight).
+- LaTeX (optional, ask first): TeX Live + an editor like TeXstudio for maths/science writing — it's a large download, so confirm before installing.
+- Focus: mention a Pomodoro timer / distraction blocker if they want.
+- For recording or watching lectures, point to the Creator/Streaming setup [34] and the App Catalog [77].
+- Prefer the distro package manager; use Flathub for GUI apps when cleanest. Don't overwhelm — ask what they study if unsure.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
+
+# ── FEATURE 37: Homelab / Self-Hosting Setup ─────────────────────────────────
+def feat_homelab_setup(backend, bctx, slog):
+    hdr("Homelab & Self-Hosting Setup — Run your own services")
+    with Spinner("Checking your server/container stack…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "docker":     "command -v docker >/dev/null && (docker --version; groups | grep -qw docker && echo 'in docker group' || echo 'NOT in docker group') || echo 'no docker'",
+            "compose":    "docker compose version 2>/dev/null || docker-compose --version 2>/dev/null || echo 'no compose'",
+            "podman":     "command -v podman >/dev/null && echo installed || echo missing",
+            "portainer":  "docker ps --format '{{.Names}}' 2>/dev/null | grep -qi portainer && echo running || echo missing",
+            "cockpit":    "systemctl is-active cockpit.socket 2>/dev/null || echo 'no cockpit'",
+            "tailscale":  "command -v tailscale >/dev/null && (tailscale status 2>/dev/null | head -1 || echo 'installed') || echo 'no tailscale'",
+            "syncthing":  "command -v syncthing >/dev/null && echo installed || echo missing",
+            "shares":     "command -v smbd >/dev/null && echo samba; command -v exportfs >/dev/null && echo nfs",
+            "monitoring": "for a in btop netdata glances; do command -v $a >/dev/null && echo $a; done",
+            "backup":     "for a in restic borg borgbackup; do command -v $a >/dev/null && echo $a; done",
+            "ssh":        "systemctl is-active ssh 2>/dev/null || systemctl is-active sshd 2>/dev/null || echo 'ssh inactive'",
+        })}
+    try:
+        want = input(f"\n{BOLD}What do you want to set up? (Enter = general homelab setup · 'q' = back):{R}\n"
+                     f"{C('(e.g. install Docker + Portainer, set up Tailscale, Syncthing, backups)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(want):
+        return
+    if not want:
+        want = "Set this machine up as a self-hosting home server."
+    sys_p = BASE_SYS + """
+Additional instructions for HOMELAB / SELF-HOSTING SETUP mode:
+- Help the user run their own services safely. Ask what they want to host if unclear.
+- Containers: install Docker Engine + the docker compose plugin the distro-recommended way. If the user is not in the docker group, offer 'sudo usermod -aG docker $USER' and explain the log-out/in. Podman is a rootless alternative worth mentioning.
+- Management UI: offer Portainer (container management) and/or Cockpit (web-based system admin) — run Portainer as a container.
+- Remote access: strongly prefer Tailscale (or WireGuard) over port-forwarding — it gives secure access without exposing services to the public internet. Explain why this is safer.
+- File services: Syncthing (peer-to-peer sync), and Samba/NFS for LAN shares — configure shares carefully and never world-writable.
+- Monitoring: btop (quick), or netdata/glances for dashboards.
+- Backups: restic or borg with a scheduled job — offer to set up a cron/systemd timer (see Schedule Task [27]). A homelab without backups is a data-loss waiting to happen — encourage this.
+- SECURITY: do NOT expose services directly to the internet without a reverse proxy (Caddy/Traefik/Nginx) with TLS and authentication. If the user wants public access, walk them through a reverse proxy + HTTPS, or recommend Tailscale instead. Never open firewall ports widely.
+- Point to Docker Help [28], SSH Setup [29], and Schedule Task [27] for related flows. Explain each step; assume an enthusiast but not necessarily a sysadmin.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
+
+# ── FEATURE 38: Accessibility Setup ──────────────────────────────────────────
+def feat_accessibility_setup(backend, bctx, slog):
+    hdr("Accessibility Setup — Make your PC easier to use")
+    print(f"  {DIM}Screen reader, magnifier, on-screen keyboard, high contrast and more.")
+    print(f"  {DIM}We'll set up what you need, step by step.{R}")
+    with Spinner("Checking available accessibility tools…"):
+        ctx = {**bctx, **_parallel_ctx({
+            "desktop":    "echo ${XDG_CURRENT_DESKTOP:-unknown}",
+            "orca":       "command -v orca >/dev/null && echo installed || echo missing",
+            "speechd":    "command -v speech-dispatcher >/dev/null && echo installed || echo missing",
+            "espeak":     "command -v espeak-ng >/dev/null && echo espeak-ng || (command -v espeak >/dev/null && echo espeak || echo missing)",
+            "onscreen_kb":"for a in onboard florence caribou; do command -v $a >/dev/null && echo $a; done",
+            "magnifier":  "command -v magnus >/dev/null && echo magnus; command -v kmag >/dev/null && echo kmag",
+            "session":    "echo ${XDG_SESSION_TYPE:-unknown}",
+        })}
+    try:
+        want = input(f"\n{BOLD}What would you like to set up? (Enter = full accessibility setup · 'q' = back):{R}\n"
+                     f"{C('(e.g. turn on the screen reader, set up a magnifier, larger text, on-screen keyboard)',DIM)}\n> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(want):
+        return
+    if not want:
+        want = "Set this machine up with the accessibility features that make it easier to use."
+    sys_p = BASE_SYS + """
+Additional instructions for ACCESSIBILITY SETUP mode:
+- Be especially clear, patient and encouraging. Ask which needs matter most (vision, motor, hearing, reading) if unclear.
+- Screen reader: Orca is the standard on Linux. Install it if missing, and install speech-dispatcher + espeak-ng (or better voices) so it can talk. Note Orca works best on GNOME/X11 or Wayland with the right settings.
+- Magnifier: GNOME and KDE have a built-in screen magnifier — guide the user to enable it in the desktop's Accessibility settings (Super+Alt+8 on GNOME, or the Settings toggle). Standalone tools: magnus (GNOME), kmag (KDE).
+- On-screen keyboard: GNOME has one built in; Onboard is a good standalone option — offer to install it.
+- Larger text / cursor / high contrast: these are toggles in the desktop's Accessibility/Universal Access settings. Explain exactly where to find them for the detected desktop (GNOME: Settings → Accessibility; KDE: System Settings → Accessibility).
+- Mouse/keyboard aids: mention Mouse Keys, Sticky Keys, Slow Keys and click-assist, all in the same settings panel.
+- IMPORTANT: many accessibility features are GUI toggles you cannot flip from the terminal — when that's the case, give clear, numbered steps to reach the setting for the user's specific desktop, rather than a command.
+- Install packages via the distro package manager. Confirm each install and explain what it does in plain language.
+""" + _sys_ctx_block(ctx)
+    fix_engine(backend, sys_p, [{"role":"user","content":want}], slog)
+
 # ── FEATURE 22: Sound Fix ────────────────────────────────────────────────────
 def feat_sound(backend, bctx, slog):
     hdr("Sound Fix — Fix audio problems")
@@ -8202,6 +8319,9 @@ MENU_ITEMS = [
     ("33", "devsetup",  "Developer Setup",    "Toolchains, VS Code, git, SSH keys, Docker, shell",   feat_dev_setup),
     ("34", "creator",   "Creator / Streaming","OBS, editors, virtual camera, audio routing",         feat_creator_setup),
     ("35", "privacy",   "Privacy & Security", "VPN, password manager, Tor, firewall, encryption check", feat_privacy_setup),
+    ("36", "student",   "Student Setup",      "Notes, citations, flashcards, office — free study tools", feat_student_setup),
+    ("37", "homelab",   "Homelab Setup",      "Docker, Portainer, Tailscale, Syncthing, backups",    feat_homelab_setup),
+    ("38", "access",    "Accessibility",      "Screen reader, magnifier, on-screen keyboard, contrast", feat_accessibility_setup),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
     ("77", "apps",      "Install Apps",       "128-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
@@ -8282,6 +8402,9 @@ def show_menu():
     _item("33", "Developer Setup",     "Languages, VS Code, git, SSH keys, Docker, shell")
     _item("34", "Creator / Streaming", "OBS, video/audio editors, virtual camera, mic setup")
     _item("35", "Privacy & Security",  "VPN, password manager, Tor, firewall, encryption")
+    _item("36", "Student Setup",       "Notes, citations, flashcards, office — free study tools")
+    _item("37", "Homelab Setup",       "Docker, Portainer, Tailscale, Syncthing, backups")
+    _item("38", "Accessibility",       "Screen reader, magnifier, on-screen keyboard, contrast")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
     _item("77", "Install Apps",        "🎁 128 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
