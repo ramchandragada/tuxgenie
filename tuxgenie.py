@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "5.87.0"
+__version__ = "5.88.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -268,6 +268,7 @@ _COMPLEX_KEYWORDS = [
 _HAIKU_MODEL  = "claude-haiku-4-5-20251001"
 _SONNET_MODEL = "claude-sonnet-4-6"
 _OPUS_MODEL   = "claude-opus-4-8"
+_GEMINI_MODEL = "gemini-2.5-flash"   # Google's free-tier model (no credit card needed)
 
 
 def _try_pip_install():
@@ -599,6 +600,266 @@ def _classify_anthropic_error(exc):
     return "other", str(exc)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Google Gemini backend — FREE-TIER option (no credit card needed)
+# ═══════════════════════════════════════════════════════════════════════════════
+# A drop-in sibling of AnthropicBackend. It presents the SAME interface the two
+# engines use — .ask() (text, for fix_engine) and .client.messages.create()
+# (Anthropic-shaped, for agentic_engine) — translating to Google's REST API
+# underneath via urllib (no extra dependency). Claude's path is untouched; this
+# is only used when the user opts into Gemini. The translation helpers are pure
+# functions so they can be unit-tested without hitting the network.
+_GEMINI_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models"
+
+
+class _GBlock:
+    """Mimics an Anthropic content block (text | tool_use) for the engines."""
+    def __init__(self, type, text=None, name=None, input=None, id=None):
+        self.type = type; self.text = text; self.name = name
+        self.input = input; self.id = id
+
+
+class _GUsage:
+    def __init__(self, in_tok, out_tok):
+        self.input_tokens = in_tok; self.output_tokens = out_tok
+        self.cache_creation_input_tokens = 0; self.cache_read_input_tokens = 0
+
+
+class _GResponse:
+    def __init__(self, content, stop_reason, usage):
+        self.content = content; self.stop_reason = stop_reason; self.usage = usage
+
+
+def _gem_system_to_text(system):
+    """Anthropic 'system' (str or list of text blocks) → a plain string."""
+    if not system:
+        return ""
+    if isinstance(system, str):
+        return system
+    parts = []
+    for blk in system:
+        parts.append(blk.get("text", "") if isinstance(blk, dict) else (getattr(blk, "text", "") or ""))
+    return "\n\n".join(p for p in parts if p)
+
+
+def _gem_clean_schema(schema):
+    """Strip keys Gemini's function schema rejects (cache_control, $schema, …)."""
+    if not isinstance(schema, dict):
+        return schema
+    allowed = {"type", "description", "enum", "items", "properties", "required", "nullable", "format"}
+    out = {}
+    for k, v in schema.items():
+        if k not in allowed:
+            continue
+        if k == "properties" and isinstance(v, dict):
+            out[k] = {pk: _gem_clean_schema(pv) for pk, pv in v.items()}
+        elif k == "items":
+            out[k] = _gem_clean_schema(v)
+        else:
+            out[k] = v
+    return out
+
+
+def _gem_tools_from_anthropic(tools):
+    """Anthropic tools → Gemini functionDeclarations."""
+    if not tools:
+        return None
+    decls = []
+    for t in tools:
+        name = t.get("name"); desc = t.get("description", ""); schema = t.get("input_schema") or {}
+        decl = {"name": name, "description": desc}
+        params = _gem_clean_schema(schema)
+        if params.get("properties"):
+            decl["parameters"] = params
+        decls.append(decl)
+    return decls
+
+
+def _gem_bget(b, key, default=None):
+    """Read a field from a block that may be a dict or a _GBlock object."""
+    return b.get(key, default) if isinstance(b, dict) else getattr(b, key, default)
+
+
+def _gem_contents_from_anthropic(messages):
+    """Anthropic messages → Gemini 'contents'. Builds a tool_use_id→name map so
+    tool_result parts can carry the function name Gemini's functionResponse needs."""
+    id2name = {}
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            for b in content:
+                if _gem_bget(b, "type") == "tool_use":
+                    bid = _gem_bget(b, "id")
+                    if bid:
+                        id2name[bid] = _gem_bget(b, "name")
+    contents = []
+    for m in messages:
+        grole = "model" if m.get("role") == "assistant" else "user"
+        content = m.get("content")
+        parts = []
+        if isinstance(content, str):
+            if content:
+                parts.append({"text": content})
+        else:
+            for b in content:
+                typ = _gem_bget(b, "type")
+                if typ == "text":
+                    txt = _gem_bget(b, "text", "")
+                    if txt:
+                        parts.append({"text": txt})
+                elif typ == "tool_use":
+                    parts.append({"functionCall": {"name": _gem_bget(b, "name"),
+                                                   "args": _gem_bget(b, "input") or {}}})
+                elif typ == "tool_result":
+                    resc = _gem_bget(b, "content", "")
+                    if isinstance(resc, list):
+                        resc = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in resc)
+                    if not isinstance(resc, str):
+                        resc = json.dumps(resc)
+                    nm = id2name.get(_gem_bget(b, "tool_use_id"), "run_command")
+                    parts.append({"functionResponse": {"name": nm, "response": {"result": resc}}})
+        if parts:
+            contents.append({"role": grole, "parts": parts})
+    return contents
+
+
+def _gem_blocks_from_response(data):
+    """Gemini generateContent response → (Anthropic-shaped blocks, stop_reason)."""
+    cand = (data.get("candidates") or [{}])[0]
+    parts = (cand.get("content") or {}).get("parts") or []
+    blocks = []; has_call = False; idx = 0
+    for p in parts:
+        if p.get("text"):
+            blocks.append(_GBlock("text", text=p["text"]))
+        elif "functionCall" in p:
+            has_call = True; idx += 1
+            fc = p["functionCall"]
+            blocks.append(_GBlock("tool_use", name=fc.get("name"),
+                                  input=fc.get("args") or {}, id=f"gemcall_{idx}"))
+    fr = cand.get("finishReason", "")
+    stop = "tool_use" if has_call else ("max_tokens" if fr == "MAX_TOKENS" else "end_turn")
+    if not blocks:
+        blocks.append(_GBlock("text", text=""))
+    return blocks, stop
+
+
+def _gem_usage(data):
+    um = data.get("usageMetadata") or {}
+    return _GUsage(um.get("promptTokenCount", 0) or 0, um.get("candidatesTokenCount", 0) or 0)
+
+
+class _GeminiMessages:
+    def __init__(self, backend):
+        self._b = backend
+
+    def create(self, **kw):
+        return self._b._create(kw.get("system"), kw.get("tools"),
+                               kw.get("messages"), kw.get("max_tokens", 4096))
+
+
+class _GeminiClient:
+    def __init__(self, backend):
+        self.messages = _GeminiMessages(backend)
+
+
+class GeminiBackend:
+    """Google Gemini backend (free tier). Mirrors AnthropicBackend's interface."""
+    def __init__(self, api_key, model=_GEMINI_MODEL):
+        self._no_key = (api_key == _NO_KEY)
+        self.api_key = "" if self._no_key else api_key
+        self.model = model or _GEMINI_MODEL
+        self.base_model = self.model
+        self.auto_model = False   # single model — no Haiku/Sonnet routing
+        self.expert_mode = False
+        self.auto_approve = False
+        self.client = _GeminiClient(self)
+        self._session_input_tokens = 0
+        self._session_output_tokens = 0
+        self._session_cache_creation_tokens = 0
+        self._session_cache_read_tokens = 0
+
+    def label(self):
+        return f"Google Gemini · {self.model} (free)"
+
+    def select_model_for_task(self, user_text="", round_num=1):
+        return  # Gemini uses one model; nothing to route
+
+    def _set_key(self, key):
+        self.api_key = key; self._no_key = False
+        save_cfg({"provider": "gemini", "gemini_api_key": key})
+        ok("Gemini key saved! AI features are now enabled (free tier).")
+
+    def _record_usage(self, usage):
+        self._session_input_tokens  += getattr(usage, "input_tokens", 0) or 0
+        self._session_output_tokens += getattr(usage, "output_tokens", 0) or 0
+
+    def session_cost_estimate(self) -> str:
+        return (f"Google Gemini free tier · no API charges  "
+                f"(session: ~{self._session_input_tokens:,} in + ~{self._session_output_tokens:,} out tokens)")
+
+    def _gen(self, contents, system_text, tools_decl, max_tokens):
+        body = {"contents": contents,
+                "generationConfig": {"maxOutputTokens": max(max_tokens or 4096, 1), "temperature": 0.6}}
+        if system_text:
+            body["systemInstruction"] = {"parts": [{"text": system_text}]}
+        if tools_decl:
+            body["tools"] = [{"functionDeclarations": tools_decl}]
+        url = f"{_GEMINI_ENDPOINT}/{self.model}:generateContent"
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode("utf-8"), method="POST",
+            headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key})
+        try:
+            with urllib.request.urlopen(req, timeout=180) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = json.loads(e.read().decode()).get("error", {}).get("message", "")
+            except Exception:
+                pass
+            if e.code in (400, 403) and ("key" in detail.lower() or e.code == 403):
+                raise RuntimeError(f"Gemini API key rejected — check it at https://aistudio.google.com/apikey. {detail}")
+            if e.code == 429:
+                raise RuntimeError(f"Gemini free-tier limit hit — wait a minute and retry. {detail}")
+            raise RuntimeError(f"Gemini API error {e.code}: {detail or e}")
+
+    def _prompt_for_key(self):
+        print(f"\n  {YELLOW}{BOLD}🔑 AI features need a Google Gemini API key.{R}")
+        print(f"  {DIM}It's free — no credit card. Get one at:{R} {CYAN}https://aistudio.google.com/apikey{R}\n")
+        try:
+            key = input("  Paste Gemini key now (or press Enter to cancel): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if not key:
+            info(f"Cancelled. Type {BOLD}k{R} at the menu anytime to add your key.")
+            return False
+        self._set_key(key)
+        return True
+
+    def ask(self, system, messages, max_tokens=4096, cache_system=False):
+        """Text completion — used by fix_engine (returns a plain string)."""
+        if self._no_key and not self._prompt_for_key():
+            return ""
+        print(f"\r  {CYAN}⚡ Asking Gemini…{R}   ", end="", flush=True)
+        data = self._gen(_gem_contents_from_anthropic(messages),
+                         _gem_system_to_text(system), None, max_tokens)
+        self._record_usage(_gem_usage(data))
+        blocks, _ = _gem_blocks_from_response(data)
+        text = "".join(b.text for b in blocks if b.type == "text" and b.text)
+        print(f"\r  {GREEN}✓ Response received ({len(text)} chars)   {R}")
+        return text
+
+    def _create(self, system, tools, messages, max_tokens):
+        """Anthropic-shaped tool-use call — used by agentic_engine."""
+        if self._no_key and not self._prompt_for_key():
+            return _GResponse([_GBlock("text", text="")], "end_turn", _GUsage(0, 0))
+        data = self._gen(_gem_contents_from_anthropic(messages),
+                         _gem_system_to_text(system),
+                         _gem_tools_from_anthropic(tools), max_tokens or 4096)
+        blocks, stop = _gem_blocks_from_response(data)
+        return _GResponse(blocks, stop, _gem_usage(data))
+
+
 # ── Config / API key ─────────────────────────────────────────────────────────
 _NO_KEY = "__NO_KEY__"   # sentinel — user chose to skip key setup
 
@@ -623,52 +884,90 @@ def _load_api_key(cfg):
     return _migrate_old_key()
 
 def _setup_wizard(cfg):
-    """First-run wizard. Asks for an Anthropic API key (or skip).
-    Returns ('claude', api_key) | ('skip', None)."""
+    """First-run wizard. Lets the user choose Claude (best) or Gemini (free),
+    or skip. Returns ('claude'|'gemini', api_key) | ('skip', None)."""
     _line = f"  {DIM}{'─'*58}{R}"
     print(f"\n{_line}")
     print(f"  {GREEN}{BOLD}🐧 TuxGenie — Quick Setup{R}")
     print(f"{_line}")
-    print(f"\n  TuxGenie uses Claude (Anthropic) to fix Linux problems.")
-    print(f"  Get your free API key at: {CYAN}{BOLD}https://console.anthropic.com{R}")
-    print(f"  {DIM}Sign-up is free. Costs ~$0.01 per session — top up $5 once and it lasts months.{R}\n")
+    print(f"\n  TuxGenie uses an AI to understand and fix Linux problems.")
+    print(f"  Pick one — you can change it anytime in Settings:\n")
+    print(f"  {C('[1]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
+    print(f"      {DIM}Free trial credit, then ~$0.01/session · console.anthropic.com{R}")
+    print(f"  {C('[2]',CYAN,BOLD)} {BOLD}Google Gemini{R} — {GREEN}free tier, no credit card{R} {DIM}(beta){R}")
+    print(f"      {DIM}Get a free key at aistudio.google.com/apikey{R}\n")
     try:
-        key = input(f"  Paste API key (or press {BOLD}Enter{R} to skip): ").strip()
+        choice = input(f"  Choose {BOLD}1{R} or {BOLD}2{R} (or press {BOLD}Enter{R} to skip for now): ").strip()
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
-    if not key:
-        print(f"\n  {YELLOW}Continuing without AI.{R}")
-        print(f"  {DIM}Type {BOLD}k{R}{DIM} anytime to add a key later.{R}\n")
-        return ("skip", None)
-    return ("claude", key)
+    if choice == "2":
+        print(f"\n  {DIM}Free Gemini key: {CYAN}https://aistudio.google.com/apikey{R}")
+        try:
+            key = input("  Paste your Gemini API key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return ("skip", None)
+        return ("gemini", key) if key else ("skip", None)
+    if choice == "1":
+        print(f"\n  {DIM}Free Claude key: {CYAN}https://console.anthropic.com{R}")
+        try:
+            key = input("  Paste your Anthropic API key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return ("skip", None)
+        return ("claude", key) if key else ("skip", None)
+    print(f"\n  {YELLOW}Continuing without AI.{R}")
+    print(f"  {DIM}Type {BOLD}k{R}{DIM} anytime to add a key later.{R}\n")
+    return ("skip", None)
+
+
+def _make_backend(cfg, provider, key):
+    """Build the right backend and apply shared user preferences."""
+    if provider == "gemini":
+        b = GeminiBackend(api_key=key, model=cfg.get("gemini_model", _GEMINI_MODEL))
+    else:
+        b = AnthropicBackend(api_key=key, model=cfg.get("model", _HAIKU_MODEL))
+    b.expert_mode  = bool(cfg.get("expert_mode", False))
+    b.auto_approve = bool(cfg.get("auto_approve", False))
+    return b
 
 
 def load_backend():
-    """Load config and return an AnthropicBackend (with key, or _NO_KEY sentinel)."""
+    """Load config and return the configured backend. Defaults to Claude and is
+    fully back-compatible: existing installs (api_key set, no 'provider') load
+    exactly as before. Gemini is only used when the user opts into it."""
     cfg = load_cfg()
+    provider = cfg.get("provider", "")
 
-    # 1. Saved Claude key?
+    # 1. Explicit Gemini provider with a saved/env key.
+    if provider == "gemini":
+        gkey = (os.environ.get("GEMINI_API_KEY", "").strip()
+                or os.environ.get("GOOGLE_API_KEY", "").strip()
+                or cfg.get("gemini_api_key", "").strip())
+        if gkey:
+            save_cfg({"provider": "gemini", "gemini_api_key": gkey})
+            return _make_backend(cfg, "gemini", gkey)
+
+    # 2. Saved/env Claude key (the default, unchanged path).
     key = _load_api_key(cfg)
     if key:
-        save_cfg({"api_key": key, "backend": "claude"})
-        model = cfg.get("model", "claude-haiku-4-5-20251001")
-        b = AnthropicBackend(api_key=key, model=model)
-        b.expert_mode = bool(cfg.get("expert_mode", False))
-        b.auto_approve = bool(cfg.get("auto_approve", False))
-        return b
+        save_cfg({"api_key": key, "provider": "claude", "backend": "claude"})
+        return _make_backend(cfg, "claude", key)
 
-    # 2. First run — ask for a key
+    # 3. A Gemini key in the env even without an explicit provider.
+    gkey = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    if gkey:
+        save_cfg({"provider": "gemini", "gemini_api_key": gkey})
+        return _make_backend(cfg, "gemini", gkey)
+
+    # 4. First run — ask which AI to use.
     kind, value = _setup_wizard(cfg)
+    if kind == "gemini":
+        save_cfg({"provider": "gemini", "gemini_api_key": value})
+        return _make_backend(cfg, "gemini", value)
     if kind == "claude":
-        save_cfg({"backend": "claude", "api_key": value})
-        model = cfg.get("model", "claude-haiku-4-5-20251001")
-        b = AnthropicBackend(api_key=value, model=model)
-    else:
-        save_cfg({"backend": "none"})
-        b = AnthropicBackend(api_key=_NO_KEY)
-    b.expert_mode = bool(cfg.get("expert_mode", False))
-    b.auto_approve = bool(cfg.get("auto_approve", False))
-    return b
+        save_cfg({"provider": "claude", "backend": "claude", "api_key": value})
+        return _make_backend(cfg, "claude", value)
+    save_cfg({"backend": "none"})
+    return _make_backend(cfg, "claude", _NO_KEY)
 
 AVAILABLE_MODELS = [
     ("claude-haiku-4-5-20251001", "Fast & cheapest — handles 90% of tasks perfectly (recommended)"),
@@ -726,6 +1025,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
+    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Claude · or Google Gemini — free tier){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -748,6 +1048,9 @@ def feat_settings(backend, bctx, slog):
             backend._set_key(key)
             ok("API key updated — active now.")
     elif ch == "2":
+        if isinstance(backend, GeminiBackend):
+            info("Model selection applies to Claude. You're on Google Gemini (single free model).")
+            return
         print(f"\n  {BOLD}Choose a model:{R}")
         for i, (mid, desc) in enumerate(AVAILABLE_MODELS, 1):
             current = C(" ← current", GREEN) if mid == backend.model else ""
@@ -813,6 +1116,40 @@ def feat_settings(backend, bctx, slog):
             warn("Auto-approve ON — AI commands run without asking (dangerous ones are still blocked).")
         else:
             ok("Auto-approve OFF — you'll be asked before any command that changes your system.")
+    elif ch == "8":
+        cur = "Google Gemini (free)" if isinstance(backend, GeminiBackend) else "Claude (Anthropic)"
+        print(f"\n  {DIM}Currently using: {BOLD}{cur}{R}")
+        print(f"  {C('[1]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        print(f"  {C('[2]',CYAN)} Google Gemini — {GREEN}free tier, no credit card{R} {DIM}(beta){R}")
+        try:
+            p = input(f"\n  {BOLD}Choose provider [1/2] (or Enter to cancel):{R} ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if p == "1":
+            k = load_cfg().get("api_key", "").strip()
+            if not k:
+                try:
+                    k = input("  Paste your Anthropic API key (sk-ant-…): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if not k:
+                    warn("No key entered — provider unchanged."); return
+            save_cfg({"provider": "claude", "api_key": k})
+            ok("Switched to Claude. Restart TuxGenie for it to take effect.")
+        elif p == "2":
+            k = load_cfg().get("gemini_api_key", "").strip()
+            if not k:
+                print(f"  {DIM}Free Gemini key: {CYAN}https://aistudio.google.com/apikey{R}")
+                try:
+                    k = input("  Paste your Gemini API key: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if not k:
+                    warn("No key entered — provider unchanged."); return
+            save_cfg({"provider": "gemini", "gemini_api_key": k})
+            ok("Switched to Google Gemini (free tier). Restart TuxGenie for it to take effect.")
+        else:
+            info("Provider unchanged.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 3 — SYSTEM CONTEXT COLLECTORS
@@ -1520,7 +1857,9 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     step_counter = [1]
     approve_state = {"all": False}   # session-wide "yes to all" toggle
 
-    print(f"\n  {CYAN}{BOLD}⚡ AI: Anthropic · {_OPUS_MODEL}  ·  adaptive thinking{R}")
+    _is_anthropic = isinstance(backend, AnthropicBackend)
+    _ai_label = f"Anthropic · {_OPUS_MODEL}  ·  adaptive thinking" if _is_anthropic else backend.label()
+    print(f"\n  {CYAN}{BOLD}⚡ AI: {_ai_label}{R}")
 
     def _create_request():
         # cache_control on the last block of the most recent user message

@@ -308,6 +308,104 @@ class TestBackWords:
         assert called["n"] == 0
 
 
+class TestGeminiBackend:
+    def test_backend_shape_matches_anthropic(self):
+        b = tg.GeminiBackend("fake-key")
+        for attr in ("expert_mode", "auto_approve", "auto_model", "model",
+                     "base_model", "_no_key", "_session_input_tokens", "client"):
+            assert hasattr(b, attr), attr
+        assert hasattr(b.client.messages, "create")
+        assert callable(b.select_model_for_task)
+        assert "Gemini" in b.label()
+        assert "free" in b.session_cost_estimate().lower()
+
+    def test_system_to_text(self):
+        assert tg._gem_system_to_text("hi") == "hi"
+        assert tg._gem_system_to_text([{"type": "text", "text": "a"},
+                                       {"type": "text", "text": "b"}]) == "a\n\nb"
+        assert tg._gem_system_to_text(None) == ""
+
+    def test_clean_schema_strips_unknown_keys(self):
+        s = {"type": "object", "cache_control": {"type": "ephemeral"},
+             "properties": {"cmd": {"type": "string", "description": "x"}},
+             "required": ["cmd"], "$schema": "http://…"}
+        out = tg._gem_clean_schema(s)
+        assert "cache_control" not in out and "$schema" not in out
+        assert out["properties"]["cmd"]["type"] == "string"
+        assert out["required"] == ["cmd"]
+
+    def test_tools_translation(self):
+        tools = [{"name": "run_command", "description": "Run a command",
+                  "input_schema": {"type": "object",
+                                   "properties": {"command": {"type": "string"}},
+                                   "required": ["command"]},
+                  "cache_control": {"type": "ephemeral"}}]
+        decls = tg._gem_tools_from_anthropic(tools)
+        assert decls[0]["name"] == "run_command"
+        assert decls[0]["parameters"]["properties"]["command"]["type"] == "string"
+
+    def test_contents_maps_tool_result_to_function_name(self):
+        # assistant tool_use (id→name) then user tool_result referencing that id
+        messages = [
+            {"role": "user", "content": "fix my wifi"},
+            {"role": "assistant", "content": [tg._GBlock("tool_use", name="run_command",
+                                                         input={"command": "nmcli"}, id="c1")]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c1",
+                                          "content": "wlan0 down"}]},
+        ]
+        contents = tg._gem_contents_from_anthropic(messages)
+        assert contents[0] == {"role": "user", "parts": [{"text": "fix my wifi"}]}
+        assert contents[1]["role"] == "model"
+        assert contents[1]["parts"][0]["functionCall"]["name"] == "run_command"
+        fr = contents[2]["parts"][0]["functionResponse"]
+        assert fr["name"] == "run_command"          # mapped from id c1, not the id
+        assert fr["response"]["result"] == "wlan0 down"
+
+    def test_response_parsing(self):
+        # text response → end_turn
+        blocks, stop = tg._gem_blocks_from_response(
+            {"candidates": [{"content": {"parts": [{"text": "hello"}]}, "finishReason": "STOP"}]})
+        assert stop == "end_turn" and blocks[0].type == "text" and blocks[0].text == "hello"
+        # functionCall → tool_use
+        blocks, stop = tg._gem_blocks_from_response(
+            {"candidates": [{"content": {"parts": [
+                {"functionCall": {"name": "run_command", "args": {"command": "ls"}}}]}}]})
+        assert stop == "tool_use" and blocks[0].type == "tool_use"
+        assert blocks[0].name == "run_command" and blocks[0].input == {"command": "ls"}
+
+    def test_create_roundtrip_mocked(self, monkeypatch):
+        # Full adapter path with the network mocked — proves agentic_engine's
+        # backend.client.messages.create(...) contract works for Gemini.
+        b = tg.GeminiBackend("fake-key")
+        captured = {}
+        def fake_gen(contents, system_text, tools_decl, max_tokens):
+            captured["contents"] = contents; captured["tools"] = tools_decl
+            return {"candidates": [{"content": {"parts": [
+                        {"functionCall": {"name": "run_command", "args": {"command": "nmcli dev"}}}]},
+                        "finishReason": "STOP"}],
+                    "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 4}}
+        monkeypatch.setattr(b, "_gen", fake_gen)
+        resp = b.client.messages.create(
+            model="ignored", max_tokens=16000, thinking={"type": "adaptive"},
+            system=[{"type": "text", "text": "You are TuxGenie"}],
+            tools=[{"name": "run_command", "description": "run",
+                    "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}}}],
+            messages=[{"role": "user", "content": "check my network"}])
+        assert resp.stop_reason == "tool_use"
+        assert resp.content[0].type == "tool_use" and resp.content[0].name == "run_command"
+        assert resp.usage.input_tokens == 10 and resp.usage.output_tokens == 4
+        assert captured["tools"][0]["name"] == "run_command"    # tools were translated
+
+    def test_ask_text_mocked(self, monkeypatch):
+        b = tg.GeminiBackend("fake-key")
+        monkeypatch.setattr(b, "_gen", lambda *a, **k:
+            {"candidates": [{"content": {"parts": [{"text": '{"plan": "ok"}'}]}}],
+             "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 3}})
+        out = b.ask("sys", [{"role": "user", "content": "hi"}])
+        assert out == '{"plan": "ok"}'
+        assert b._session_input_tokens == 5
+
+
 class TestCrashGuardExtra:
     def setup_method(self):
         self._orig = tg.CRASH_FILE

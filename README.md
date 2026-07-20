@@ -74,15 +74,25 @@ pip install .
 
 ## First run
 
-```bash
-# Set your Anthropic API key (add to ~/.bashrc to make permanent)
-export ANTHROPIC_API_KEY="sk-ant-..."
+On first launch TuxGenie asks which AI you'd like to use:
 
-# Launch
+- **Claude (Anthropic)** — best quality. Free trial credit, then ~$0.01/session.
+  Get a key at [console.anthropic.com](https://console.anthropic.com).
+- **Google Gemini** — **free tier, no credit card** *(beta)*.
+  Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
+
+You can also set a key via environment variable and skip the prompt:
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."   # Claude
+# or
+export GEMINI_API_KEY="..."             # Google Gemini (free tier)
+
 tuxgenie
 ```
 
-Get a free API key at [console.anthropic.com](https://console.anthropic.com).
+Switch providers anytime from **Settings → Switch AI provider**. Terminal
+commands (apt, systemctl, …) run without any key — always free.
 
 ---
 
