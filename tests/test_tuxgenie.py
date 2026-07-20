@@ -867,6 +867,35 @@ class TestOpenAICompatBackend:
         assert be.model == "llama-3.3-70b-versatile"
         assert be._no_key and be.base_url == "https://api.groq.com/openai/v1"
 
+    def test_max_tokens_clamped_for_free_tier(self, monkeypatch):
+        """A 16000-token request (Opus-sized) must be clamped so it doesn't trip
+        a free tier's tokens-per-minute limit."""
+        import json
+        be = tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq")
+        captured = {}
+
+        class _R:
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+            def read(s):
+                return json.dumps({"choices": [{"message": {"content": "ok"},
+                                   "finish_reason": "stop"}],
+                                   "usage": {"prompt_tokens": 1, "completion_tokens": 1}}).encode()
+
+        def fake_open(req, timeout=0):
+            captured["max_tokens"] = json.loads(req.data.decode())["max_tokens"]
+            return _R()
+
+        monkeypatch.setattr(tg.urllib.request, "urlopen", fake_open)
+        be._gen("sys", [{"role": "user", "content": "hi"}], None, 16000)
+        assert captured["max_tokens"] == 8192
+
+    def test_headers_have_real_user_agent(self):
+        be = tg.OpenAICompatBackend(api_key="gsk_" + "y" * 40, provider="groq")
+        h = be._headers()
+        assert h["User-Agent"].startswith("TuxGenie/")
+        assert "Python-urllib" not in h["User-Agent"]
+
 
 class TestKeyChangeRouting:
     """The `k` / Settings[1] key change must be provider-aware and must never

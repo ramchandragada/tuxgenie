@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.5.0"
+__version__ = "6.6.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1143,9 +1143,13 @@ class OpenAICompatBackend:
             return None
 
     def _gen(self, system_text, messages, tools, max_tokens, _retry=True):
+        # Clamp the output budget: callers (the agentic engine) request up to
+        # 16000 tokens, sized for Claude Opus. Free tiers like Groq have a small
+        # tokens-per-minute budget, so an oversized request trips their limit.
+        want = max(max_tokens or 4096, 1)
         body = {"model": self.model,
                 "messages": _oai_messages_from_anthropic(system_text, messages),
-                "max_tokens": max(max_tokens or 4096, 1), "temperature": 0.6}
+                "max_tokens": min(want, self._prov.get("max_tokens", 8192)), "temperature": 0.6}
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -1196,8 +1200,11 @@ class OpenAICompatBackend:
                     f"accept any pending terms in the {lbl} console, or switch provider (Settings → 8)."
                     + (f"\n  ({lbl} said: {detail})" if detail else "\n  (Server returned no reason.)"))
             if e.code == 429:
-                raise RuntimeError(f"{lbl} rate limit hit — wait a moment and retry. {detail}")
-            raise RuntimeError(f"{self._prov['label']} API error {e.code}: {detail or e}")
+                raise RuntimeError(
+                    f"{lbl} limit reached (HTTP 429). Free tiers cap requests per minute and per day — "
+                    f"wait a minute and retry, or switch provider (Settings → 8)."
+                    + (f"\n  ({lbl} said: {detail})" if detail else ""))
+            raise RuntimeError(f"{lbl} API error {e.code}: {detail or 'no details returned'}")
 
     def _prompt_for_key(self):
         p = self._prov
@@ -2381,15 +2388,22 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 return
             except Exception as e:
                 print(" " * 40, end="\r")
-                kind, msg = _classify_anthropic_error(e)
-                if kind == "billing":
-                    print(f"  {RED}API error: {msg}.{R}")
-                    print(f"  {DIM}Top up: https://console.anthropic.com/settings/billing{R}")
-                elif kind == "auth":
-                    print(f"  {RED}API error: {msg}.{R}")
-                    print(f"  {DIM}Press {BOLD}k{R}{DIM} to set a new key.{R}")
+                if _is_anthropic:
+                    kind, msg = _classify_anthropic_error(e)
+                    if kind == "billing":
+                        print(f"  {RED}API error: {msg}.{R}")
+                        print(f"  {DIM}Top up: https://console.anthropic.com/settings/billing{R}")
+                    elif kind == "auth":
+                        print(f"  {RED}API error: {msg}.{R}")
+                        print(f"  {DIM}Press {BOLD}k{R}{DIM} to set a new key.{R}")
+                    else:
+                        print(f"  {RED}API error: {e}{R}")
                 else:
-                    print(f"  {RED}API error: {e}{R}")
+                    # Gemini/Groq backends already raise clear, provider-specific
+                    # messages — show them verbatim (never the Anthropic classifier,
+                    # which would mislabel e.g. a Groq quota error as an Anthropic one).
+                    print(f"  {RED}{e}{R}")
+                    print(f"  {DIM}Tip: press {BOLD}k{R}{DIM} to change the key · Settings → 8 to switch AI provider.{R}")
                 return
 
             # Track usage (regular + cache tokens) so session cost is accurate.
@@ -4120,13 +4134,10 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         try:
             raw = ask_ai(backend, system, messages, max_tokens=out_tokens)
         except RuntimeError as e:
+            # Backends raise clear, provider-specific messages (with fix steps) —
+            # show them verbatim rather than a generic guess.
             msg = str(e)
-            if "401" in msg or "403" in msg or "invalid_api_key" in msg.lower():
-                err("Auth failed. Delete ~/.config/tuxgenie/config.json to reset backend.")
-            elif "429" in msg:
-                warn("Rate limited — please wait a moment and try again.")
-            else:
-                err(f"API error: {msg[:200]}")
+            (warn if "429" in msg else err)(msg[:400])
             return
         except (urllib.error.URLError, OSError) as e:
             eno = getattr(e, "errno", None)
