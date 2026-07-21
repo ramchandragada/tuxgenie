@@ -345,11 +345,12 @@ class TestGeminiBackend:
         assert decls[0]["parameters"]["properties"]["command"]["type"] == "string"
 
     def test_contents_maps_tool_result_to_function_name(self):
-        # assistant tool_use (id→name) then user tool_result referencing that id
+        # A SIGNED (native Gemini) tool_use → functionCall + functionResponse,
+        # with the result mapped back to the function name via the id.
         messages = [
             {"role": "user", "content": "fix my wifi"},
             {"role": "assistant", "content": [tg._GBlock("tool_use", name="run_command",
-                                                         input={"command": "nmcli"}, id="c1")]},
+                                     input={"command": "nmcli"}, id="c1", thought_signature="SIG")]},
             {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c1",
                                           "content": "wlan0 down"}]},
         ]
@@ -360,6 +361,23 @@ class TestGeminiBackend:
         fr = contents[2]["parts"][0]["functionResponse"]
         assert fr["name"] == "run_command"          # mapped from id c1, not the id
         assert fr["response"]["result"] == "wlan0 down"
+
+    def test_unsigned_foreign_call_flattened_to_text(self):
+        # After a Groq→Gemini failover, tool calls have no thought_signature.
+        # They must be flattened to text (Gemini 3.x rejects signature-less
+        # functionCall parts), and their results kept as text (no orphaned
+        # functionResponse).
+        import json as _json
+        messages = [
+            {"role": "assistant", "content": [tg._GBlock("tool_use", name="run_command",
+                                     input={"command": "snap install chromium"}, id="c1")]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c1",
+                                          "content": "chromium installed"}]},
+        ]
+        blob = _json.dumps(tg._gem_contents_from_anthropic(messages))
+        assert "functionCall" not in blob
+        assert "functionResponse" not in blob
+        assert "snap install chromium" in blob and "chromium installed" in blob
 
     def test_tool_use_block_has_no_text_attr(self):
         # Regression: agentic_engine does `hasattr(b,'text') and b.text.strip()`.

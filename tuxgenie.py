@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.12.0"
+__version__ = "6.13.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -692,8 +692,14 @@ def _gem_bget(b, key, default=None):
 
 def _gem_contents_from_anthropic(messages):
     """Anthropic messages → Gemini 'contents'. Builds a tool_use_id→name map so
-    tool_result parts can carry the function name Gemini's functionResponse needs."""
-    id2name = {}
+    tool_result parts can carry the function name Gemini's functionResponse needs.
+
+    Gemini 3.x requires a thoughtSignature on every functionCall part it's asked
+    to replay. Tool calls that came from ANOTHER provider (e.g. after an
+    auto-failover from Groq → Gemini) have no signature, so replaying them as
+    functionCall parts fails with a 400. For those, we flatten the call and its
+    result into plain text so Gemini still sees the history and can continue."""
+    id2name, id2signed = {}, {}
     for m in messages:
         content = m.get("content")
         if isinstance(content, list):
@@ -702,6 +708,7 @@ def _gem_contents_from_anthropic(messages):
                     bid = _gem_bget(b, "id")
                     if bid:
                         id2name[bid] = _gem_bget(b, "name")
+                        id2signed[bid] = bool(_gem_bget(b, "thought_signature"))
     contents = []
     for m in messages:
         grole = "model" if m.get("role") == "assistant" else "user"
@@ -722,20 +729,32 @@ def _gem_contents_from_anthropic(messages):
                             part["thoughtSignature"] = sig
                         parts.append(part)
                 elif typ == "tool_use":
-                    part = {"functionCall": {"name": _gem_bget(b, "name"),
-                                             "args": _gem_bget(b, "input") or {}}}
                     sig = _gem_bget(b, "thought_signature")
                     if sig:                       # Gemini 3.x requires echoing this back
-                        part["thoughtSignature"] = sig
-                    parts.append(part)
+                        parts.append({"functionCall": {"name": _gem_bget(b, "name"),
+                                                        "args": _gem_bget(b, "input") or {}},
+                                      "thoughtSignature": sig})
+                    else:
+                        # Foreign / unsigned call (e.g. from Groq after failover) —
+                        # render as text so Gemini doesn't reject a signature-less
+                        # functionCall part.
+                        _args = _gem_bget(b, "input") or {}
+                        _cmd = _args.get("command") if isinstance(_args, dict) else ""
+                        parts.append({"text": f"[Earlier I ran: {_cmd or _gem_bget(b, 'name')}]"})
                 elif typ == "tool_result":
                     resc = _gem_bget(b, "content", "")
                     if isinstance(resc, list):
                         resc = "".join(x.get("text", "") if isinstance(x, dict) else str(x) for x in resc)
                     if not isinstance(resc, str):
                         resc = json.dumps(resc)
-                    nm = id2name.get(_gem_bget(b, "tool_use_id"), "run_command")
-                    parts.append({"functionResponse": {"name": nm, "response": {"result": resc}}})
+                    _tid = _gem_bget(b, "tool_use_id")
+                    if id2signed.get(_tid):
+                        nm = id2name.get(_tid, "run_command")
+                        parts.append({"functionResponse": {"name": nm, "response": {"result": resc}}})
+                    else:
+                        # Matching call was flattened to text — keep its result as text too,
+                        # so we never send an orphaned functionResponse.
+                        parts.append({"text": f"[Result: {resc[:1500]}]"})
         if parts:
             contents.append({"role": grole, "parts": parts})
     return contents
