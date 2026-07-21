@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.10.0"
+__version__ = "6.11.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2304,6 +2304,12 @@ REMOVING / UNINSTALLING APPS:
 INSTALLING APPS:
 - ALWAYS verify a package name exists before trying to install it (apt-cache show,
   snap info, flatpak search).
+- AVOID transitional / dummy packages. Some apt packages are just empty wrappers
+  that pull a snap (e.g. Ubuntu's 'chromium-browser' is a transitional package for
+  the 'chromium' snap). If 'apt-cache show' says "transitional" or "dummy", install
+  the REAL package directly instead — the snap (snap install chromium), the flatpak
+  (flatpak install flathub org.chromium.Chromium), or the vendor's own .deb — and
+  tell the user in one plain sentence which one you chose and why.
 - NEVER fabricate or guess download URLs. If you can't find the exact URL, say so.
 - After downloading a file, verify its type with 'file <downloaded_file>'.
 - If after checking apt, snap, flatpak, and the official website there is NO Linux
@@ -2457,7 +2463,10 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
         print(f"\n  {BMAGENTA}{BOLD}🧠 Memory:{R}  Similar issue resolved before:\n")
         for _e in _past[:2]:
             _steps = _e.get("steps", [])
-            print(f"  {DIM}[{_e.get('ts','')}]{R}  {_e.get('problem','')}")
+            _label = _clean_problem_label(_e.get("problem", ""))
+            if not _label:
+                continue
+            print(f"  {DIM}[{_e.get('ts','')}]{R}  {_label}")
             if _steps:
                 print(f"  {CYAN}→ Previously fixed by:{R} {_steps[0]}")
                 if len(_steps) > 1:
@@ -3986,6 +3995,24 @@ class _LiveProgress:
             self.last_action = l[:70]
 
 
+# Progress-line collapsing: apt/snap emit hundreds of carriage-return frames
+# ("Download snap … 12% 680kB/s 1m07s", "Ensure prerequisites … /"). We show one
+# clean line per task instead of flooding the screen.
+_PROGRESS_TAIL_RE = re.compile(r'(?:\s+\d+%.*|[\s\-\\|/]+)$')
+
+
+def _is_progress_line(s: str) -> bool:
+    return bool(re.search(r'[-\\|/]\s*$', s)) or bool(re.search(r'\b\d+%', s)) or 'B/s' in s
+
+
+def _progress_stem(s: str) -> str:
+    """The stable part of a progress line, with the changing %/speed/ETA/spinner
+    stripped — used to detect and collapse repeated frames of the same task."""
+    x = re.sub(r'\s+\d+%.*$', '', s)          # percentage and everything after it
+    x = re.sub(r'[\s\-\\|/]+$', '', x)        # trailing spinner + whitespace
+    return x.strip()
+
+
 def run_cmd_live(cmd, sudo_password=None, timeout=120):
     """Run a command and stream its output line-by-line in real time.
     Returns (returncode, stdout_str, stderr_str)."""
@@ -4030,6 +4057,7 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
         return _TERM_STATE_ESC.sub('', line)
 
     progress = _LiveProgress()
+    _last_stem = [None]   # shared across reader threads to collapse progress spam
 
     def _reader(stream, buf, color):
         pending = b''
@@ -4064,6 +4092,17 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
                         continue
                     safe = _safe_line(line)
                     if safe.strip():
+                        # Collapse apt/snap progress spam (hundreds of % / spinner
+                        # frames) to ONE clean line per task — display only; the
+                        # captured buffer above keeps the raw output intact.
+                        if _is_progress_line(safe):
+                            stem = _progress_stem(safe)
+                            if stem and stem == _last_stem[0]:
+                                continue
+                            _last_stem[0] = stem
+                            safe = (stem + " …") if stem else safe
+                        else:
+                            _last_stem[0] = None
                         progress.feed(safe)
                         progress.print_line(f"  {color}{safe}{R}")
         except Exception:
@@ -7066,6 +7105,26 @@ def _mem_save(data: dict):
     except Exception:
         pass
 
+def _clean_problem_label(text: str, limit: int = 90) -> str:
+    """A short, human-readable label for a task. Some features (e.g. Performance
+    Boost) prepend a full live-diagnostic dump to the prompt; strip that so the
+    Memory hint shows the actual problem, not '[memory]\\ntotal …' noise. Also
+    sanitises legacy entries already saved with the polluted text."""
+    if not text:
+        return ""
+    t = str(text).strip()
+    # Cut where features append a diagnostic scan / raw section dumps.
+    for marker in ("Here is a COMPLETE live diagnostic", "Here is a complete live diagnostic",
+                   "\n\nHere is ", "\n\n[", "\n["):
+        idx = t.find(marker)
+        if idx > 0:
+            t = t[:idx]
+            break
+    # The first non-empty line is the human-readable problem.
+    line = next((ln.strip() for ln in t.splitlines() if ln.strip()), t.strip())
+    return (line[:limit].rstrip() + "…") if len(line) > limit else line
+
+
 def _mem_record_fix(problem: str, successful_steps: list,
                     failing_cmd: str = "", error_excerpt: str = ""):
     """Save a successfully resolved issue to cross-session memory.
@@ -7083,7 +7142,7 @@ def _mem_record_fix(problem: str, successful_steps: list,
     solved  = [s for s in solved if s.get("problem", "").lower() != p_lower]
     entry = {
         "ts":      datetime.datetime.now().strftime("%Y-%m-%d"),
-        "problem": problem.strip()[:120],
+        "problem": _clean_problem_label(problem, 120),
         "steps":   [s for s in successful_steps if s][:5],
         "hit_count": 1,
         "verified": True,
@@ -7245,7 +7304,9 @@ def _mem_block() -> str:
     lines = []
     for e in solved[-10:]:   # last 10 resolved issues
         ts    = e.get("ts", "")
-        prob  = e.get("problem", "")
+        prob  = _clean_problem_label(e.get("problem", ""))
+        if not prob:
+            continue
         steps = e.get("steps", [])
         step_str = " → ".join(steps[:2]) if steps else "(fix not recorded)"
         lines.append(f"  [{ts}] {prob}  →  {step_str}")

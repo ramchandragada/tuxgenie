@@ -1100,6 +1100,58 @@ class TestCatalogPage:
                 assert esc(name) in doc, f"catalog page missing feature {name}"
 
 
+class TestMemoryLabelCleanup:
+    """The Memory hint must show the real problem, not a diagnostic-dump blob."""
+
+    def test_strips_diagnostic_dump(self):
+        polluted = ("Make my Linux system as fast as possible.\n\nHere is a COMPLETE "
+                    "live diagnostic scan collected right now:\n\n[memory]\ntotal")
+        assert tg._clean_problem_label(polluted) == "Make my Linux system as fast as possible."
+
+    def test_handles_truncated_legacy_entry(self):
+        trunc = ("Make my Linux system as fast as possible.\n\nHere is a COMPLETE "
+                 "live diagnostic scan collected right now:\n\n[memory]\ntota")
+        assert tg._clean_problem_label(trunc) == "Make my Linux system as fast as possible."
+
+    def test_clean_text_unchanged(self):
+        for s in ("install chromium on this pc",
+                  "I just switched to Linux — set this machine up with the everyday essentials."):
+            assert tg._clean_problem_label(s) == s
+
+    def test_empty(self):
+        assert tg._clean_problem_label("") == ""
+
+
+class TestProgressCollapse:
+    """apt/snap progress spam collapses to one clean line per task."""
+
+    def test_progress_detection(self):
+        assert tg._is_progress_line('Download snap "cups" (1229)          12% 680kB/s 1m07s')
+        assert tg._is_progress_line('Ensure prerequisites available                    /')
+        assert not tg._is_progress_line("chromium 150.0.7871.114 from Canonical installed")
+
+    def test_stem_strips_changing_parts(self):
+        a = tg._progress_stem('Download snap "cups"          12% 680kB/s 1m07s')
+        b = tg._progress_stem('Download snap "cups"          40% 1.2MB/s 20.1s')
+        assert a == b == 'Download snap "cups"'
+
+    def test_flood_collapses(self):
+        lines = (['Ensure prerequisites available            /'] * 40
+                 + [f'Download snap "cups"   {p}% {p*10}kB/s' for p in range(100)]
+                 + ["chromium installed", "=> Snap installation complete"])
+        last = [None]; shown = 0
+        for ln in lines:
+            if tg._is_progress_line(ln):
+                stem = tg._progress_stem(ln)
+                if stem and stem == last[0]:
+                    continue
+                last[0] = stem
+            else:
+                last[0] = None
+            shown += 1
+        assert shown == 4, shown   # 2 progress stems + 2 result lines
+
+
 class TestProviderFailover:
     """Auto-switch on limits/outages: free → free only, never Claude, toggleable."""
 
