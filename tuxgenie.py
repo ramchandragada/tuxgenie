@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.11.0"
+__version__ = "6.12.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2326,15 +2326,17 @@ KNOWING WHEN TO STOP:
 
 
 def _display_tool_call(cmd, description, risk, requires_root, step_num):
-    """Show the user what Claude wants to do before running it."""
+    """Show the user what Claude wants to do before running it. Compact: one
+    header line (step · risk · sudo · what it does) + the command."""
     risk_colour = {"safe": GREEN, "moderate": YELLOW, "dangerous": RED}.get(risk, CYAN)
-    sudo_badge  = f"  {RED}{BOLD}[SUDO NEEDED]{R}" if requires_root else ""
-    print(f"\n  {'─'*60}")
-    print(f"  {CYAN}{BOLD}Step {step_num}{R}  {risk_colour}{BOLD}{risk.upper()}{R}{sudo_badge}")
-    print(f"  {description}")
+    sudo_badge  = f" {DIM}·{R} {RED}{BOLD}[SUDO]{R}" if requires_root else ""
+    head = f"{CYAN}{BOLD}Step {step_num}{R} {DIM}·{R} {risk_colour}{BOLD}{risk.upper()}{R}{sudo_badge}"
+    if description:
+        head += f" {DIM}·{R} {description}"
+    print(f"\n  {head}")
     print(f"  {DIM}$ {cmd}{R}")
     if risk == "dangerous":
-        print(f"\n  {BG_RED}{BOLD}  ⚠  DESTRUCTIVE — review carefully  {R}")
+        print(f"  {BG_RED}{BOLD}  ⚠  DESTRUCTIVE — review carefully  {R}")
 
 
 def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=None):
@@ -2383,7 +2385,6 @@ def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=
         _RELEASE_RE = re.compile(r'^\s*(?:sudo\s+)?do-release-upgrade\b', re.IGNORECASE)
         tool_timeout = 3600 if (_HEAVY_RE.search(actual_cmd) or _RELEASE_RE.search(actual_cmd)) else 300
 
-        print(f"  {DIM}▶ Running…{R}")
         rc, stdout, stderr = run_cmd_live(
             actual_cmd,
             sudo_password=sudo_pw if requires_root else None,
@@ -2422,18 +2423,15 @@ def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=
         if (any(path.startswith(p) for p in _DENIED_PREFIXES)
                 or path in _DENIED_FILES
                 or path.endswith((".pem", ".key", ".p12", ".pfx"))):
-            print(f"\n  {'─'*60}")
-            print(f"  {RED}⚠  Blocked: {path} contains sensitive credentials.{R}")
+            print(f"\n  {RED}⚠  Blocked: {path} contains sensitive credentials.{R}")
             return f"BLOCKED: TuxGenie does not read credential files ({path})."
         try:
             with open(path) as f:
                 content = f.read(8000)
-            print(f"\n  {'─'*60}")
-            print(f"  {CYAN}{BOLD}Read file{R}  {DIM}{path}{R}")
+            print(f"\n  {CYAN}{BOLD}Read file{R}  {DIM}{path}{R}")
             return content
         except Exception as e:
-            print(f"\n  {'─'*60}")
-            print(f"  {YELLOW}Could not read {path}: {e}{R}")
+            print(f"\n  {YELLOW}Could not read {path}: {e}{R}")
             return f"Could not read file: {e}"
 
     return f"Unknown tool: {name}"

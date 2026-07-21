@@ -1122,6 +1122,31 @@ class TestMemoryLabelCleanup:
         assert tg._clean_problem_label("") == ""
 
 
+class TestCompactStepLayout:
+    """The agentic step header is compact but keeps all safety info."""
+
+    def _render(self, **kw):
+        import io, re, contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            tg._display_tool_call(**kw)
+        return re.sub(r"\x1b\[[0-9;]*m", "", buf.getvalue())
+
+    def test_safe_step_is_two_lines_no_heavy_rule(self):
+        out = self._render(cmd="dpkg -l | grep chromium", description="Check if installed",
+                           risk="safe", requires_root=False, step_num=1)
+        assert "─────" not in out                      # no heavy separator
+        assert "Step 1" in out and "SAFE" in out and "Check if installed" in out
+        assert "$ dpkg -l | grep chromium" in out
+        # header + command = 2 non-empty lines
+        assert len([ln for ln in out.splitlines() if ln.strip()]) == 2
+
+    def test_sudo_and_danger_preserved(self):
+        out = self._render(cmd="apt purge -y x", description="Remove it",
+                           risk="dangerous", requires_root=True, step_num=3)
+        assert "[SUDO]" in out and "DANGEROUS" in out and "DESTRUCTIVE" in out
+
+
 class TestProgressCollapse:
     """apt/snap progress spam collapses to one clean line per task."""
 
