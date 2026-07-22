@@ -273,7 +273,7 @@ Priority: optional
 Architecture: {ARCH}
 Installed-Size: {INSTALLED_KB}
 Depends: python3 (>= 3.8)
-Recommends: python3-pip, xterm | gnome-terminal | konsole | xfce4-terminal | mate-terminal | lxterminal | ptyxis
+Recommends: python3-pip, python3-gi, gir1.2-vte-2.91, gir1.2-gtk-3.0, xterm | gnome-terminal | konsole | xfce4-terminal | mate-terminal | lxterminal | ptyxis
 Conflicts: ai-terminal, tuxgenie (<< {VERSION})
 Replaces: ai-terminal, tuxgenie (<< {VERSION})
 Provides: ai-terminal
@@ -388,8 +388,17 @@ case "$1" in
     # install/upgrade so older systems get the latest fixes.
     cat > /usr/bin/tuxgenie-gui << 'GUISCRIPT'
 #!/bin/bash
-# TuxGenie GUI launcher - opens tuxgenie in a terminal as a single-instance,
-# app-like window. Avoid x-terminal-emulator (can resolve to Warp on 26.04+).
+# TuxGenie GUI launcher - opens tuxgenie as an app-like, single-instance window.
+# Avoid x-terminal-emulator (can resolve to Warp on 26.04+).
+
+# Prefer the real app window (own icon, groups in the dock). Exit 3 = GTK/VTE
+# unavailable or spawn failed -> fall back to a plain terminal below.
+if command -v tuxgenie-app >/dev/null 2>&1; then
+    tuxgenie-app
+    rc=$?
+    [ "$rc" != "3" ] && exit "$rc"
+fi
+
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/tuxgenie-$(id -u).lock"
 
 # Single instance: if a TuxGenie session is already open, don't stack a new
@@ -452,7 +461,7 @@ Terminal=false
 Categories=System;Administration;Utility;
 Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
 StartupNotify=false
-StartupWMClass=TuxGenie
+StartupWMClass=com.tuxgenie.TuxGenie
 SingleMainWindow=true
 DESKTOPENTRY
     chmod 644 /usr/share/applications/tuxgenie.desktop
@@ -510,14 +519,103 @@ esac
 exit 0
 """
 
-# GUI launcher: detects the best available terminal emulator and opens TuxGenie in it.
-# This is more reliable than Terminal=true which depends on x-terminal-emulator being set.
+# App window: hosts the TuxGenie text UI inside our own GTK+VTE window so it
+# carries the TuxGenie app-id/icon (groups under the penguin in the dock) and is
+# single-instance by design. Exits 3 if GTK/VTE are unavailable, so the launcher
+# can fall back to a plain terminal. ASCII-only (bytes literal).
+TUXGENIE_APP = b'''\
+#!/usr/bin/env python3
+# TuxGenie app window - runs the TuxGenie text UI inside our own GTK window so it
+# shows the TuxGenie icon and groups under it in the dock. Exits 3 if GTK/VTE are
+# missing; then tuxgenie-gui falls back to a plain terminal.
+import os, sys
+try:
+    import gi
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("Vte", "2.91")
+    from gi.repository import Gtk, Vte, GLib, Gio
+except Exception as e:
+    print("tuxgenie-app: GTK/VTE unavailable:", e, file=sys.stderr)
+    sys.exit(3)
+
+APP_ID = "com.tuxgenie.TuxGenie"
+RUN = "/usr/bin/tuxgenie; echo; read -rp 'Press Enter to close...' _"
+
+class Win(Gtk.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="TuxGenie")
+        self.set_default_size(920, 640)
+        for nm in ("tuxgenie", "com.tuxgenie.TuxGenie"):
+            try:
+                self.set_icon_name(nm)
+                break
+            except Exception:
+                pass
+        self.term = Vte.Terminal()
+        try:
+            self.term.set_scrollback_lines(-1)
+            self.term.set_mouse_autohide(True)
+        except Exception:
+            pass
+        self.term.connect("child-exited", self._exited)
+        sw = Gtk.ScrolledWindow()
+        sw.add(self.term)
+        self.add(sw)
+        self.show_all()
+        try:
+            self.term.spawn_async(
+                Vte.PtyFlags.DEFAULT,
+                os.path.expanduser("~"),
+                ["/bin/bash", "-lc", RUN],
+                None,
+                GLib.SpawnFlags.DEFAULT,
+                None, None, -1, None, self._spawned)
+        except Exception as e:
+            print("tuxgenie-app: spawn failed:", e, file=sys.stderr)
+            os._exit(3)
+
+    def _spawned(self, *args):
+        err = next((a for a in args if isinstance(a, GLib.Error)), None)
+        if err is not None:
+            print("tuxgenie-app: could not start tuxgenie:", err.message, file=sys.stderr)
+            os._exit(3)
+
+    def _exited(self, *args):
+        app = self.get_application()
+        if app is not None:
+            app.quit()
+
+class App(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self.win = None
+
+    def do_activate(self):
+        if self.win is None:
+            self.win = Win(self)
+        self.win.present()
+
+if __name__ == "__main__":
+    sys.exit(App().run(None))
+'''
+
+# GUI launcher: prefers the TuxGenie app window (own icon), else opens the best
+# available terminal emulator. More reliable than Terminal=true.
 LAUNCHER_GUI = b"""\
 #!/bin/bash
-# TuxGenie GUI launcher - opens tuxgenie in a real terminal emulator as a
-# single-instance, app-like window.
+# TuxGenie GUI launcher - opens tuxgenie as an app-like, single-instance window.
 # Note: we intentionally avoid x-terminal-emulator because on Ubuntu 26.04+
 # it can resolve to Warp Terminal, which doesn't accept the standard -e flag.
+
+# Prefer the real app window (own icon, groups in the dock, single-instance via
+# GtkApplication). Exit code 3 = GTK/VTE unavailable or spawn failed -> fall
+# back to a plain terminal below. Any other exit code is the app's own result.
+if command -v tuxgenie-app >/dev/null 2>&1; then
+    tuxgenie-app
+    rc=$?
+    [ "$rc" != "3" ] && exit "$rc"
+fi
+
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/tuxgenie-$(id -u).lock"
 
 # Single instance: if a TuxGenie session is already open, don't stack a new
@@ -594,7 +692,7 @@ Terminal=false
 Categories=System;Administration;Utility;
 Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
 StartupNotify=false
-StartupWMClass=TuxGenie
+StartupWMClass=com.tuxgenie.TuxGenie
 SingleMainWindow=true
 """
 
@@ -738,6 +836,8 @@ data_entries = [
      "type": "file", "data": LAUNCHER,                                   "mode": 0o755},
     {"path": "./usr/bin/tuxgenie-gui",
      "type": "file", "data": LAUNCHER_GUI,                               "mode": 0o755},
+    {"path": "./usr/bin/tuxgenie-app",
+     "type": "file", "data": TUXGENIE_APP,                               "mode": 0o755},
     {"path": "./usr/bin/tuxgenie-update",
      "type": "file", "data": EMERGENCY_UPDATE,                           "mode": 0o755},
     {"path": "./usr/lib/tuxgenie/tuxgenie.py",
