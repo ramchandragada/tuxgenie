@@ -70,6 +70,21 @@ cd tuxgenie
 pip install .
 ```
 
+### Which distros are supported?
+
+TuxGenie is built for **every** Linux user. The AI assistant detects your
+package manager (apt, dnf, pacman, zypper, apk, …) and adapts its commands, and
+`u` self-update works on both `.deb` and pip installs — so the **core assistant
+works on any Linux distro**.
+
+| | Debian family (Ubuntu, Mint, Pop!_OS, Debian, Zorin, elementary, Kali…) | Other distros (Fedora, Arch, openSUSE, …) |
+|---|:---:|:---:|
+| AI fix / diagnose / install, system updates | ✅ | ✅ |
+| `.deb` install + app-menu icon + windowed app | ✅ | — (install via `pip`, runs in your terminal) |
+| App catalog | ✅ full | ✅ Flatpak entries (auto-adapted for your package manager) |
+
+On non-Debian systems, install with `pip install tuxgenie` and run `tuxgenie`.
+
 ---
 
 ## First run

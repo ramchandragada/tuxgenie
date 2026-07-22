@@ -36,6 +36,34 @@ TuxGenie is a single-file AI-powered Linux assistant (`tuxgenie.py`, ~7500 lines
 - `create_deb.py` reads version from env var `TUXGENIE_VERSION` (CI sets this from the git tag)
 - Bump minor version (e.g. 4.6.0 → 4.7.0) for new features or fixes
 
+## Release Gate — MANDATORY on every version bump
+
+**No version ships unless it passes the gate.** Every time `__version__` is
+bumped, the change MUST pass, before it is committed/pushed:
+
+1. `ruff check tuxgenie.py` — clean (lint is enforced; a lint error blocks the release)
+2. `pytest tests/` — all pass, **including `tests/test_fundamentals.py`**, which
+   asserts the app's core promises: version sync (`__version__` == `pyproject.toml`),
+   the banner renders, all free backends construct, catalog + menu integrity,
+   dangerous-command blocking, secret scrubbing, and cross-distro prompt adaptation.
+
+This is enforced automatically in `release.yml` (the "Release gate" step): if lint
+or tests fail, the `.deb`/wheel are never built and nothing is published. Always run
+`ruff check tuxgenie.py && pytest tests/` locally before pushing a version bump —
+never rely on the gate alone to catch a mistake.
+
+When adding a genuinely new fundamental guarantee, add a test for it to
+`tests/test_fundamentals.py` so the gate keeps protecting it.
+
+## Cross-distro support
+
+TuxGenie must work for **every** Linux user, not just Debian/Ubuntu:
+- The AI engine adapts to the detected package manager (`base_ctx()['pkg_mgr']`:
+  apt/dnf/pacman/zypper/apk/…). Never hard-code apt in AI guidance.
+- Catalog installs are distro-adapted via `_distro_adapt_prompt()` (Flatpak/native
+  on non-Debian). Prefer a Flathub app-id in new catalog entries so they work everywhere.
+- `u` self-update handles both `.deb` (dpkg) and non-Debian (pip) systems.
+
 ## Cost Optimisation Principles
 
 - Default model: Haiku (cheapest). Escalate to Sonnet only on failure.

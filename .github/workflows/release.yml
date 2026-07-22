@@ -57,6 +57,24 @@ jobs:
           python3 -m py_compile tuxgenie.py
           echo "Syntax OK"
 
+      # ── Release gate ──────────────────────────────────────────────────────
+      # RULE: no version ships unless linting and the full test suite (including
+      # tests/test_fundamentals.py — the app's core promises) pass. This is the
+      # gate that stops a broken or version-mismatched build from ever being
+      # published. If any step here fails, the build/publish steps below are
+      # skipped and the release does not happen.
+      - name: Release gate — lint + tests + fundamentals
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          pip install pytest ruff
+          [ -f requirements.txt ] && pip install -r requirements.txt || true
+          echo "::group::ruff"
+          ruff check tuxgenie.py
+          echo "::endgroup::"
+          echo "::group::pytest (incl. fundamentals)"
+          pytest tests/ -q
+          echo "::endgroup::"
+
       - name: Install build tools
         if: steps.check.outputs.exists == 'false'
         run: pip install build twine

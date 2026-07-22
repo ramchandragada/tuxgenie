@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.30.0"
+__version__ = "6.31.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8150,6 +8150,28 @@ def _parse_app_selection(sel: str, max_id: int = None):
     return sorted(ids)
 
 
+def _distro_adapt_prompt(install_prompt: str, bctx: dict) -> str:
+    """Catalog install prompts often name a Debian method (apt/.deb). On a
+    non-Debian distro, prepend guidance so the AI achieves the SAME app with the
+    right method for the user's package manager (Flatpak or native), instead of
+    blindly running apt. Debian-family systems get the prompt unchanged."""
+    pm = (bctx.get("pkg_mgr") or "").strip()
+    if pm in ("", "apt"):
+        return install_prompt          # Debian-family (or unknown) — no change
+    osname = bctx.get("os", "this system")
+    note = (
+        f"IMPORTANT — the user is on {osname} using the '{pm}' package manager, "
+        f"NOT Debian/apt. If the instructions below mention apt, apt-get, dpkg or "
+        f"a .deb, do NOT run those. Instead install the SAME application the right "
+        f"way for {pm}: prefer a Flatpak from Flathub if a Flatpak app-id is given "
+        f"(first ensure flatpak is installed and the flathub remote is added), "
+        f"otherwise use the correct '{pm}' package name, or the vendor's official "
+        f"repo for {pm}. Verify the app is actually available before claiming success.\n\n"
+        f"App to install:\n"
+    )
+    return note + install_prompt
+
+
 def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_label, history_tag):
     """Shared multi-select picker used by both Install Apps ([30]) and AI Tools
     ([40]). Renders the catalog grouped by category, accepts numbers/ranges,
@@ -8230,7 +8252,7 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
     for i, entry in enumerate(chosen, 1):
         section(f"[{i}/{len(chosen)}] Installing {entry['name']}")
         try:
-            agentic_engine(backend, entry["prompt"], bctx, slog)
+            agentic_engine(backend, _distro_adapt_prompt(entry["prompt"], bctx), bctx, slog)
         except KeyboardInterrupt:
             warn(f"Cancelled. Skipping remaining {item_label}.")
             return
