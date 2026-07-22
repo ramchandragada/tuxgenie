@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.15.0"
+__version__ = "6.16.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -7667,6 +7667,27 @@ APP_CATALOG = [
     {"id": 175,"name": "Proton VPN",          "cat": "Security",       "prompt": "Install the official Proton VPN app. Add Proton's official apt repository (download the protonvpn-stable-release .deb from protonvpn.com/download-linux), then apt update && apt install proton-vpn-gnome-desktop.", "desc": "Privacy-focused VPN (official app)"},
     {"id": 176,"name": "Mullvad VPN",         "cat": "Security",       "prompt": "Install the Mullvad VPN app via its official apt repository (mullvad.net/download/vpn/linux) or by downloading the official .deb from mullvad.net.", "desc": "Privacy-focused VPN (no-logs)"},
     {"id": 177,"name": "OpenSnitch",          "cat": "Security",       "prompt": "Install OpenSnitch, an application-level firewall that asks before programs connect out. Prefer apt (opensnitch) on newer Debian/Ubuntu, otherwise download the .deb (daemon + python3-opensnitch-ui) from github.com/evilsocket/opensnitch/releases. Enable the opensnitchd service and start the UI.", "desc": "Interactive application firewall"},
+    {"id": 178,"name": "Zed",                 "cat": "Developer",      "prompt": "Install Zed, the fast, modern, collaborative code editor written in Rust. Run the official installer: curl -f https://zed.dev/install.sh | sh (it installs to ~/.local and adds a 'zed' launcher). A Flathub build (dev.zed.Zed) also exists if the user prefers Flatpak.", "desc": "Fast modern code editor (Rust)"},
+    {"id": 179,"name": "Helix",               "cat": "Developer",      "prompt": "Install Helix, the post-modern modal terminal text editor (Kakoune/Vim-inspired, built-in LSP). On Debian use apt (helix); on Ubuntu the recommended method is snap: sudo snap install helix --classic (install snapd first if needed).", "desc": "Modal terminal editor with built-in LSP"},
+    {"id": 180,"name": "Warp",                "cat": "Developer",      "prompt": "Install Warp, the modern Rust-based terminal with an AI assistant and block-based workflow. Download the x64 (or ARM64) .deb from warp.dev/download and install with sudo apt install ./<file>.deb — this also sets up Warp's apt repo for automatic updates.", "desc": "Modern AI terminal (blocks + AI assistant)"},
+    {"id": 181,"name": "Ghostty",             "cat": "Developer",      "prompt": "Install Ghostty, the fast GPU-accelerated terminal emulator by Mitchell Hashimoto. It is not yet on Flathub; on Ubuntu use snap (sudo snap install ghostty --classic) or follow the official binary-install guide at ghostty.org/docs/install/binary for the current Debian/Ubuntu method.", "desc": "GPU-accelerated terminal emulator"},
+    {"id": 182,"name": "Distrobox",           "cat": "Developer",      "prompt": "Install Distrobox, which runs any Linux distro's apps inside a container on your current system (great for AUR/dnf/apt packages anywhere). Install with apt (distrobox) — it needs podman (recommended) or docker on the host, so install podman too if it is missing.", "desc": "Run any distro's apps in a container"},
+    {"id": 183,"name": "Fish Shell",          "cat": "Developer",      "prompt": "Install fish, the Friendly Interactive Shell with autosuggestions, syntax highlighting and sane defaults out of the box, via apt (fish). Explain how to make it the default with chsh -s $(which fish) but do NOT change the default shell without asking first.", "desc": "Friendly shell with autosuggestions"},
+    {"id": 184,"name": "tmux",                "cat": "Developer",      "prompt": "Install tmux, the terminal multiplexer for splitting one terminal into panes/windows and keeping sessions alive after disconnect, via apt (tmux).", "desc": "Terminal multiplexer (panes & sessions)"},
+    {"id": 185,"name": "GNOME Boxes",         "cat": "System Tools",   "prompt": "Install GNOME Boxes, the simplest way to create and run virtual machines on Linux, via flatpak from Flathub: org.gnome.Boxes (or apt: gnome-boxes). Good for trying other operating systems safely.", "desc": "Simple virtual machines"},
+    {"id": 186,"name": "Waydroid",            "cat": "System Tools",   "prompt": "Install Waydroid, which runs a full Android system in a container so you can use Android apps on Linux (needs a Wayland session). Add the official repository per waydro.id (its install script), then apt install waydroid, and run 'waydroid init'. Explain it works best on Wayland, not Xorg.", "desc": "Run Android apps on Linux"},
+    {"id": 187,"name": "OpenRGB",             "cat": "System Tools",   "prompt": "Install OpenRGB, vendor-independent control for RGB lighting on motherboards, RAM, GPUs, keyboards and mice, via flatpak from Flathub: org.openrgb.OpenRGB. IMPORTANT: also install the udev rules so it can detect devices without root — guide the user through the udev-rules step from the OpenRGB docs.", "desc": "Universal RGB lighting control"},
+    {"id": 188,"name": "Solaar",              "cat": "System Tools",   "prompt": "Install Solaar, the manager for Logitech keyboards, mice and trackpads (battery level, pairing Unifying/Bolt receivers, per-device settings), via apt (solaar).", "desc": "Logitech device manager"},
+    {"id": 189,"name": "CoreCtrl",            "cat": "System Tools",   "prompt": "Install CoreCtrl, a GUI to control CPU and (AMD) GPU performance profiles, fan curves and per-application settings, via apt (corectrl). Mention it may need a kernel boot parameter (amdgpu.ppfeaturemask) for full GPU control on AMD.", "desc": "CPU/GPU performance & fan control"},
+    {"id": 190,"name": "Warehouse",           "cat": "System Tools",   "prompt": "Install Warehouse, a friendly GUI for managing all your installed Flatpak apps (batch actions, user data cleanup, remotes, leftover-data removal), via flatpak from Flathub: io.github.flattool.Warehouse.", "desc": "Manage your Flatpak apps"},
+    {"id": 191,"name": "Jellyfin Server",     "cat": "Media",          "prompt": "Install the Jellyfin media SERVER (your own free, self-hosted Netflix/Plex for movies, TV and music). On Debian/Ubuntu add the official repo with: curl -fsSL https://repo.jellyfin.org/install-debuntu.sh | sudo bash, then sudo systemctl enable --now jellyfin, and open http://localhost:8096 to finish setup. (This is the server; the 'Jellyfin Media Player' app is the separate client.)", "desc": "Self-hosted media server (your own Netflix)"},
+    {"id": 192,"name": "MuseScore",           "cat": "AV Creation",    "prompt": "Install MuseScore Studio, the free music-notation / sheet-music composer (write, play back and print scores), via flatpak from Flathub: org.musescore.MuseScore. Mention the official AppImage from musescore.org is an alternative that the MuseScore team updates directly.", "desc": "Music notation & sheet-music editor"},
+    {"id": 193,"name": "Super Productivity",  "cat": "Office & Notes", "prompt": "Install Super Productivity, an open-source to-do list and time tracker with Pomodoro, Jira/GitHub/GitLab integration and daily planning, via flatpak from Flathub: com.super_productivity.SuperProductivity.", "desc": "To-do list + time tracker (Pomodoro)"},
+    {"id": 194,"name": "Planify",             "cat": "Office & Notes", "prompt": "Install Planify, a clean GTK task manager and to-do app with projects, reminders and optional Todoist/Nextcloud sync, via flatpak from Flathub: io.github.alainm23.planify.", "desc": "Task manager & to-do (Todoist sync)"},
+    {"id": 195,"name": "yt-dlp",              "cat": "Utilities",      "prompt": "Install yt-dlp, the powerful command-line video/audio downloader (a youtube-dl successor supporting hundreds of sites), preferably with pipx (pipx install yt-dlp) so it stays up to date, or apt (yt-dlp). Remind the user to only download content they are allowed to.", "desc": "Command-line video/audio downloader"},
+    {"id": 196,"name": "Blanket",             "cat": "Utilities",      "prompt": "Install Blanket, which plays background ambient sounds (rain, waves, cafe, white noise) to help you focus, relax or sleep, via flatpak from Flathub: com.rafaelmardojai.Blanket.", "desc": "Ambient background sounds for focus"},
+    {"id": 197,"name": "Jami",                "cat": "Communication", "prompt": "Install Jami, a free, fully peer-to-peer (serverless) messenger with encrypted calls, video and chat — no account or phone number required, via flatpak from Flathub: net.jami.Jami.", "desc": "Private peer-to-peer messaging & calls"},
+    {"id": 198,"name": "LibreSprite",         "cat": "Graphics",       "prompt": "Install LibreSprite, the free/open-source pixel-art and sprite-animation editor (a community fork of Aseprite), via flatpak from Flathub: com.github.libresprite.LibreSprite.", "desc": "Pixel-art & sprite animation editor"},
 ]
 
 
@@ -7792,7 +7813,7 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
 
 
 def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — 177-app catalog covering browsers, communication,
+    """Quick app installer — 198-app catalog covering browsers, communication,
     office, media, graphics, developer tools, system tools, files & sync,
     utilities, gaming, security, and free/open-source games. Each entry maps to a
     natural-language install prompt;
@@ -9138,7 +9159,7 @@ MENU_ITEMS = [
     ("39", "suggest",   "Suggest a Setup",    "Not sure? Answer one question, get the right setup",  feat_suggest_setup),
     ("40", "env",       "Dev Environments",   "Ready-to-run stacks: LAMP/LEMP, Node, Python, DBs, WordPress", feat_dev_environments),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "177-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
+    ("77", "apps",      "Install Apps",       "198-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
     ("99", "ai",        "AI Tools",           "22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
@@ -9259,7 +9280,7 @@ def show_menu(compact=False):
     _item("40", "Dev Environments",    "Ready-to-run stacks: LAMP/LEMP, Node, Python, databases, WordPress")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
-    _item("77", "Install Apps",        "🎁 177 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
+    _item("77", "Install Apps",        "🎁 198 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
     _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
     _item("99", "AI Tools",            "🤖 22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI, GPT4All…")
 
