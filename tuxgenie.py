@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.16.0"
+__version__ = "6.17.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -7688,6 +7688,8 @@ APP_CATALOG = [
     {"id": 196,"name": "Blanket",             "cat": "Utilities",      "prompt": "Install Blanket, which plays background ambient sounds (rain, waves, cafe, white noise) to help you focus, relax or sleep, via flatpak from Flathub: com.rafaelmardojai.Blanket.", "desc": "Ambient background sounds for focus"},
     {"id": 197,"name": "Jami",                "cat": "Communication", "prompt": "Install Jami, a free, fully peer-to-peer (serverless) messenger with encrypted calls, video and chat — no account or phone number required, via flatpak from Flathub: net.jami.Jami.", "desc": "Private peer-to-peer messaging & calls"},
     {"id": 198,"name": "LibreSprite",         "cat": "Graphics",       "prompt": "Install LibreSprite, the free/open-source pixel-art and sprite-animation editor (a community fork of Aseprite), via flatpak from Flathub: com.github.libresprite.LibreSprite.", "desc": "Pixel-art & sprite animation editor"},
+    {"id": 199,"name": "Stellarium",          "cat": "Utilities",      "prompt": "Install Stellarium, the free planetarium that shows a realistic 3D sky on your screen — spot planets, stars and constellations in real time, via flatpak from Flathub: org.stellarium.Stellarium (or apt: stellarium). Great for stargazing, students and families.", "desc": "Free planetarium — explore the night sky"},
+    {"id": 200,"name": "Starship",            "cat": "Developer",      "prompt": "Install Starship, the fast, minimal, cross-shell prompt that shows git status, language versions and more. Run the official installer: curl -sS https://starship.rs/install.sh | sh. Then tell the user to add the init line to their shell config (e.g. eval \"$(starship init bash)\" in ~/.bashrc, or the fish/zsh equivalent) — but do NOT edit their shell config without asking first.", "desc": "Fast, minimal cross-shell prompt"},
 ]
 
 
@@ -7813,7 +7815,7 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
 
 
 def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — 198-app catalog covering browsers, communication,
+    """Quick app installer — 200-app catalog covering browsers, communication,
     office, media, graphics, developer tools, system tools, files & sync,
     utilities, gaming, security, and free/open-source games. Each entry maps to a
     natural-language install prompt;
@@ -9159,7 +9161,7 @@ MENU_ITEMS = [
     ("39", "suggest",   "Suggest a Setup",    "Not sure? Answer one question, get the right setup",  feat_suggest_setup),
     ("40", "env",       "Dev Environments",   "Ready-to-run stacks: LAMP/LEMP, Node, Python, DBs, WordPress", feat_dev_environments),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "198-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
+    ("77", "apps",      "Install Apps",       "200-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
     ("99", "ai",        "AI Tools",           "22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
@@ -9280,7 +9282,7 @@ def show_menu(compact=False):
     _item("40", "Dev Environments",    "Ready-to-run stacks: LAMP/LEMP, Node, Python, databases, WordPress")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
-    _item("77", "Install Apps",        "🎁 198 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
+    _item("77", "Install Apps",        "🎁 200 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
     _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
     _item("99", "AI Tools",            "🤖 22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI, GPT4All…")
 
