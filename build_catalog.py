@@ -107,6 +107,9 @@ def build():
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="tuxgenie.svg">
+<link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
+<link rel="apple-touch-icon" href="tuxgenie-256.png">
 <title>TuxGenie — Full Catalog ({len(apps)} apps · {len(ais)} AI tools · {tools_count} features)</title>
 <meta name="description" content="The complete TuxGenie reference: {tools_count} features and guided setups, {len(apps)} one-tap apps, {len(ais)} AI tools, and {len(clouds)} cloud providers. Search everything TuxGenie can install and do.">
 <style>

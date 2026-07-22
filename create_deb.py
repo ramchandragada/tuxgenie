@@ -209,11 +209,21 @@ if os.path.exists(_community_path):
 else:
     COMMUNITY_FIXES = b'{"version": 1, "entries": []}\n'
 
-# ── Generate icons at standard hicolor sizes ─────────────────────────────────
-print("  Generating icons ", end="", flush=True)
+# ── Icons at standard hicolor sizes ──────────────────────────────────────────
+# Prefer the polished designed icon (assets/tuxgenie-<size>.png, rendered from
+# assets/tuxgenie.svg — the single brand source used app-wide and on the site).
+# Fall back to the procedural generator only if those assets are missing, so the
+# build never breaks.
+print("  Loading icons ", end="", flush=True)
 ICONS = {}
+_ASSETS = os.path.join(SCRIPT_DIR, "assets")
 for _sz in (16, 32, 48, 64, 128, 256):
-    ICONS[_sz] = _generate_tuxgenie_icon(_sz)
+    _png = os.path.join(_ASSETS, f"tuxgenie-{_sz}.png")
+    if os.path.exists(_png):
+        with open(_png, "rb") as _fh:
+            ICONS[_sz] = _fh.read()
+    else:
+        ICONS[_sz] = _generate_tuxgenie_icon(_sz)
     print(".", end="", flush=True)
 print(f" done ({sum(len(v) for v in ICONS.values())//1024} KB total)")
 
