@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.17.0"
+__version__ = "6.18.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -910,7 +910,8 @@ class GeminiBackend:
             if e.code in (400, 403) and ("key" in detail.lower() or e.code == 403):
                 raise RuntimeError(f"Gemini API key rejected — check it at https://aistudio.google.com/apikey. {detail}")
             if e.code == 429:
-                raise RuntimeError(f"Gemini free-tier limit hit — wait a minute and retry. {detail}")
+                raise RuntimeError(f"Gemini free-tier rate limit reached (HTTP 429) — wait a minute "
+                                   f"and retry, or switch provider (Settings → 8). {detail}")
             raise RuntimeError(f"Gemini API error {e.code}: {detail or e}")
 
     def _prompt_for_key(self):
@@ -1443,7 +1444,8 @@ def _provider_name(backend) -> str:
 def _is_transient_ai_error(exc) -> bool:
     """True for capacity/outage errors worth failing over on (NOT auth/config)."""
     m = str(exc).lower()
-    signals = ("limit reached", "rate limit", "429", "quota", "exhausted",
+    signals = ("limit reached", "limit hit", "rate limit", "rate-limit", "free-tier limit",
+               "429", "quota", "exhausted", "resource has been exhausted", "too many requests",
                "overloaded", "unavailable", "503", "502", "500", "timeout",
                "timed out", "temporarily")
     return any(s in m for s in signals)

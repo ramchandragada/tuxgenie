@@ -1211,6 +1211,16 @@ class TestProviderFailover:
         assert tg._is_transient_ai_error(RuntimeError("service unavailable 503"))
         assert not tg._is_transient_ai_error(RuntimeError("API key rejected (HTTP 401)"))
 
+    def test_gemini_limit_message_is_transient(self):
+        # Regression: the Gemini 429 message must trigger failover even when
+        # Google's raw detail body is empty/unparseable (no "quota" word).
+        assert tg._is_transient_ai_error(
+            RuntimeError("Gemini free-tier rate limit reached (HTTP 429) — wait a minute "
+                         "and retry, or switch provider (Settings → 8). "))
+        # And auth/config errors must still NOT fail over.
+        assert not tg._is_transient_ai_error(
+            RuntimeError("Gemini API key rejected — check it at https://aistudio.google.com/apikey."))
+
     def test_groq_fails_over_to_gemini(self):
         tg.save_cfg({"groq_api_key": "gsk_" + "x" * 40, "gemini_api_key": "AIza" + "y" * 35})
         nb = tg._failover_backend(tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq"))
