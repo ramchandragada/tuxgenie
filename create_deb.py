@@ -388,8 +388,25 @@ case "$1" in
     # install/upgrade so older systems get the latest fixes.
     cat > /usr/bin/tuxgenie-gui << 'GUISCRIPT'
 #!/bin/bash
-# Note: we intentionally avoid x-terminal-emulator (can resolve to Warp on Ubuntu 26.04+).
-CMD='tuxgenie; echo; read -rp "Press Enter to close..." _'
+# TuxGenie GUI launcher - opens tuxgenie in a terminal as a single-instance,
+# app-like window. Avoid x-terminal-emulator (can resolve to Warp on 26.04+).
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/tuxgenie-$(id -u).lock"
+
+# Single instance: if a TuxGenie session is already open, don't stack a new
+# window. Best-effort raise the existing one (X11 only; GNOME/Wayland blocks
+# cross-app activation); otherwise just notify and exit.
+if command -v flock >/dev/null 2>&1 && ! flock -n "$LOCK" -c true 2>/dev/null; then
+    if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
+        command -v wmctrl >/dev/null 2>&1 && wmctrl -a "TuxGenie" 2>/dev/null && exit 0
+        command -v xdotool >/dev/null 2>&1 && xdotool search --name "^TuxGenie$" windowactivate >/dev/null 2>&1 && exit 0
+    fi
+    command -v notify-send >/dev/null 2>&1 && notify-send "TuxGenie" "TuxGenie is already open in another window." --icon=tuxgenie
+    exit 0
+fi
+
+# Inside the terminal: set an app-like window title, then hold the single-instance
+# lock for the whole session so repeat clicks are detected above.
+CMD='printf "\\033]0;TuxGenie\\007"; exec 9>"'"$LOCK"'" 2>/dev/null; flock -n 9 2>/dev/null || { echo "TuxGenie is already open in another window."; sleep 2; exit 0; }; tuxgenie; echo; read -rp "Press Enter to close..." _'
 try_term() {
     case "$1" in
         ptyxis)          exec ptyxis -- bash -c "$CMD" ;;
@@ -400,17 +417,16 @@ try_term() {
         lxterminal)      exec lxterminal -e bash -c "$CMD" ;;
         tilix)           exec tilix -e bash -c "$CMD" ;;
         terminator)      exec terminator -e "bash -c '$CMD'" ;;
-        alacritty)       exec alacritty -e bash -c "$CMD" ;;
-        kitty)           exec kitty bash -c "$CMD" ;;
-        wezterm)         exec wezterm start --always-new-process bash -c "$CMD" ;;
-        foot)            exec foot bash -c "$CMD" ;;
-        st)              exec st -e bash -c "$CMD" ;;
-        urxvt)           exec urxvt -e bash -c "$CMD" ;;
-        xterm)           exec xterm -e bash -c "$CMD" ;;
+        alacritty)       exec alacritty --class TuxGenie -e bash -c "$CMD" ;;
+        kitty)           exec kitty --class TuxGenie bash -c "$CMD" ;;
+        wezterm)         exec wezterm start --class TuxGenie --always-new-process bash -c "$CMD" ;;
+        foot)            exec foot --app-id=TuxGenie bash -c "$CMD" ;;
+        st)              exec st -c TuxGenie -e bash -c "$CMD" ;;
+        urxvt)           exec urxvt -name TuxGenie -e bash -c "$CMD" ;;
+        xterm)           exec xterm -class TuxGenie -e bash -c "$CMD" ;;
     esac
 }
-for T in ptyxis gnome-terminal konsole xfce4-terminal mate-terminal lxterminal \
-         tilix terminator alacritty kitty wezterm foot st urxvt xterm; do
+for T in ptyxis gnome-terminal konsole xfce4-terminal mate-terminal lxterminal tilix terminator alacritty kitty wezterm foot st urxvt xterm; do
     command -v "$T" >/dev/null 2>&1 && try_term "$T"
 done
 command -v xdg-terminal-exec >/dev/null 2>&1 && exec xdg-terminal-exec bash -c "$CMD"
@@ -436,6 +452,8 @@ Terminal=false
 Categories=System;Administration;Utility;
 Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
 StartupNotify=false
+StartupWMClass=TuxGenie
+SingleMainWindow=true
 DESKTOPENTRY
     chmod 644 /usr/share/applications/tuxgenie.desktop
 
@@ -496,13 +514,32 @@ exit 0
 # This is more reliable than Terminal=true which depends on x-terminal-emulator being set.
 LAUNCHER_GUI = b"""\
 #!/bin/bash
-# TuxGenie GUI launcher - opens tuxgenie in a real terminal emulator.
+# TuxGenie GUI launcher - opens tuxgenie in a real terminal emulator as a
+# single-instance, app-like window.
 # Note: we intentionally avoid x-terminal-emulator because on Ubuntu 26.04+
 # it can resolve to Warp Terminal, which doesn't accept the standard -e flag.
-CMD='tuxgenie; echo; read -rp "Press Enter to close..." _'
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/tuxgenie-$(id -u).lock"
+
+# Single instance: if a TuxGenie session is already open, don't stack a new
+# window. Best-effort raise the existing one (X11 only; GNOME/Wayland blocks
+# cross-app window activation); otherwise notify and exit.
+if command -v flock >/dev/null 2>&1 && ! flock -n "$LOCK" -c true 2>/dev/null; then
+    if [ "${XDG_SESSION_TYPE:-}" != "wayland" ]; then
+        command -v wmctrl >/dev/null 2>&1 && wmctrl -a "TuxGenie" 2>/dev/null && exit 0
+        command -v xdotool >/dev/null 2>&1 && xdotool search --name "^TuxGenie$" windowactivate >/dev/null 2>&1 && exit 0
+    fi
+    command -v notify-send >/dev/null 2>&1 && notify-send "TuxGenie" "TuxGenie is already open in another window." --icon=tuxgenie
+    exit 0
+fi
+
+# Inside the terminal: set an app-like window title, then hold the single-instance
+# lock for the whole session so repeat clicks are detected above.
+CMD='printf "\\033]0;TuxGenie\\007"; exec 9>"'"$LOCK"'" 2>/dev/null; flock -n 9 2>/dev/null || { echo "TuxGenie is already open in another window."; sleep 2; exit 0; }; tuxgenie; echo; read -rp "Press Enter to close..." _'
 
 # Try each known-good terminal in order. Each branch uses the correct CLI
-# syntax for that terminal (some need --, others -e, others nothing).
+# syntax for that terminal (some need --, others -e, others nothing). Terminals
+# that support a custom class/app-id get "TuxGenie" so the window groups under
+# the TuxGenie icon; all get a "TuxGenie" title via the escape sequence in CMD.
 try_term() {
     case "$1" in
         ptyxis)          exec ptyxis -- bash -c "$CMD" ;;
@@ -513,19 +550,18 @@ try_term() {
         lxterminal)      exec lxterminal -e bash -c "$CMD" ;;
         tilix)           exec tilix -e bash -c "$CMD" ;;
         terminator)      exec terminator -e "bash -c '$CMD'" ;;
-        alacritty)       exec alacritty -e bash -c "$CMD" ;;
-        kitty)           exec kitty bash -c "$CMD" ;;
-        wezterm)         exec wezterm start --always-new-process bash -c "$CMD" ;;
-        foot)            exec foot bash -c "$CMD" ;;
-        st)              exec st -e bash -c "$CMD" ;;
-        urxvt)           exec urxvt -e bash -c "$CMD" ;;
-        xterm)           exec xterm -e bash -c "$CMD" ;;
+        alacritty)       exec alacritty --class TuxGenie -e bash -c "$CMD" ;;
+        kitty)           exec kitty --class TuxGenie bash -c "$CMD" ;;
+        wezterm)         exec wezterm start --class TuxGenie --always-new-process bash -c "$CMD" ;;
+        foot)            exec foot --app-id=TuxGenie bash -c "$CMD" ;;
+        st)              exec st -c TuxGenie -e bash -c "$CMD" ;;
+        urxvt)           exec urxvt -name TuxGenie -e bash -c "$CMD" ;;
+        xterm)           exec xterm -class TuxGenie -e bash -c "$CMD" ;;
     esac
 }
 
 # Try terminals in this order (real, well-known ones first; xterm last as universal fallback)
-for T in ptyxis gnome-terminal konsole xfce4-terminal mate-terminal lxterminal \
-         tilix terminator alacritty kitty wezterm foot st urxvt xterm; do
+for T in ptyxis gnome-terminal konsole xfce4-terminal mate-terminal lxterminal tilix terminator alacritty kitty wezterm foot st urxvt xterm; do
     if command -v "$T" >/dev/null 2>&1; then
         try_term "$T"
     fi
@@ -558,6 +594,8 @@ Terminal=false
 Categories=System;Administration;Utility;
 Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
 StartupNotify=false
+StartupWMClass=TuxGenie
+SingleMainWindow=true
 """
 
 COPYRIGHT = b"""\
