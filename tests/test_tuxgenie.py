@@ -1246,6 +1246,73 @@ class TestProviderFailover:
         assert tg._failover_backend(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
 
 
+class TestAppUpdateRouting:
+    """'update cursor' must deterministically upgrade the app, never be handed to
+    the AI (which once read 'cursor' as the mouse pointer)."""
+
+    def setup_method(self):
+        self._which = tg.shutil.which
+        self._dpkg = tg._dpkg_installed
+        self._snap = tg._snap_installed
+        tg.shutil.which = lambda n: "/usr/bin/" + n if n in ("apt", "apt-get", "snap") else None
+
+    def teardown_method(self):
+        tg.shutil.which = self._which
+        tg._dpkg_installed = self._dpkg
+        tg._snap_installed = self._snap
+
+    def test_update_cursor_upgrades_the_editor(self):
+        tg._dpkg_installed = lambda p: p == "cursor"
+        tg._snap_installed = lambda p: False
+        cmd, label = tg._app_update_cmd_for_phrase("update cursor")
+        assert label == "cursor"
+        assert "install --only-upgrade -y cursor" in cmd
+        # Must never balloon into a desktop install.
+        assert "ubuntu-desktop" not in cmd
+
+    def test_alias_maps_to_real_package(self):
+        tg._dpkg_installed = lambda p: p == "google-chrome-stable"
+        tg._snap_installed = lambda p: False
+        cmd, label = tg._app_update_cmd_for_phrase("update chrome")
+        assert label == "google-chrome-stable" and "--only-upgrade -y google-chrome-stable" in cmd
+
+    def test_snap_app_uses_refresh(self):
+        tg._dpkg_installed = lambda p: False
+        tg._snap_installed = lambda p: p == "spotify-client"
+        cmd, label = tg._app_update_cmd_for_phrase("update spotify")
+        assert cmd == "sudo snap refresh spotify-client"
+
+    def test_system_words_are_not_app_updates(self):
+        tg._dpkg_installed = lambda p: True
+        for phrase in ("update my system", "update everything", "upgrade the kernel",
+                       "update drivers"):
+            assert tg._app_update_cmd_for_phrase(phrase) is None
+
+    def test_uninstalled_app_falls_through_to_ai(self):
+        # Not installed anywhere → return None so the AI can offer to install it.
+        tg._dpkg_installed = lambda p: False
+        tg._snap_installed = lambda p: False
+        assert tg._app_update_cmd_for_phrase("update cursor") is None
+
+
+class TestScopeExplosionGuard:
+    """A simple request must never silently install a whole desktop metapackage."""
+
+    def test_desktop_metapackages_flagged(self):
+        for cmd in ("sudo apt install -y ubuntu-desktop",
+                    "sudo apt-get install kubuntu-desktop",
+                    "apt install task-gnome-desktop",
+                    "sudo apt install -y ^ubuntu-desktop^"):
+            assert tg._is_scope_explosion(cmd), cmd
+
+    def test_normal_installs_not_flagged(self):
+        for cmd in ("sudo apt-get install --only-upgrade -y cursor",
+                    "sudo apt install -y vlc",
+                    "sudo apt install -y build-essential git",
+                    "sudo apt update && sudo apt upgrade -y"):
+            assert not tg._is_scope_explosion(cmd), cmd
+
+
 class TestErrorReporting:
     """Opt-in, scrubbed, anonymous error reporting. The scrubber is the trust
     boundary, so it is tested hard; sending is strictly consent-gated."""

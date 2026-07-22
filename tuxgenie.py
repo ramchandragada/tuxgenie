@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.20.0"
+__version__ = "6.21.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2964,10 +2964,47 @@ def _is_read_only(cmd: str) -> bool:
     return True
 
 
+_METAPKG_RE = re.compile(
+    r'\b('
+    r'(?:ubuntu|kubuntu|xubuntu|lubuntu|ubuntustudio|edubuntu|ubuntu-mate|ubuntukylin)-desktop'
+    r'|ubuntu-desktop-minimal|ubuntu-standard|ubuntu-server|ubuntu-gnome-desktop'
+    r'|gnome-core|gnome-shell|kde-plasma-desktop|kde-standard|kde-full|plasma-desktop'
+    r'|xfce4|cinnamon-desktop-environment|mate-desktop-environment|task-[a-z0-9-]+'
+    r')\b', re.IGNORECASE)
+
+def _is_scope_explosion(cmd: str) -> bool:
+    """True if an apt install would pull in a whole desktop environment / tasksel
+    metapackage. A small request ('update cursor') should never do this — it's
+    almost always the model misunderstanding, so we confirm even under 'yes to
+    all'. tasksel '^pattern^' installs count too."""
+    if not re.search(r'\bapt(?:-get)?\b[^|&;]*\binstall\b', cmd, re.IGNORECASE):
+        return False
+    if re.search(r'\binstall\b[^|&;]*\^[a-z0-9+.-]+\^', cmd, re.IGNORECASE):
+        return True
+    return bool(_METAPKG_RE.search(cmd))
+
+
 def _approval_gate(cmd, requires_root, backend, approve_state):
     """Decide whether to run an AI-proposed command. Returns True to run, False
     to skip; raises _AbortSession to stop the whole session. Read-only commands
     run silently; state-changing ones are confirmed unless auto_approve is set."""
+    # Scope guard: installing a full desktop metapackage from a simple request is
+    # almost always a misread (e.g. "update cursor" → apt install ubuntu-desktop).
+    # Force an explicit confirmation EVEN under auto-approve / "yes to all".
+    if _is_scope_explosion(cmd):
+        print(f"\n  {YELLOW}{BOLD}⚠  Hold on — this installs a whole desktop environment, not one app.{R}")
+        print(f"  {DIM}It can pull in dozens of extra programs. If you were updating or")
+        print(f"  installing a single app, choose No and try just its name")
+        print(f"  (e.g. {BOLD}update cursor{R}{DIM} or {BOLD}install vlc{R}{DIM}).{R}")
+        if not sys.stdin.isatty():
+            print(f"  {YELLOW}⚠  Skipped — a full-desktop install needs explicit approval.{R}")
+            return False
+        try:
+            ans = input(f"  {BOLD}Install the full desktop metapackage anyway?{R} "
+                        f"[{C('y',RED,BOLD)}=yes  {C('n',GREEN,BOLD)}=no]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            raise _AbortSession()
+        return ans in ("y", "yes")
     if getattr(backend, "auto_approve", False) or approve_state.get("all"):
         return True
     if not requires_root and _is_read_only(cmd):
@@ -3375,6 +3412,82 @@ def _run_dist_upgrade():
         info("Check the log: /var/log/dist-upgrade/main.log")
 
 
+# ── Update a single named app (deterministic — never ask the AI) ───────────────
+# "update cursor" must upgrade the Cursor editor, not be (mis)read by the model
+# as the mouse pointer. We map common vendor apps to their real package and
+# upgrade JUST that package, bypassing the AI entirely (faster, free, correct).
+_APP_UPDATE_ALIASES = {
+    "cursor": "cursor",
+    "chrome": "google-chrome-stable", "google chrome": "google-chrome-stable",
+    "google-chrome": "google-chrome-stable",
+    "edge": "microsoft-edge-stable", "microsoft edge": "microsoft-edge-stable",
+    "brave": "brave-browser", "brave browser": "brave-browser",
+    "vscode": "code", "vs code": "code", "visual studio code": "code", "code": "code",
+    "vlc": "vlc", "firefox": "firefox", "chromium": "chromium",
+    "spotify": "spotify-client", "slack": "slack-desktop", "discord": "discord",
+    "zoom": "zoom", "teamviewer": "teamviewer", "anydesk": "anydesk",
+    "warp": "warp-terminal", "zed": "zed", "obsidian": "obsidian",
+}
+
+# Words that mean "the whole system", handled by _system_update_cmd_for_phrase /
+# the dist-upgrade path — never treat these as a single-app update.
+_APP_UPDATE_STOPWORDS = {
+    "pc", "system", "computer", "laptop", "machine", "os", "distro", "ubuntu",
+    "linux", "everything", "all", "packages", "apps", "app", "software",
+    "kernel", "drivers", "driver", "firmware", "tuxgenie",
+}
+
+_NL_APP_UPDATE_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:update|upgrade)\s+(?:my\s+|the\s+)?"
+    r"([a-z0-9][a-z0-9 .+_-]{1,40}?)"
+    r"(?:\s+(?:app|application|editor|browser|program|package))?"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+def _dpkg_installed(pkg: str) -> bool:
+    try:
+        r = subprocess.run(["dpkg-query", "-W", "-f=${Status}", pkg],
+                           capture_output=True, text=True, timeout=5)
+        return "install ok installed" in r.stdout
+    except Exception:
+        return False
+
+def _snap_installed(name: str) -> bool:
+    try:
+        r = subprocess.run(["snap", "list", name],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+def _app_update_cmd_for_phrase(text: str):
+    """If the input means 'update <a single named app>', return (cmd, label) that
+    upgrades ONLY that app with the right package manager. Otherwise None. Only
+    routes when the resolved package is actually installed, so it can never turn
+    into an accidental fresh install of something huge."""
+    m = _NL_APP_UPDATE_RE.match((text or "").strip())
+    if not m:
+        return None
+    name = m.group(1).strip().lower()
+    if name in _APP_UPDATE_STOPWORDS:
+        return None
+    apt = bool(shutil.which("apt-get") or shutil.which("apt"))
+    candidates = []
+    alias = _APP_UPDATE_ALIASES.get(name)
+    if alias:
+        candidates.append(alias)
+    token = name.replace(" ", "-")
+    if token not in candidates:
+        candidates.append(token)
+    for pkg in candidates:
+        if apt and _dpkg_installed(pkg):
+            return (f"sudo apt-get update -q && sudo apt-get install --only-upgrade -y {pkg}", pkg)
+        if shutil.which("snap") and _snap_installed(pkg):
+            return (f"sudo snap refresh {pkg}", pkg)
+    return None
+
+
 def _looks_like_command(text):
     """
     Return (True, first_word) if text looks like a shell command.
@@ -3525,6 +3638,31 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
             err(f"Update failed (exit code {rc}). Try running it in a terminal.")
         return True
 
+    # Single-app update: "update cursor", "upgrade chrome" — upgrade JUST that
+    # app deterministically (never the AI, which could misread "cursor" as the
+    # mouse pointer and install a whole desktop).
+    app_upd = _app_update_cmd_for_phrase(cmd)
+    if app_upd:
+        upd_cmd, label = app_upd
+        print(f"\n  {CYAN}⚡ Updating {label}…{R}")
+        print(f"  {DIM}{upd_cmd}{R}")
+        sudo_pw = None
+        if upd_cmd.lstrip().startswith("sudo "):
+            try:
+                sudo_pw = get_or_cache_sudo_password()
+            except KeyboardInterrupt:
+                return True
+        rc, out, _err = run_cmd_live(upd_cmd, sudo_password=sudo_pw, timeout=900)
+        if rc == 0:
+            ok(f"{label} is up to date.")
+        else:
+            global _last_failed
+            _last_failed = {"cmd": upd_cmd, "rc": rc, "stdout": out[:1500], "stderr": (_err or "")[:600]}
+            err(f"Couldn't update {label} (exit code {rc}).")
+            print(f"  {DIM}Type {BOLD}!!{R}{DIM} to ask AI to diagnose and fix this.{R}")
+        session_log.append({"command": upd_cmd, "rc": rc, "source": "app-update"})
+        return True
+
     # Distribution upgrade: "upgrade to 26.04 LTS" (NL) or direct do-release-upgrade command.
     # do-release-upgrade is a full-screen interactive TUI that needs a real TTY — we hand
     # control to it via os.system() rather than the subprocess-pipe path used by run_cmd_live().
@@ -3631,8 +3769,7 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
     if rc == 0:
         ok("Done.")
     else:
-        # Track for the !! shortcut
-        global _last_failed
+        # Track for the !! shortcut (global declared once near the top of this fn)
         _last_failed = {"cmd": cmd, "rc": rc,
                         "stdout": stdout[:1500], "stderr": stderr[:600]}
         print(f"  {BRED}{BOLD}✘{R}  Exit {rc}")
