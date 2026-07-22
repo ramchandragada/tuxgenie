@@ -1295,6 +1295,30 @@ class TestAppUpdateRouting:
         assert tg._app_update_cmd_for_phrase("update cursor") is None
 
 
+class TestUpdateHonesty:
+    """[12] Check for Updates must not claim 'fully updated' when Ubuntu has
+    phased/held some packages back."""
+
+    def test_phased_updates_not_reported_as_done(self):
+        out = ("Calculating upgrade...\n"
+               "The following upgrades have been deferred due to phasing:\n"
+               "  python3-software-properties software-properties-common\n"
+               "0 upgraded, 0 newly installed, 0 to remove and 2 not upgraded.")
+        remaining = ["python3-software-properties/... [upgradable ...]",
+                     "software-properties-common/... [upgradable ...]"]
+        assert tg._classify_apt_upgrade(out, remaining) == "phased"
+
+    def test_nothing_remaining_is_done(self):
+        assert tg._classify_apt_upgrade("0 upgraded, 0 newly installed", []) == "done"
+
+    def test_kept_back_is_held(self):
+        out = "The following packages have been kept back:\n  linux-generic\n"
+        assert tg._classify_apt_upgrade(out, ["linux-generic/... [upgradable ...]"]) == "held"
+
+    def test_other_remaining_is_pending(self):
+        assert tg._classify_apt_upgrade("some output", ["foo/... [upgradable ...]"]) == "pending"
+
+
 class TestScopeExplosionGuard:
     """A simple request must never silently install a whole desktop metapackage."""
 

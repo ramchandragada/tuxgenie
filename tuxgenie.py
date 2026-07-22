@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.21.0"
+__version__ = "6.22.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5327,6 +5327,24 @@ Additional instructions for LOG ANALYSER mode:
     fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
 
 # ── FEATURE 10: Update Advisor ────────────────────────────────────────────────
+def _classify_apt_upgrade(upgrade_output: str, remaining: list) -> str:
+    """Report an apt upgrade honestly. Given the upgrade command's output and the
+    packages STILL upgradable afterwards, return one of:
+      'done'    — nothing left, genuinely fully updated
+      'phased'  — held back by Ubuntu's gradual (phased) rollout
+      'held'    — kept back (need extra packages added/removed)
+      'pending' — still upgradable for some other reason
+    Prevents the misleading 'System fully updated' when updates are still pending."""
+    if not remaining:
+        return "done"
+    blob = (upgrade_output or "").lower()
+    if "phasing" in blob:
+        return "phased"
+    if "kept back" in blob:
+        return "held"
+    return "pending"
+
+
 def feat_updates(backend, bctx, slog):
     hdr("Check for Updates — Keep your system current")
     pkg = bctx.get('pkg_mgr', 'apt')
@@ -5352,9 +5370,57 @@ def feat_updates(backend, bctx, slog):
                 return
             if ch in ('y', 'yes'):
                 print(f"\n  {CYAN}▶ Installing updates…{R}")
-                run_cmd_live("sudo apt-get upgrade -y", sudo_password=sudo_pw)
+                _rc, up_out, up_err = run_cmd_live("sudo apt-get upgrade -y", sudo_password=sudo_pw)
                 run_cmd_live("sudo apt-get autoremove -y", sudo_password=sudo_pw)
-                ok("System fully updated.")
+                # Be honest about what actually got installed. Ubuntu "phases" some
+                # updates (rolls them out gradually), so they stay listed as
+                # upgradable but apt won't install them yet — don't claim "fully
+                # updated" when packages are still pending.
+                _, rem_out, _ = run_cmd_live("apt list --upgradable 2>/dev/null | tail -n +2",
+                                             sudo_password=None)
+                remaining = [l for l in rem_out.splitlines() if l.strip()]
+                status = _classify_apt_upgrade((up_out or "") + (up_err or ""), remaining)
+                if status == "done":
+                    ok("System fully updated.")
+                elif status == "phased":
+                    warn(f"{len(remaining)} update(s) are being rolled out gradually by "
+                         f"Ubuntu (\"phased updates\") and are held back for now.")
+                    print(f"  {DIM}This is normal — Ubuntu ships some updates to a few machines")
+                    print(f"  first, then everyone. They'll install automatically within a few")
+                    print(f"  days; nothing is wrong and you don't need to do anything.{R}")
+                    try:
+                        force = input(f"\n  {BOLD}Install these phased updates now anyway? [y/n]:{R} ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        force = "n"
+                    if force in ('y', 'yes'):
+                        run_cmd_live("sudo apt-get upgrade -y -o APT::Get::Always-Include-Phased-Updates=true",
+                                     sudo_password=sudo_pw)
+                        _, rem2, _ = run_cmd_live("apt list --upgradable 2>/dev/null | tail -n +2",
+                                                  sudo_password=None)
+                        if not [l for l in rem2.splitlines() if l.strip()]:
+                            ok("System fully updated (including phased updates).")
+                        else:
+                            warn("A few updates still couldn't be applied — they may depend on held packages.")
+                    else:
+                        ok("Done — the remaining updates will arrive automatically soon.")
+                elif status == "held":
+                    warn(f"{len(remaining)} update(s) were held back (they need extra packages "
+                         f"added or removed first).")
+                    try:
+                        full = input(f"\n  {BOLD}Apply them with a full upgrade now? [y/n]:{R} ").strip().lower()
+                    except (EOFError, KeyboardInterrupt):
+                        full = "n"
+                    if full in ('y', 'yes'):
+                        run_cmd_live("sudo apt-get full-upgrade -y", sudo_password=sudo_pw)
+                        _, rem3, _ = run_cmd_live("apt list --upgradable 2>/dev/null | tail -n +2",
+                                                  sudo_password=None)
+                        ok("System fully updated." if not [l for l in rem3.splitlines() if l.strip()]
+                           else "Most updates applied; a few remain.")
+                    else:
+                        ok("Done. Some updates remain — you can run this again later.")
+                else:
+                    warn(f"{len(remaining)} update(s) still pending — run this again shortly, "
+                         f"or they may need a full upgrade.")
         else:
             ok("System is up to date.")
     elif pkg in ('dnf', 'yum'):
