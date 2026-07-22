@@ -445,9 +445,11 @@ GUISCRIPT
     chmod +x /usr/bin/tuxgenie-gui
 
     # Make sure the .desktop file exists and points at our robust launcher.
-    # Recreate it from scratch so older installs that lost or never had it
-    # are fixed on this upgrade.
-    cat > /usr/share/applications/tuxgenie.desktop << 'DESKTOPENTRY'
+    # It is named after the app-id (com.tuxgenie.TuxGenie) so GNOME links the
+    # running window to it and shows the TuxGenie icon instead of a generic gear.
+    # Remove the old tuxgenie.desktop from pre-6.27 installs to avoid a duplicate.
+    rm -f /usr/share/applications/tuxgenie.desktop 2>/dev/null || true
+    cat > /usr/share/applications/com.tuxgenie.TuxGenie.desktop << 'DESKTOPENTRY'
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -464,7 +466,7 @@ StartupNotify=false
 StartupWMClass=com.tuxgenie.TuxGenie
 SingleMainWindow=true
 DESKTOPENTRY
-    chmod 644 /usr/share/applications/tuxgenie.desktop
+    chmod 644 /usr/share/applications/com.tuxgenie.TuxGenie.desktop
 
     # If no real terminal is installed, install xterm so the icon click works
     if ! command -v ptyxis >/dev/null 2>&1 \
@@ -844,11 +846,16 @@ data_entries = [
      "type": "file", "data": TUXGENIE_PY,                                "mode": 0o644},
     {"path": f"./usr/share/doc/{PACKAGE}/copyright",
      "type": "file", "data": COPYRIGHT,                                  "mode": 0o644},
-    {"path": "./usr/share/applications/tuxgenie.desktop",
+    # Desktop file named after the app-id so GNOME links the running window
+    # (app-id com.tuxgenie.TuxGenie) to it and shows the TuxGenie icon, not a
+    # generic gear.
+    {"path": "./usr/share/applications/com.tuxgenie.TuxGenie.desktop",
      "type": "file", "data": DESKTOP_ENTRY,                              "mode": 0o644},
     {"path": "./usr/share/tuxgenie/community_fixes.json",
      "type": "file", "data": COMMUNITY_FIXES,                            "mode": 0o644},
-    # Icons - hicolor theme, 6 sizes
+    # Icons - hicolor theme, 6 sizes. Installed under BOTH the classic name
+    # (tuxgenie, used by notify-send and Icon=) and the app-id name
+    # (com.tuxgenie.TuxGenie) so GNOME resolves the window icon either way.
     {"path": "./usr/share/icons/hicolor/16x16/apps/tuxgenie.png",
      "type": "file", "data": ICONS[16],                                  "mode": 0o644},
     {"path": "./usr/share/icons/hicolor/32x32/apps/tuxgenie.png",
@@ -860,6 +867,18 @@ data_entries = [
     {"path": "./usr/share/icons/hicolor/128x128/apps/tuxgenie.png",
      "type": "file", "data": ICONS[128],                                 "mode": 0o644},
     {"path": "./usr/share/icons/hicolor/256x256/apps/tuxgenie.png",
+     "type": "file", "data": ICONS[256],                                 "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/16x16/apps/com.tuxgenie.TuxGenie.png",
+     "type": "file", "data": ICONS[16],                                  "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/32x32/apps/com.tuxgenie.TuxGenie.png",
+     "type": "file", "data": ICONS[32],                                  "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/48x48/apps/com.tuxgenie.TuxGenie.png",
+     "type": "file", "data": ICONS[48],                                  "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/64x64/apps/com.tuxgenie.TuxGenie.png",
+     "type": "file", "data": ICONS[64],                                  "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/128x128/apps/com.tuxgenie.TuxGenie.png",
+     "type": "file", "data": ICONS[128],                                 "mode": 0o644},
+    {"path": "./usr/share/icons/hicolor/256x256/apps/com.tuxgenie.TuxGenie.png",
      "type": "file", "data": ICONS[256],                                 "mode": 0o644},
 ]
 
