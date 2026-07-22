@@ -9,7 +9,7 @@
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
 TuxGenie — Your wish is my command 🐧
-AI-powered Linux assistant · Powered by Claude · Free forever
+AI-powered Linux assistant · Powered by AI · Free forever
 www.tuxgenie.com
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.23.0"
+__version__ = "6.24.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -174,13 +174,13 @@ def banner():
 
     print(f"""
 {_bar}
-  {CYAN}{BOLD}🐧{R}  {_logo}   {DIM}v{__version__} · Powered by Claude · Free forever{R}
-  {DIM}Your friendly AI assistant for Linux  ·  No experience needed{R}
+  {CYAN}{BOLD}🐧{R}  {_logo}   {DIM}v{__version__} · Powered by AI · Free forever{R}
+  {DIM}Linux made easy — just ask, in plain English{R}
 {_bar}
-  {BGREEN}{BOLD}✔{R}  {BOLD}Just type what you need in plain English{R}
+  {BGREEN}{BOLD}✔{R}  {BOLD}Just tell me what you need{R}
      {DIM}e.g.{R} {BLUE}\"my wifi stopped working\"{R}  ·  {BLUE}\"install chrome\"{R}  ·  {BLUE}\"why is it slow?\"{R}
-  {BGREEN}{BOLD}✔{R}  {BOLD}Or pick a number from the menu{R}  {DIM}(type{R} {BOLD}menu{R} {DIM}to see it again){R}
-  {BGREEN}{BOLD}✔{R}  {BOLD}Or run any Linux command directly{R}  {DIM}e.g.{R} {BLUE}\"ls -la\"{R}
+  {BGREEN}{BOLD}✔{R}  {BOLD}Or pick a number from the menu{R}  {DIM}(type{R} {BOLD}menu{R} {DIM}anytime){R}
+  {BGREEN}{BOLD}✔{R}  {BOLD}Or run any Linux command{R}  {DIM}e.g.{R} {BLUE}\"ls -la\"{R}
 {_bar}
   {BLUE}{BOLD}🌐 www.tuxgenie.com{R}  {DIM}· Dedicated to Linus Torvalds · Built by Aspera Technologies{R}
 {_bar}
