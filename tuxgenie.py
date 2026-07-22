@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.29.0"
+__version__ = "6.30.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1821,7 +1821,7 @@ def feat_settings(backend, bctx, slog):
         else:
             ok("Auto-switch OFF — TuxGenie stays on your chosen provider and shows the limit message instead.")
     elif ch == "10":
-        new_state = not (load_cfg().get("error_reporting", False) is True)
+        new_state = load_cfg().get("error_reporting", False) is not True
         save_cfg({"error_reporting": new_state})
         if new_state:
             ok("Anonymous error reports ON — thank you! Scrubbed crashes & AI errors help us fix bugs.")
