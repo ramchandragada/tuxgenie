@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.14.0"
+__version__ = "6.15.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -7604,6 +7604,69 @@ APP_CATALOG = [
     {"id": 126,"name": "Widelands",           "cat": "Games — Free & Open-Source", "prompt": "Install Widelands, a Settlers-style economy strategy game, via flatpak from Flathub: org.widelands.Widelands (or apt: widelands).", "desc": "Settlers-style economy strategy"},
     {"id": 127,"name": "Freeciv",             "cat": "Games — Free & Open-Source", "prompt": "Install Freeciv, a Civilization-style turn-based 4X strategy game. Prefer apt (freeciv) on Debian/Ubuntu, or flatpak from Flathub using the GTK client: org.freeciv.gtk322.", "desc": "Civilization-style 4X strategy"},
     {"id": 128,"name": "Cataclysm: DDA",      "cat": "Games — Free & Open-Source", "prompt": "Install Cataclysm: Dark Days Ahead, a turn-based post-apocalyptic survival roguelike, via flatpak from Flathub: org.cataclysmdda.CataclysmDDA.", "desc": "Post-apocalyptic survival roguelike"},
+
+    # ── Batch 2: popular apps added by user request (research-driven) ─────────
+    {"id": 129,"name": "Opera",               "cat": "Browsers",       "prompt": "Install the Opera browser via its official apt repository (deb.opera.com/opera-stable), or the snap 'opera' as a fallback.", "desc": "Feature-rich Chromium browser with built-in VPN"},
+    {"id": 130,"name": "Chromium",            "cat": "Browsers",       "prompt": "Install the open-source Chromium browser. On Ubuntu use 'snap install chromium'; on Debian use apt (chromium); or flatpak from Flathub: org.chromium.Chromium.", "desc": "The open-source base of Chrome"},
+
+    {"id": 131,"name": "WhatsApp (ZapZap)",   "cat": "Communication",  "prompt": "WhatsApp has no official Linux app. Install ZapZap, a well-regarded unofficial WhatsApp desktop client, via flatpak from Flathub: com.rtosta.zapzap. Tell the user it's a community client wrapping WhatsApp Web.", "desc": "Unofficial WhatsApp desktop client"},
+    {"id": 132,"name": "Session",             "cat": "Communication",  "prompt": "Install Session, the private, decentralised messenger, via flatpak from Flathub: network.loki.Session (or the official AppImage from getsession.org).", "desc": "Private, account-free messenger"},
+
+    {"id": 133,"name": "Anki",                "cat": "Office & Notes", "prompt": "Install Anki, the spaced-repetition flashcard app, via flatpak from Flathub: net.ankiweb.Anki (or the official download from apps.ankiweb.net).", "desc": "Spaced-repetition flashcards (great for study)"},
+    {"id": 134,"name": "AppFlowy",            "cat": "Office & Notes", "prompt": "Install AppFlowy, an open-source Notion alternative, via flatpak from Flathub: io.appflowy.AppFlowy (or the official .deb/AppImage from appflowy.io).", "desc": "Open-source Notion alternative"},
+    {"id": 135,"name": "Foliate",             "cat": "Office & Notes", "prompt": "Install Foliate, a modern GTK e-book reader (EPUB, Kindle, PDF), via flatpak from Flathub: com.github.johnfactotum.Foliate (or apt: foliate).", "desc": "Clean e-book reader (EPUB, Kindle…)"},
+    {"id": 136,"name": "Evolution",           "cat": "Office & Notes", "prompt": "Install GNOME Evolution, a full email + calendar + contacts client with Exchange support. Prefer apt (evolution, plus evolution-ews for Exchange) or flatpak from Flathub: org.gnome.Evolution.", "desc": "Email, calendar & contacts (Exchange-capable)"},
+
+    {"id": 137,"name": "Kodi",                "cat": "Media",          "prompt": "Install Kodi, the home-theatre media center, via flatpak from Flathub: tv.kodi.Kodi (or apt: kodi).", "desc": "Home-theatre media center"},
+    {"id": 138,"name": "Plex Media Server",   "cat": "Media",          "prompt": "Install Plex Media Server to stream a home media library. Add Plex's official apt repository (downloads.plex.tv) and install plexmediaserver, or download the .deb from plex.tv/media-server-downloads. Then tell the user to open http://localhost:32400/web to set it up.", "desc": "Stream your media library to any device"},
+    {"id": 139,"name": "FreeTube",            "cat": "Media",          "prompt": "Install FreeTube, a private YouTube desktop client (no ads/tracking), via flatpak from Flathub: io.freetubeapp.FreeTube (or the official AppImage/.deb from freetubeapp.io).", "desc": "Private, ad-free YouTube client"},
+    {"id": 140,"name": "Rhythmbox",           "cat": "Media",          "prompt": "Install Rhythmbox, the classic GNOME music player and library manager. Prefer apt (rhythmbox) or flatpak from Flathub: org.gnome.Rhythmbox3.", "desc": "Classic music player & library"},
+
+    {"id": 141,"name": "DaVinci Resolve",     "cat": "AV Creation",    "prompt": "Install DaVinci Resolve (free edition), the professional video editor by Blackmagic. It is NOT in any repo: guide the user to download the free Linux build from https://www.blackmagicdesign.com/products/davinciresolve (a free registration form is required), then unzip and run the installer. On Debian/Ubuntu recommend the 'MakeResolveDeb' helper to repackage it cleanly, and mention it needs a fairly modern GPU. Be clear this is a guided manual install.", "desc": "Pro video editing/color (guided install)"},
+    {"id": 142,"name": "OpenShot",            "cat": "AV Creation",    "prompt": "Install OpenShot, an easy open-source video editor, via flatpak from Flathub: org.openshot.OpenShot (or apt: openshot-qt).", "desc": "Easy open-source video editor"},
+    {"id": 143,"name": "Ardour",              "cat": "AV Creation",    "prompt": "Install Ardour, a professional open-source digital audio workstation (DAW). Prefer apt (ardour) or flatpak from Flathub: org.ardour.Ardour.", "desc": "Professional audio workstation (DAW)"},
+    {"id": 144,"name": "LMMS",                "cat": "AV Creation",    "prompt": "Install LMMS, a free music-production studio (beats, synths, sequencing), via flatpak from Flathub: io.lmms.LMMS (or apt: lmms).", "desc": "Free music-production studio"},
+
+    {"id": 145,"name": "FreeCAD",             "cat": "Graphics",       "prompt": "Install FreeCAD, the open-source parametric 3D CAD modeler, via flatpak from Flathub: org.freecad.FreeCAD (or apt: freecad).", "desc": "Parametric 3D CAD modeler"},
+    {"id": 146,"name": "KiCad",               "cat": "Graphics",       "prompt": "Install KiCad, the open-source electronics/PCB design suite, via flatpak from Flathub: org.kicad.KiCad (or apt: kicad).", "desc": "Electronics & PCB design (EDA)"},
+    {"id": 147,"name": "drawio Desktop",      "cat": "Graphics",       "prompt": "Install draw.io Desktop (diagrams.net), for flowcharts and diagrams, via flatpak from Flathub: com.jgraph.drawio.desktop (or the .deb/AppImage from github.com/jgraph/drawio-desktop/releases).", "desc": "Diagrams & flowcharts (offline)"},
+    {"id": 148,"name": "Pencil2D",            "cat": "Graphics",       "prompt": "Install Pencil2D, a simple 2D hand-drawn animation tool, via flatpak from Flathub: org.pencil2d.Pencil2D (or the official AppImage from pencil2d.org).", "desc": "Simple 2D animation"},
+
+    {"id": 149,"name": "Remmina",             "cat": "Remote Access",  "prompt": "Install Remmina, the remote-desktop client (RDP/VNC/SSH/SPICE). Prefer apt (remmina plus remmina-plugin-rdp and remmina-plugin-vnc) or flatpak from Flathub: org.remmina.Remmina.", "desc": "Remote desktop client (RDP/VNC/SSH)"},
+    {"id": 150,"name": "Moonlight",           "cat": "Remote Access",  "prompt": "Install Moonlight, for low-latency game/desktop streaming from a GameStream/Sunshine host, via flatpak from Flathub: com.moonlight_stream.Moonlight.", "desc": "Stream games/desktop from another PC"},
+
+    {"id": 151,"name": "Android Studio",      "cat": "Developer",      "prompt": "Install Android Studio, Google's official Android IDE. Prefer 'snap install android-studio --classic'; otherwise download from developer.android.com/studio and extract to /opt, creating a launcher. Note it's a large download and needs a JDK (bundled).", "desc": "Google's official Android IDE"},
+    {"id": 152,"name": "Alacritty",           "cat": "Developer",      "prompt": "Install Alacritty, the fast GPU-accelerated terminal. Prefer apt (alacritty) where available or flatpak from Flathub: org.alacritty.Alacritty.", "desc": "Fast GPU-accelerated terminal"},
+    {"id": 153,"name": "Beekeeper Studio",    "cat": "Developer",      "prompt": "Install Beekeeper Studio, a modern open-source SQL database GUI, via flatpak from Flathub: io.beekeeperstudio.Studio (or its official apt repo / AppImage from beekeeperstudio.io).", "desc": "Modern SQL database GUI"},
+    {"id": 154,"name": "Zeal",                "cat": "Developer",      "prompt": "Install Zeal, an offline developer documentation browser (Dash-compatible docsets). Prefer apt (zeal) or flatpak from Flathub: org.zealdocs.Zeal.", "desc": "Offline developer documentation"},
+    {"id": 155,"name": "GitKraken",           "cat": "Developer",      "prompt": "Install GitKraken, a graphical Git client. Prefer flatpak from Flathub: com.axosoft.GitKraken, or download the official .deb from gitkraken.com.", "desc": "Graphical Git client"},
+
+    {"id": 156,"name": "Flatseal",            "cat": "System Tools",   "prompt": "Install Flatseal, the GUI to review and change Flatpak app permissions, via flatpak from Flathub: com.github.tchx84.Flatseal. (Ensure Flatpak + Flathub are set up first.)", "desc": "Manage Flatpak app permissions"},
+    {"id": 157,"name": "Mission Center",      "cat": "System Tools",   "prompt": "Install Mission Center, a modern system monitor (CPU/GPU/RAM/disk/net, like Windows Task Manager), via flatpak from Flathub: io.missioncenter.MissionCenter.", "desc": "Modern system monitor / task manager"},
+    {"id": 158,"name": "VirtualBox",          "cat": "System Tools",   "prompt": "Install Oracle VirtualBox to run other operating systems in a window. Prefer apt (virtualbox) on Debian/Ubuntu; for the newest version add Oracle's official apt repo from virtualbox.org. Mention the user should add themselves to the 'vboxusers' group.", "desc": "Run other OSes in a virtual machine"},
+    {"id": 159,"name": "virt-manager",        "cat": "System Tools",   "prompt": "Install virt-manager with the KVM/QEMU stack for fast native virtual machines: apt install virt-manager qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils, then add the user to the 'libvirt' and 'kvm' groups and enable libvirtd.", "desc": "KVM/QEMU virtual machine manager"},
+    {"id": 160,"name": "Extension Manager",   "cat": "System Tools",   "prompt": "Install Extension Manager, to browse and install GNOME Shell extensions without a browser, via flatpak from Flathub: com.mattjakeman.ExtensionManager. (Best on GNOME desktops.)", "desc": "Install GNOME extensions easily"},
+    {"id": 161,"name": "TLP",                 "cat": "System Tools",   "prompt": "Install TLP for automatic laptop battery/power optimisation: apt install tlp tlp-rdw, then enable and start tlp. Optionally install 'tlpui' for a graphical settings editor. Explain it improves battery life with sensible defaults out of the box.", "desc": "Automatic laptop battery optimisation"},
+
+    {"id": 162,"name": "KDE Connect",         "cat": "Files & Sync",   "prompt": "Install KDE Connect to link a phone with this PC (share files, texts, clipboard, remote control). Prefer apt (kdeconnect) or flatpak from Flathub: org.kde.kdeconnect. On GNOME, mention the 'GSConnect' extension as the native-feeling alternative. Tell the user to install the KDE Connect app on their phone too.", "desc": "Phone ↔ PC: files, texts, clipboard"},
+    {"id": 163,"name": "Transmission",        "cat": "Files & Sync",   "prompt": "Install Transmission, a simple, lightweight BitTorrent client. Prefer apt (transmission-gtk) or flatpak from Flathub: com.transmissionbt.Transmission.", "desc": "Simple, lightweight torrent client"},
+    {"id": 164,"name": "Deluge",              "cat": "Files & Sync",   "prompt": "Install Deluge, a flexible BitTorrent client with plugins and a web UI. Prefer apt (deluge) or flatpak from Flathub: org.deluge_torrent.deluge.", "desc": "Flexible torrent client (plugins, web UI)"},
+    {"id": 165,"name": "Pika Backup",         "cat": "Files & Sync",   "prompt": "Install Pika Backup, an easy GUI for encrypted, deduplicated backups (powered by BorgBackup), via flatpak from Flathub: org.gnome.World.PikaBackup.", "desc": "Easy encrypted backups (BorgBackup)"},
+    {"id": 166,"name": "Proton Pass",         "cat": "Files & Sync",   "prompt": "Install Proton Pass, Proton's open-source password manager. Prefer flatpak from Flathub if available (me.proton.pass), otherwise download the official .deb/.rpm from proton.me/pass/download.", "desc": "Open-source password manager (Proton)"},
+
+    {"id": 167,"name": "Ulauncher",           "cat": "Utilities",      "prompt": "Install Ulauncher, a fast application/everything launcher. Add its official apt repo (ppa:agornostal/ulauncher) or download the .deb from ulauncher.io; enable it to start on login.", "desc": "Fast app & action launcher"},
+    {"id": 168,"name": "Espanso",             "cat": "Utilities",      "prompt": "Install Espanso, a system-wide text expander. Download the official .deb (X11) or use the AppImage from espanso.org; for Wayland use the Wayland build. After install run 'espanso service register' and 'espanso start'.", "desc": "System-wide text expander"},
+    {"id": 169,"name": "Variety",             "cat": "Utilities",      "prompt": "Install Variety, an automatic wallpaper changer/manager. Prefer apt (variety) on Debian/Ubuntu, or flatpak from Flathub if available.", "desc": "Automatic wallpaper changer"},
+    {"id": 170,"name": "Gear Lever",          "cat": "Utilities",      "prompt": "Install Gear Lever, to manage and integrate AppImages (menu entries, updates), via flatpak from Flathub: it.mijorus.gearlever.", "desc": "Manage & integrate AppImages"},
+
+    {"id": 171,"name": "RetroArch",           "cat": "Gaming",         "prompt": "Install RetroArch, the all-in-one retro-game emulator front-end, via flatpak from Flathub: org.libretro.RetroArch (or apt: retroarch). Remind the user to only use game files (ROMs) they legally own.", "desc": "All-in-one retro game emulator"},
+    {"id": 172,"name": "Prism Launcher",      "cat": "Gaming",         "prompt": "Install Prism Launcher, the open-source Minecraft launcher for managing instances and mods, via flatpak from Flathub: org.prismlauncher.PrismLauncher.", "desc": "Open-source Minecraft launcher"},
+    {"id": 173,"name": "Cartridges",          "cat": "Gaming",         "prompt": "Install Cartridges, a tidy GTK game library that gathers Steam, Heroic, Lutris and more in one place, via flatpak from Flathub: page.kramo.Cartridges.", "desc": "Unified game library"},
+
+    {"id": 174,"name": "VeraCrypt",           "cat": "Security",       "prompt": "Install VeraCrypt for on-the-fly disk/file encryption (encrypted volumes/containers). Download the official .deb from veracrypt.io (or its PPA), preferring the GUI build. Explain it can create encrypted file containers or encrypt whole drives.", "desc": "Disk & file encryption (encrypted volumes)"},
+    {"id": 175,"name": "Proton VPN",          "cat": "Security",       "prompt": "Install the official Proton VPN app. Add Proton's official apt repository (download the protonvpn-stable-release .deb from protonvpn.com/download-linux), then apt update && apt install proton-vpn-gnome-desktop.", "desc": "Privacy-focused VPN (official app)"},
+    {"id": 176,"name": "Mullvad VPN",         "cat": "Security",       "prompt": "Install the Mullvad VPN app via its official apt repository (mullvad.net/download/vpn/linux) or by downloading the official .deb from mullvad.net.", "desc": "Privacy-focused VPN (no-logs)"},
+    {"id": 177,"name": "OpenSnitch",          "cat": "Security",       "prompt": "Install OpenSnitch, an application-level firewall that asks before programs connect out. Prefer apt (opensnitch) on newer Debian/Ubuntu, otherwise download the .deb (daemon + python3-opensnitch-ui) from github.com/evilsocket/opensnitch/releases. Enable the opensnitchd service and start the UI.", "desc": "Interactive application firewall"},
 ]
 
 
@@ -7729,7 +7792,7 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
 
 
 def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — 128-app catalog covering browsers, communication,
+    """Quick app installer — 177-app catalog covering browsers, communication,
     office, media, graphics, developer tools, system tools, files & sync,
     utilities, gaming, security, and free/open-source games. Each entry maps to a
     natural-language install prompt;
@@ -9075,7 +9138,7 @@ MENU_ITEMS = [
     ("39", "suggest",   "Suggest a Setup",    "Not sure? Answer one question, get the right setup",  feat_suggest_setup),
     ("40", "env",       "Dev Environments",   "Ready-to-run stacks: LAMP/LEMP, Node, Python, DBs, WordPress", feat_dev_environments),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "128-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
+    ("77", "apps",      "Install Apps",       "177-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
     ("99", "ai",        "AI Tools",           "22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
@@ -9196,7 +9259,7 @@ def show_menu(compact=False):
     _item("40", "Dev Environments",    "Ready-to-run stacks: LAMP/LEMP, Node, Python, databases, WordPress")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
-    _item("77", "Install Apps",        "🎁 128 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
+    _item("77", "Install Apps",        "🎁 177 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
     _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
     _item("99", "AI Tools",            "🤖 22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI, GPT4All…")
 
