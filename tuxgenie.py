@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.24.0"
+__version__ = "6.25.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -171,6 +171,11 @@ def banner():
     ]
     _logo = "".join(f"{col}{BOLD}{ch}{R}" for col, ch in _letters)
     _bar  = f"  {DIM}{'─' * 66}{R}"
+    # Catalog counts, computed live so they never go stale as we add entries.
+    try:
+        _apps, _ai, _cloud = len(APP_CATALOG), len(AI_CATALOG), len(CLOUD_PROVIDERS)
+    except Exception:
+        _apps, _ai, _cloud = 200, 22, 7
 
     print(f"""
 {_bar}
@@ -181,6 +186,7 @@ def banner():
      {DIM}e.g.{R} {BLUE}\"my wifi stopped working\"{R}  ·  {BLUE}\"install chrome\"{R}  ·  {BLUE}\"why is it slow?\"{R}
   {BGREEN}{BOLD}✔{R}  {BOLD}Or pick a number from the menu{R}  {DIM}(type{R} {BOLD}menu{R} {DIM}anytime){R}
   {BGREEN}{BOLD}✔{R}  {BOLD}Or run any Linux command{R}  {DIM}e.g.{R} {BLUE}\"ls -la\"{R}
+  {GOLD}{BOLD}🎁{R}  {BOLD}Ready to install:{R} {BOLD}{_apps}{R} apps {DIM}(77){R} {DIM}·{R} {BOLD}{_ai}{R} AI tools {DIM}(99){R} {DIM}·{R} {BOLD}{_cloud}{R} cloud setups {DIM}(88){R}
 {_bar}
   {BLUE}{BOLD}🌐 www.tuxgenie.com{R}  {DIM}· Dedicated to Linus Torvalds · Built by Aspera Technologies{R}
 {_bar}
