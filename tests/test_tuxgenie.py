@@ -1321,6 +1321,23 @@ class TestErrorReporting:
         assert tg._send_error_report("E", "E: x", "d", interactive=False) is False
         assert fired == []
 
+    def test_user_actionable_errors_excluded(self):
+        # Auth / config / network problems are the user's to fix, not bugs.
+        for msg in ("Gemini API key rejected — check it at https://…",
+                    "No Groq API key is set. Press 'k' to add one.",
+                    "refused the request (HTTP 403 — forbidden)",
+                    "Connection refused. Check your internet connection.",
+                    "Network error: name or service not known"):
+            assert tg._is_user_actionable_error(RuntimeError(msg)), msg
+
+    def test_real_bugs_and_limits_are_reportable(self):
+        # A limit/outage and a genuine bug are NOT user-actionable → reportable.
+        assert not tg._is_user_actionable_error(
+            RuntimeError("Gemini free-tier rate limit reached (HTTP 429) — wait a minute."))
+        assert not tg._is_user_actionable_error(KeyError("tool_result"))
+        assert not tg._is_user_actionable_error(
+            ValueError("could not parse response: expecting value line 1"))
+
 
 class TestTransparency:
     """Lock in the 100%-transparency promises so they can't silently regress."""

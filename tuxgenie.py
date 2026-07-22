@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.19.0"
+__version__ = "6.20.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1451,6 +1451,21 @@ def _is_transient_ai_error(exc) -> bool:
     return any(s in m for s in signals)
 
 
+def _is_user_actionable_error(exc) -> bool:
+    """True for errors only the USER can resolve — a bad/missing API key or a
+    dead network connection. These are NOT bugs, so we never send them as error
+    reports (they'd just be noise). Kept deliberately tight so it never matches a
+    capacity/limit message (those still get reported as failover signal)."""
+    m = str(exc).lower()
+    signals = ("rejected", "unauthorized", "forbidden", "http 401", "http 403",
+               "(401", "(403", "api key is set", "add one", "check it at",
+               "connection refused", "network busy", "network error",
+               "no route to host", "name or service not known",
+               "temporary failure in name resolution",
+               "check your connection", "check your internet")
+    return any(s in m for s in signals)
+
+
 def _failover_backend(current):
     """Return a fresh backend for the next FREE provider that has a saved key
     (Gemini ↔ Groq), or None. Never returns Claude — auto-switch must never
@@ -2596,12 +2611,15 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                     # which would mislabel e.g. a Groq quota error as an Anthropic one).
                     print(f"  {RED}{e}{R}")
                     print(f"  {DIM}Tip: press {BOLD}k{R}{DIM} to change the key · Settings → 8 to switch AI provider.{R}")
-                # Report a capacity/outage we couldn't fail over from (e.g. only one
-                # free key configured) — the exact signal telemetry should capture.
-                if _is_transient_ai_error(e):
+                # Report any error that isn't the user's to fix (bad key/offline):
+                # a capacity/outage we couldn't fail over from, OR a genuinely
+                # unexpected provider error. Auth/network stay excluded as noise.
+                if not _is_user_actionable_error(e):
+                    reason = ("transient_no_failover" if _is_transient_ai_error(e)
+                              else "unexpected_ai_error")
                     _report_error_from_exc(e, feature=_active_feature or "agentic",
                                            tags={"provider": _provider_name(backend),
-                                                 "reason": "transient_no_failover"})
+                                                 "reason": reason})
                 return
 
             # Track usage (regular + cache tokens) so session cost is accurate.
@@ -4535,12 +4553,14 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 # show them verbatim rather than a generic guess.
                 msg = str(e)
                 (warn if "429" in msg else err)(msg[:400])
-                # A capacity/outage we couldn't fail over from (e.g. only one free
-                # key configured) is exactly the signal telemetry should capture.
-                if _is_transient_ai_error(e):
+                # Report anything that isn't the user's to fix (bad key/offline):
+                # a limit/outage we couldn't fail over from, or an unexpected error.
+                if not _is_user_actionable_error(e):
+                    reason = ("transient_no_failover" if _is_transient_ai_error(e)
+                              else "unexpected_ai_error")
                     _report_error_from_exc(e, feature=_active_feature or "fix",
                                            tags={"provider": _provider_name(backend),
-                                                 "reason": "transient_no_failover"})
+                                                 "reason": reason})
                 return
         except (urllib.error.URLError, OSError) as e:
             eno = getattr(e, "errno", None)
@@ -4552,13 +4572,24 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 err(f"Network error: {e}  — Check your connection or backend.")
             return
         except Exception as e:
-            err(f"Unexpected error: {e}"); return
+            err(f"Unexpected error: {e}")
+            # A genuinely unexpected error here means a real bug — always report.
+            _report_error_from_exc(e, feature=_active_feature or "fix",
+                                   tags={"provider": _provider_name(backend),
+                                         "reason": "unexpected"})
+            return
 
         try:
             plan = json.loads(clean_json(raw))
         except json.JSONDecodeError as e:
             err(f"Could not parse response: {e}")
-            print(C(raw[:400], DIM)); return
+            print(C(raw[:400], DIM))
+            # The AI returned something we couldn't parse — a real bug signal
+            # (bad prompt/response handling), worth capturing.
+            _report_error_from_exc(e, feature=_active_feature or "fix",
+                                   tags={"provider": _provider_name(backend),
+                                         "reason": "json_parse_failed"})
+            return
 
         analysis = plan.get("analysis","")
         if analysis and not backend.expert_mode:
