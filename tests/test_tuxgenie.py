@@ -1246,6 +1246,82 @@ class TestProviderFailover:
         assert tg._failover_backend(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
 
 
+class TestErrorReporting:
+    """Opt-in, scrubbed, anonymous error reporting. The scrubber is the trust
+    boundary, so it is tested hard; sending is strictly consent-gated."""
+
+    def setup_method(self):
+        self._orig = tg.CFG_FILE
+        self._dir = tempfile.mkdtemp()
+        tg.CFG_FILE = os.path.join(self._dir, "config.json")
+        self._orig_dsn = tg._SENTRY_DSN
+        self._orig_fire = tg._sentry_fire
+
+    def teardown_method(self):
+        tg.CFG_FILE = self._orig
+        tg._SENTRY_DSN = self._orig_dsn
+        tg._sentry_fire = self._orig_fire
+        os.environ.pop("TUXGENIE_SENTRY_DSN", None)
+
+    def test_scrubber_redacts_every_secret_type(self):
+        raw = ("AIzaSyD" + "a" * 30 + " gsk_" + "b" * 40 + " sk-ant-" + "c" * 60
+               + " me@example.com 10.0.0.7 " + os.path.expanduser("~") + "/x /home/alice/y")
+        out = tg._sanitize_tb(raw)
+        for leaked in ("AIzaSyD", "gsk_", "sk-ant-", "me@example.com", "10.0.0.7", "/home/alice"):
+            assert leaked not in out, f"scrubber leaked: {leaked}"
+        for token in ("[GEMINI_KEY_REDACTED]", "[GROQ_KEY_REDACTED]", "[ANTHROPIC_KEY_REDACTED]",
+                      "[EMAIL_REDACTED]", "[IP_REDACTED]"):
+            assert token in out
+
+    def test_dsn_parses_including_eu_region(self):
+        os.environ["TUXGENIE_SENTRY_DSN"] = "https://pub123@o999.ingest.de.sentry.io/4567"
+        url, key = tg._sentry_endpoint()
+        assert url == "https://o999.ingest.de.sentry.io/api/4567/store/"
+        assert key == "pub123"
+
+    def test_no_dsn_means_no_endpoint(self):
+        tg._SENTRY_DSN = ""
+        os.environ.pop("TUXGENIE_SENTRY_DSN", None)
+        assert tg._sentry_endpoint() is None
+
+    def test_event_is_scrubbed_and_wellformed(self):
+        ev = tg._build_error_event(
+            "RuntimeError", "RuntimeError: key AIzaSyD" + "a" * 30,
+            "trace with AIzaSyD" + "a" * 30, feature="fix",
+            tags={"provider": "gemini", "reason": "transient_no_failover"})
+        assert len(ev["event_id"]) == 32
+        assert "AIzaSyD" not in ev["exception"]["values"][0]["value"]
+        assert "AIzaSyD" not in ev["extra"]["scrubbed_detail"]
+        assert ev["tags"]["provider"] == "gemini"
+        assert ev["release"] == f"tuxgenie@{tg.__version__}"
+
+    def test_send_is_consent_gated(self):
+        sent = []
+        tg._sentry_fire = lambda ep, ev: sent.append(ev)
+        tg._SENTRY_DSN = "https://pub@o1.ingest.sentry.io/2"
+        # Undecided + non-interactive → must NOT send (and must not prompt).
+        tg.save_cfg({})
+        assert tg._send_error_report("E", "E: x", "d", interactive=False) is False
+        assert sent == []
+        # Explicitly opted out → must NOT send.
+        tg.save_cfg({"error_reporting": False})
+        assert tg._send_error_report("E", "E: x", "d", interactive=False) is False
+        assert sent == []
+        # Opted in → sends exactly one event.
+        tg.save_cfg({"error_reporting": True})
+        assert tg._send_error_report("E", "E: x", "d", interactive=False) is True
+        assert len(sent) == 1
+
+    def test_send_is_noop_without_dsn(self):
+        tg._SENTRY_DSN = ""
+        os.environ.pop("TUXGENIE_SENTRY_DSN", None)
+        fired = []
+        tg._sentry_fire = lambda ep, ev: fired.append(ev)
+        tg.save_cfg({"error_reporting": True})
+        assert tg._send_error_report("E", "E: x", "d", interactive=False) is False
+        assert fired == []
+
+
 class TestTransparency:
     """Lock in the 100%-transparency promises so they can't silently regress."""
 
@@ -1262,11 +1338,25 @@ class TestTransparency:
         for phrase in ("no telemetry", "chmod 600", "sudo password", "free tier"):
             assert phrase in body, f"PRIVACY.md must mention '{phrase}'"
 
-    def test_no_telemetry_in_source(self):
-        """No analytics/telemetry SDKs or phone-home network posts."""
+    def test_privacy_doc_documents_optin_error_reporting(self):
+        """Opt-in error reporting must be disclosed honestly, incl. what's NOT sent."""
+        body = open(os.path.join(self._ROOT, "PRIVACY.md")).read().lower()
+        assert "anonymous error reporting" in body
+        assert "opt-in" in body or "opt in" in body
+        # Must promise IP address is never sent — our key differentiator vs. default Sentry.
+        assert "ip address" in body and "never sent" in body
+
+    def test_no_analytics_sdks_in_source(self):
+        """No third-party analytics/tracking SDKs, and no PII telemetry.
+        (Opt-in, scrubbed error reporting via a raw HTTPS post is allowed and
+        documented in PRIVACY.md; profiling/analytics SDKs are not.)"""
         src = self._src().lower()
         for banned in ("posthog", "mixpanel", "segment.io", "google-analytics"):
-            assert banned not in src, f"unexpected telemetry reference: {banned}"
+            assert banned not in src, f"unexpected analytics reference: {banned}"
+        # We must NOT pull in the sentry SDK (keeps the tool single-file, stdlib)
+        # and must NEVER enable Sentry's PII option.
+        assert "import sentry_sdk" not in src, "must not depend on the sentry SDK"
+        assert "send_default_pii" not in src, "must never enable PII telemetry"
 
     def test_gemini_free_tier_disclosure_at_point_of_choice(self):
         """Picking Gemini must disclose the free-tier data-usage caveat."""

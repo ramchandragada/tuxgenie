@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.18.0"
+__version__ = "6.19.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1636,6 +1636,10 @@ def feat_settings(backend, bctx, slog):
     failover_on = cfg.get("auto_switch_providers", True)
     failover_tag = C(" ON", GREEN) if failover_on else C(" OFF", YELLOW)
     print(f"  {DIM}Auto-switch AI on limits (free → free):{R}{failover_tag}")
+    report_state = cfg.get("error_reporting", None)
+    report_tag = (C(" ON", GREEN) if report_state is True
+                  else C(" OFF", YELLOW) if report_state is False else C(" NOT SET", DIM))
+    print(f"  {DIM}Anonymous error reports (scrubbed, no personal data):{R}{report_tag}")
     if backend._session_input_tokens > 0:
         print(f"  {DIM}{backend.session_cost_estimate()}{R}")
     print(f"\n  {C('[1]',CYAN)} Change API key")
@@ -1647,6 +1651,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
     print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq — both free · or Claude){R}")
     print(f"  {C('[9]',CYAN)} Toggle auto-switch on limits  {DIM}(fall back between free providers — never Claude){R}")
+    print(f"  {C('[10]',CYAN)} Toggle anonymous error reports  {DIM}(scrubbed crashes/AI errors — helps us fix bugs){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
@@ -1794,6 +1799,15 @@ def feat_settings(backend, bctx, slog):
             info("Needs a key saved for a second free provider (Gemini and/or Groq).")
         else:
             ok("Auto-switch OFF — TuxGenie stays on your chosen provider and shows the limit message instead.")
+    elif ch == "10":
+        new_state = not (load_cfg().get("error_reporting", False) is True)
+        save_cfg({"error_reporting": new_state})
+        if new_state:
+            ok("Anonymous error reports ON — thank you! Scrubbed crashes & AI errors help us fix bugs.")
+            print(f"  {DIM}Sent: version · distro · Python · provider name · error type & scrubbed")
+            print(f"  message. NEVER your prompts, commands, files, keys, emails or IP.{R}")
+        else:
+            ok("Anonymous error reports OFF — nothing will be sent.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 3 — SYSTEM CONTEXT COLLECTORS
@@ -2582,6 +2596,12 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                     # which would mislabel e.g. a Groq quota error as an Anthropic one).
                     print(f"  {RED}{e}{R}")
                     print(f"  {DIM}Tip: press {BOLD}k{R}{DIM} to change the key · Settings → 8 to switch AI provider.{R}")
+                # Report a capacity/outage we couldn't fail over from (e.g. only one
+                # free key configured) — the exact signal telemetry should capture.
+                if _is_transient_ai_error(e):
+                    _report_error_from_exc(e, feature=_active_feature or "agentic",
+                                           tags={"provider": _provider_name(backend),
+                                                 "reason": "transient_no_failover"})
                 return
 
             # Track usage (regular + cache tokens) so session cost is accurate.
@@ -3679,14 +3699,163 @@ def _open_github_issue(title, body, labels="bug"):
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def _sanitize_tb(tb_text):
-    """Strip personal info from a traceback before showing/sending it."""
+    """Strip personal info from a traceback/error before showing or sending it.
+
+    This is the TRUST BOUNDARY for error reporting: anything that could
+    identify a user or leak a secret must be scrubbed here, because the
+    output may be shown on screen, put in a GitHub issue, or sent to the
+    error-reporting endpoint. Keep this list conservative and additive."""
+    if not tb_text:
+        return tb_text
     home = os.path.expanduser("~")
-    tb_text = tb_text.replace(home, "~")
-    tb_text = re.sub(r'sk-ant-[A-Za-z0-9_\-]{10,}', '[API_KEY_REDACTED]', tb_text)
-    # Redact cached sudo password if it appears in any repr/locals dump
+    if home and home not in ("", "/"):
+        tb_text = tb_text.replace(home, "~")
+    # /home/<name> and /root paths that weren't the current $HOME
+    tb_text = re.sub(r'/home/[^/\s"\']+', '/home/<user>', tb_text)
+    # API keys / tokens for every provider we support (+ generic OpenAI-style)
+    tb_text = re.sub(r'sk-ant-[A-Za-z0-9_\-]{10,}', '[ANTHROPIC_KEY_REDACTED]', tb_text)
+    tb_text = re.sub(r'AIza[A-Za-z0-9_\-]{20,}',    '[GEMINI_KEY_REDACTED]', tb_text)
+    tb_text = re.sub(r'gsk_[A-Za-z0-9]{20,}',       '[GROQ_KEY_REDACTED]', tb_text)
+    tb_text = re.sub(r'\bsk-[A-Za-z0-9]{20,}',      '[API_KEY_REDACTED]', tb_text)
+    # Email addresses and IP addresses
+    tb_text = re.sub(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}', '[EMAIL_REDACTED]', tb_text)
+    tb_text = re.sub(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', '[IP_REDACTED]', tb_text)
+    # Cached sudo password if it appears in any repr/locals dump
     if _SESSION_SUDO_PW:
         tb_text = tb_text.replace(_SESSION_SUDO_PW, '[SUDO_PW_REDACTED]')
     return tb_text
+
+# ── Anonymous error reporting (opt-in) ─────────────────────────────────────────
+# Sends scrubbed crash/AI-error reports to a Sentry project so bugs get fixed
+# without every user having to file a GitHub issue by hand. Strictly opt-in
+# (asked once, remembered), fully anonymous, and a silent no-op until a DSN is
+# configured. The DSN is a WRITE-ONLY ingest key — safe to ship publicly; it can
+# only send events in, never read anything. Override at runtime with the
+# TUXGENIE_SENTRY_DSN env var (handy for testing against a throwaway project).
+_SENTRY_DSN = "https://82c035c59bb2369edca529f34d406ca2@o4511041705738240.ingest.de.sentry.io/4511777723646032"
+
+def _sentry_endpoint():
+    """Parse the DSN into (store_url, public_key), or None if unset/invalid."""
+    dsn = (os.environ.get("TUXGENIE_SENTRY_DSN", "").strip() or _SENTRY_DSN).strip()
+    if not dsn:
+        return None
+    m = re.match(r'(https?)://([^@/]+)@([^/]+)/(\d+)', dsn)
+    if not m:
+        return None
+    scheme, public_key, host, project_id = m.groups()
+    public_key = public_key.split(":")[0]   # tolerate legacy "public:secret"
+    return (f"{scheme}://{host}/api/{project_id}/store/", public_key)
+
+def _distro_tag():
+    """A short distro label for grouping (PRETTY_NAME), or 'unknown'."""
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("PRETTY_NAME="):
+                    return line.split("=", 1)[1].strip().strip('"')[:60]
+    except Exception:
+        pass
+    return "unknown"
+
+def _build_error_event(exc_type_name, summary, detail, feature="", tags=None):
+    """Build a Sentry event dict. Everything user-facing is scrubbed first."""
+    ev = {
+        "event_id": os.urandom(16).hex(),
+        "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "platform": "python",
+        "level": "error",
+        "logger": "tuxgenie",
+        "release": f"tuxgenie@{__version__}",
+        "environment": "production",
+        "exception": {"values": [{"type": (exc_type_name or "Error")[:80],
+                                   "value": _sanitize_tb(summary)[:500]}]},
+        "tags": {"tuxgenie_version": __version__,
+                 "distro": _distro_tag(),
+                 "python": sys.version.split()[0],
+                 "feature": (feature or "unknown")[:60]},
+        "extra": {"scrubbed_detail": _sanitize_tb(detail or summary)[:5000]},
+    }
+    if tags:
+        ev["tags"].update({str(k)[:32]: str(v)[:80] for k, v in tags.items()})
+    return ev
+
+def _sentry_fire(endpoint, event):
+    """POST the event in a daemon thread. Never blocks, never raises."""
+    url, public_key = endpoint
+    def _post():
+        try:
+            data = json.dumps(event).encode("utf-8")
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": f"TuxGenie/{__version__}",
+                "X-Sentry-Auth": (f"Sentry sentry_version=7, "
+                                  f"sentry_client=tuxgenie/{__version__}, "
+                                  f"sentry_key={public_key}"),
+            }
+            req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+            urllib.request.urlopen(req, timeout=8).read()
+        except Exception:
+            pass   # telemetry must NEVER surface an error to the user
+    try:
+        threading.Thread(target=_post, daemon=True).start()
+    except Exception:
+        pass
+
+def _error_reporting_consent():
+    """One-time opt-in prompt (with a full 'see exactly what's sent' preview).
+    Returns True/False and remembers the choice in config."""
+    print(f"\n  {CYAN}{BOLD}Help improve TuxGenie for everyone?{R}")
+    print(f"  {DIM}TuxGenie can send an anonymous, secret-scrubbed error report so")
+    print(f"  this gets fixed in a future update — no need to file anything yourself.{R}")
+    print(f"  {DIM}Included: version · distro · Python version · AI provider name ·")
+    print(f"  the error type & a scrubbed message.  NEVER: your prompts, commands,")
+    print(f"  files, API keys, emails or IP address.{R}")
+    while True:
+        try:
+            ans = input(f"\n  Send anonymous error reports? "
+                        f"[{C('y',GREEN,BOLD)} / {C('n',DIM)} / "
+                        f"{C('s',CYAN,BOLD)}=see exactly what's sent]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ans = "n"
+        if ans in ("s", "see", "show"):
+            sample = _build_error_event(
+                "ExampleError", "ExampleError: something went wrong",
+                "Traceback (most recent call last):\n  ...\nExampleError: something went wrong",
+                feature="example", tags={"provider": "gemini"})
+            print(f"\n  {DIM}Exactly this JSON would be sent — nothing else:{R}")
+            print(textwrap.indent(json.dumps(sample, indent=2), "    "))
+            continue
+        enabled = ans in ("y", "yes")
+        save_cfg({"error_reporting": enabled})
+        if enabled:
+            ok("Anonymous error reports are ON. Thank you! Turn off anytime in Settings.")
+        else:
+            info("Error reporting stays OFF. You can turn it on anytime in Settings.")
+        return enabled
+
+def _send_error_report(exc_type_name, summary, detail, feature="", tags=None, interactive=True):
+    """Report a scrubbed error if the user has opted in. Returns True if sent.
+    No-op (silent) when no DSN is configured. Asks for consent once, only in an
+    interactive terminal — never prompts in one-shot/piped runs."""
+    ep = _sentry_endpoint()
+    if ep is None:
+        return False   # reporting not configured — dormant
+    state = load_cfg().get("error_reporting", None)
+    if state is None:
+        if not (interactive and sys.stdin.isatty()):
+            return False   # don't interrupt a non-interactive run to ask
+        state = _error_reporting_consent()
+    if not state:
+        return False
+    _sentry_fire(ep, _build_error_event(exc_type_name, summary, detail, feature, tags))
+    return True
+
+def _report_error_from_exc(exc, feature="", tags=None, interactive=True):
+    """Convenience wrapper: scrub an exception's traceback and report it."""
+    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    summary = f"{type(exc).__name__}: {str(exc)[:150]}"
+    return _send_error_report(type(exc).__name__, summary, detail,
+                              feature=feature, tags=tags, interactive=interactive)
 
 def _ask_rating():
     """Ask a quick 1-5 rating after a successful fix; offer to report if low."""
@@ -3727,6 +3896,15 @@ def report_crash(exc_type, exc_val, exc_tb, feature="unknown"):
 
     print(f"\n{BG_RED}{BOLD}  ⚠  TuxGenie hit an unexpected error  {R}")
     print(f"\n  {RED}{err_summary}{R}")
+
+    # If the user has opted into anonymous reporting (or opts in now), send the
+    # scrubbed crash automatically — no GitHub account or manual steps needed.
+    if _send_error_report(exc_type.__name__, err_summary, tb_text,
+                          feature=feature, tags={"crash": "true"}):
+        ok("Anonymous error report sent — thank you, this helps us fix it.")
+        info(f"Want to add what you were doing? {DIM}https://github.com/{_GITHUB_REPO}/issues{R}")
+        return
+
     print(f"\n  {YELLOW}Report this so we can fix it?{R}")
     print(f"  {DIM}Only this info will be sent — nothing personal:{R}")
     print(f"  {DIM}  · Error: {err_summary}{R}")
@@ -4357,6 +4535,12 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 # show them verbatim rather than a generic guess.
                 msg = str(e)
                 (warn if "429" in msg else err)(msg[:400])
+                # A capacity/outage we couldn't fail over from (e.g. only one free
+                # key configured) is exactly the signal telemetry should capture.
+                if _is_transient_ai_error(e):
+                    _report_error_from_exc(e, feature=_active_feature or "fix",
+                                           tags={"provider": _provider_name(backend),
+                                                 "reason": "transient_no_failover"})
                 return
         except (urllib.error.URLError, OSError) as e:
             eno = getattr(e, "errno", None)

@@ -9,12 +9,14 @@ and we'll fix it.
 
 ## The short version
 
-- **No telemetry. No analytics. No tracking. No accounts.** TuxGenie never
-  "phones home." There is no server that counts you, watches you, or profiles
-  you. You can read the whole thing — it's one file, `tuxgenie.py`.
-- **Nothing about your machine is sent anywhere unless you run an AI task** —
-  and then it goes *only* to the AI provider you chose (Anthropic's Claude or
-  Google Gemini), never to us.
+- **No telemetry by default. No analytics. No tracking. No accounts.** TuxGenie
+  does not count you, watch you, or profile you. The *one* thing it can send us —
+  an anonymous, secret-scrubbed **error report** — is **strictly opt-in**: it is
+  OFF until you explicitly say yes, and it is described in full below. You can
+  read the whole thing — it's one file, `tuxgenie.py`.
+- **Apart from opt-in error reports (below), nothing about your machine is sent
+  anywhere unless you run an AI task** — and then it goes *only* to the AI
+  provider you chose (Claude, Gemini, or Groq), never to us.
 - **Your API key and sudo password stay on your machine.** The API key is saved
   with owner-only permissions (`chmod 600`); your sudo password is held in
   memory for the session only and is never written to disk or sent anywhere.
@@ -73,13 +75,39 @@ Provider terms can change — always the current source of truth:
 All of these open GitHub in your browser and send **nothing** until you review
 the pre-filled content and click Submit:
 
-- **Crash reports** — opt-in after an unexpected error. The report is
+- **Crash reports (GitHub)** — opt-in after an unexpected error. The report is
   **sanitized first**: your home path is replaced with `~`, and any API key or
   sudo password that might appear is redacted. It contains the error, the
   feature name, the version, and your distro/kernel.
 - **Feedback & feature requests** — only what you type.
 - **Shared fixes** — if you choose to contribute a fix that worked for you, the
   problem/command/fix is shown to you in full before it opens GitHub.
+
+## Anonymous error reporting (opt-in)
+
+To fix bugs without every user having to file a report by hand, TuxGenie can
+send an **anonymous, scrubbed** error report when something goes wrong (a crash,
+or an AI provider error we couldn't recover from). This is **completely
+optional**:
+
+- **It is OFF until you turn it on.** The first time an error occurs, TuxGenie
+  asks once, and offers a **"see exactly what's sent"** option that prints the
+  literal report. Your choice is remembered. Change it anytime in
+  **Settings → Toggle anonymous error reports**.
+- **What is sent:** TuxGenie version · your distro name · Python version · the
+  name of your AI provider (e.g. "gemini") · the error type and a
+  **secret-scrubbed** error message/stack.
+- **What is NEVER sent:** your prompts or commands, file contents, API keys,
+  sudo password, email address, or **IP address**. Reports carry no account or
+  device identifier — identical errors from different people are simply counted
+  together.
+- **Where it goes:** a self-hosted-style error collector (a private
+  [Sentry](https://sentry.io) project in the EU region). We deliberately do
+  **not** use Sentry's PII option — no IP addresses or request headers are
+  attached. The scrubbing happens on your machine *before* anything is sent.
+- **How to be sure:** the scrubbing rules and the exact payload are in
+  `tuxgenie.py` (`_sanitize_tb` and `_build_error_event`) — it's one file, and
+  nothing is hidden.
 
 ## Updates
 
@@ -89,7 +117,8 @@ installation — a corrupted or tampered download is refused, never installed.
 
 ## Your controls, in one place
 
-- **Settings → Switch AI provider** — Claude or Gemini, anytime.
+- **Settings → Switch AI provider** — Claude, Gemini, or Groq, anytime.
+- **Settings → Toggle anonymous error reports** — on/off, off by default.
 - **Settings → Toggle cross-session memory** — stop saving anything locally.
 - **Settings → Clear stored memory** — wipe the action log and fingerprint.
 - **Delete `~/.config/tuxgenie/`** — removes your key and all local state.
