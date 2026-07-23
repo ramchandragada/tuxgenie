@@ -545,7 +545,7 @@ try:
     import gi
     gi.require_version("Gtk", "3.0")
     gi.require_version("Vte", "2.91")
-    from gi.repository import Gtk, Vte, GLib, Gio
+    from gi.repository import Gtk, Gdk, Vte, GLib, Gio
 except Exception as e:
     print("tuxgenie-app: GTK/VTE unavailable:", e, file=sys.stderr)
     sys.exit(3)
@@ -570,6 +570,11 @@ class Win(Gtk.ApplicationWindow):
         except Exception:
             pass
         self.term.connect("child-exited", self._exited)
+        # A raw VTE widget has no clipboard bindings or context menu of its own,
+        # so wire up the terminal-standard ones (a plain terminal gives these for
+        # free; without them you cannot copy or paste in this window).
+        self.term.connect("key-press-event", self._on_key)
+        self.term.connect("button-press-event", self._on_button)
         sw = Gtk.ScrolledWindow()
         sw.add(self.term)
         self.add(sw)
@@ -591,6 +596,49 @@ class Win(Gtk.ApplicationWindow):
         if err is not None:
             print("tuxgenie-app: could not start tuxgenie:", err.message, file=sys.stderr)
             os._exit(3)
+
+    def _copy(self):
+        try:
+            self.term.copy_clipboard_format(Vte.Format.TEXT)
+        except Exception:
+            try:
+                self.term.copy_clipboard()
+            except Exception:
+                pass
+
+    def _on_key(self, term, event):
+        # Terminal-standard clipboard: Ctrl+Shift+C copy, Ctrl+Shift+V paste
+        # (plain Ctrl+C must stay as interrupt). Also accept Ctrl+Shift+Insert.
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        name = (Gdk.keyval_name(event.keyval) or "").lower()
+        if ctrl and shift and name == "c":
+            self._copy(); return True
+        if ctrl and shift and name in ("v", "insert"):
+            self.term.paste_clipboard(); return True
+        return False
+
+    def _on_button(self, term, event):
+        if event.button == 2:            # middle-click: paste the selection
+            try: self.term.paste_primary()
+            except Exception: pass
+            return True
+        if event.button == 3:            # right-click: Copy / Paste / Select All
+            menu = Gtk.Menu()
+            def _item(label, cb):
+                mi = Gtk.MenuItem(label=label)
+                mi.connect("activate", lambda *_: cb())
+                menu.append(mi)
+            _item("Copy", self._copy)
+            _item("Paste", lambda: self.term.paste_clipboard())
+            _item("Select All", lambda: self.term.select_all())
+            menu.show_all()
+            try:
+                menu.popup_at_pointer(event)
+            except Exception:
+                menu.popup(None, None, None, None, event.button, event.time)
+            return True
+        return False
 
     def _exited(self, *args):
         app = self.get_application()
