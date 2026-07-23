@@ -1246,6 +1246,28 @@ class TestProviderFailover:
         assert tg._failover_backend(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
 
 
+class TestCwdLabel:
+    """The prompt shows the working directory so relative paths ('./x') are clear."""
+
+    def test_home_is_tilde(self):
+        cwd = os.getcwd()
+        try:
+            os.chdir(os.path.expanduser("~"))
+            assert tg._cwd_label() == "~"
+        finally:
+            os.chdir(cwd)
+
+    def test_subdir_is_home_relative(self):
+        cwd = os.getcwd()
+        try:
+            os.chdir(os.path.expanduser("~"))
+            sub = os.path.join(os.path.expanduser("~"), ".")
+            os.chdir(sub)
+            assert tg._cwd_label().startswith("~")
+        finally:
+            os.chdir(cwd)
+
+
 class TestAppUpdateRouting:
     """'update cursor' must deterministically upgrade the app, never be handed to
     the AI (which once read 'cursor' as the mouse pointer)."""

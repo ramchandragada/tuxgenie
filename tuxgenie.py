@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.31.0"
+__version__ = "6.32.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -210,6 +210,24 @@ def trunc(text, max_lines):
         return text
     hidden = len(lines) - max_lines
     return "\n".join(lines[:max_lines]) + f"\n{C(f'  … [{hidden} more lines]', DIM)}"
+
+def _cwd_label(maxlen=34):
+    """Home-relative current directory for the prompt, like a real shell.
+    So relative paths (e.g. './file.deb') are never a mystery."""
+    try:
+        cwd = os.getcwd()
+    except Exception:
+        return ""
+    home = os.path.expanduser("~")
+    if cwd == home:
+        disp = "~"
+    elif home and cwd.startswith(home + os.sep):
+        disp = "~" + cwd[len(home):]
+    else:
+        disp = cwd
+    if len(disp) > maxlen:
+        disp = "…" + disp[-(maxlen - 1):]
+    return disp
 
 def print_output(rc, stdout, stderr):
     if stdout:
@@ -9995,7 +10013,7 @@ def main():
     while True:
         try:
             _xm = f" {DIM}[expert]{R}" if backend.expert_mode else ""
-            choice = input(f"\n  {BGREEN}{BOLD}❯{R}{_xm} ").strip()
+            choice = input(f"\n  {CYAN}{_cwd_label()}{R} {BGREEN}{BOLD}❯{R}{_xm} ").strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
