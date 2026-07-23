@@ -578,7 +578,7 @@ class Win(Gtk.ApplicationWindow):
         self.term.connect("key-press-event", self._on_key)
         self.term.connect("button-press-event", self._on_button)
         # Use VTE's OWN scrolling with a Gtk.Scrollbar bound to its adjustment.
-        # NOT a Gtk.ScrolledWindow — that fights VTE's scrollback and clears the
+        # NOT a Gtk.ScrolledWindow - that fights VTE's scrollback and clears the
         # text selection when you scroll, so you cannot select past one screen.
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         box.pack_start(self.term, True, True, 0)

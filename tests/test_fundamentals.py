@@ -20,6 +20,20 @@ import tuxgenie as tg
 ROOT = os.path.dirname(os.path.dirname(__file__))
 
 
+class TestPackagingIntegrity:
+    """The packaging scripts must PARSE — a syntax error here (e.g. a non-ASCII
+    char inside a bytes literal) would fail the release build. Catch it in the
+    gate, not only when the .deb build blows up mid-release."""
+
+    def test_create_deb_compiles(self):
+        import py_compile
+        py_compile.compile(os.path.join(ROOT, "create_deb.py"), doraise=True)
+
+    def test_build_catalog_compiles(self):
+        import py_compile
+        py_compile.compile(os.path.join(ROOT, "build_catalog.py"), doraise=True)
+
+
 class TestVersionIntegrity:
     def test_version_is_semver(self):
         assert re.match(r"^\d+\.\d+\.\d+$", tg.__version__), tg.__version__
