@@ -1370,6 +1370,43 @@ class TestScopeExplosionGuard:
             assert not tg._is_scope_explosion(cmd), cmd
 
 
+class TestCrossProviderSwitch:
+    """Auto-switch re-sends the whole conversation to the new provider, so the
+    other provider's tool-call blocks must translate cleanly. Lock both paths."""
+
+    def test_gemini_toolcalls_translate_to_groq_with_matched_ids(self):
+        # gemini → groq: the tool_use id must equal the tool_result's id in the
+        # OpenAI-format output, or Groq 400s ("tool_call_id not found").
+        msgs = [
+            {"role": "user", "content": "install vlc"},
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "gemcall_1", "name": "run_command",
+                 "input": {"command": "apt install vlc"}}]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "gemcall_1", "content": "done"}]},
+        ]
+        out = tg._oai_messages_from_anthropic("sys", msgs)
+        asst = [m for m in out if m.get("role") == "assistant" and m.get("tool_calls")]
+        tool = [m for m in out if m.get("role") == "tool"]
+        assert asst and tool, "tool_use/tool_result did not translate"
+        assert asst[0]["tool_calls"][0]["id"] == tool[0]["tool_call_id"] == "gemcall_1"
+
+    def test_foreign_toolcalls_flatten_for_gemini(self):
+        # groq/claude → gemini: an UNSIGNED foreign tool call must become plain
+        # text (Gemini rejects functionCalls without a thoughtSignature).
+        import json as _j
+        msgs = [
+            {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "call_1", "name": "run_command",
+                 "input": {"command": "ls"}}]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "call_1", "content": "ok"}]},
+        ]
+        contents = tg._gem_contents_from_anthropic(msgs)
+        assert "functionCall" not in _j.dumps(contents), \
+            "unsigned foreign tool call leaked as a Gemini functionCall"
+
+
 class TestErrorReporting:
     """Opt-in, scrubbed, anonymous error reporting. The scrubber is the trust
     boundary, so it is tested hard; sending is strictly consent-gated."""
