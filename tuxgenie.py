@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.53.0"
+__version__ = "6.54.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8489,6 +8489,123 @@ def _distro_adapt_prompt(install_prompt: str, bctx: dict) -> str:
     return note + install_prompt
 
 
+# Deterministic install methods for catalog apps — so a KNOWN app installs
+# without calling the AI (faster, free, works offline, no rate limits, and can't
+# be got wrong by the model). Keyed by exact catalog name.
+#   "pkg"     — package name in the mainstream distro repos (used natively on the
+#               user's package manager; the Debian 'native-first' preference).
+#   "flatpak" — Flathub app-id, used when flatpak is available (works on any distro
+#               and handles vendor apps that would otherwise need a 3rd-party repo).
+# Apps not listed here — and any listed app whose direct install fails — fall back
+# to the AI installer, so nothing regresses. Extend this map over time.
+_CATALOG_INSTALL = {
+    # In-repo desktop apps (native package name is stable across apt/dnf/pacman).
+    "VLC Media Player": {"pkg": "vlc", "flatpak": "org.videolan.VLC"},
+    "MPV":              {"pkg": "mpv", "flatpak": "io.mpv.Mpv"},
+    "GIMP":             {"pkg": "gimp", "flatpak": "org.gimp.GIMP"},
+    "Inkscape":         {"pkg": "inkscape", "flatpak": "org.inkscape.Inkscape"},
+    "Krita":            {"pkg": "krita", "flatpak": "org.kde.krita"},
+    "Audacity":         {"pkg": "audacity", "flatpak": "org.audacityteam.Audacity"},
+    "Kdenlive":         {"pkg": "kdenlive", "flatpak": "org.kde.kdenlive"},
+    "OBS Studio":       {"pkg": "obs-studio", "flatpak": "com.obsproject.Studio"},
+    "HandBrake":        {"pkg": "handbrake", "flatpak": "fr.handbrake.ghb"},
+    "Darktable":        {"pkg": "darktable", "flatpak": "org.darktable.Darktable"},
+    "Blender":          {"pkg": "blender", "flatpak": "org.blender.Blender"},
+    "Shotcut":          {"pkg": "shotcut", "flatpak": "org.shotcut.Shotcut"},
+    "Pinta":            {"pkg": "pinta", "flatpak": "com.github.PintaProject.Pinta"},
+    "digiKam":          {"pkg": "digikam", "flatpak": "org.kde.digikam"},
+    "RawTherapee":      {"pkg": "rawtherapee", "flatpak": "com.rawtherapee.RawTherapee"},
+    "Strawberry":       {"pkg": "strawberry"},
+    "Thunderbird":      {"pkg": "thunderbird", "flatpak": "org.mozilla.Thunderbird"},
+    "LibreOffice":      {"pkg": "libreoffice", "flatpak": "org.libreoffice.LibreOffice"},
+    "Git":              {"pkg": "git"},
+    "FileZilla":        {"pkg": "filezilla", "flatpak": "org.filezillaproject.Filezilla"},
+    "Rclone":           {"pkg": "rclone"},
+    "qBittorrent":      {"pkg": "qbittorrent", "flatpak": "org.qbittorrent.qBittorrent"},
+    "KeePassXC":        {"pkg": "keepassxc", "flatpak": "org.keepassxc.KeePassXC"},
+    "Flameshot":        {"pkg": "flameshot", "flatpak": "org.flameshot.Flameshot"},
+    "CopyQ":            {"pkg": "copyq", "flatpak": "com.github.hluk.copyq"},
+    "Calibre":          {"pkg": "calibre", "flatpak": "com.calibre_ebook.calibre"},
+    "GParted":          {"pkg": "gparted"},
+    "BleachBit":        {"pkg": "bleachbit"},
+    "Synaptic":         {"pkg": "synaptic"},
+    "Timeshift":        {"pkg": "timeshift"},
+    "Xournal++":        {"pkg": "xournalpp", "flatpak": "com.github.xournalpp.xournalpp"},
+    "Kitty Terminal":   {"pkg": "kitty"},
+    "Nextcloud Client": {"pkg": "nextcloud-desktop", "flatpak": "com.nextcloud.desktopclient.nextcloud"},
+    "Jellyfin Media Player": {"flatpak": "com.github.iwalton3.jellyfin-media-player"},
+    # Vendor apps not in the base repos — Flathub avoids the 3rd-party-repo dance.
+    "Brave Browser":    {"flatpak": "com.brave.Browser"},
+    "Signal Desktop":   {"flatpak": "org.signal.Signal"},
+    "Discord":          {"flatpak": "com.discordapp.Discord"},
+    "Telegram Desktop": {"flatpak": "org.telegram.desktop"},
+    "Slack":            {"flatpak": "com.slack.Slack"},
+    "Spotify":          {"flatpak": "com.spotify.Client"},
+    "Obsidian":         {"flatpak": "md.obsidian.Obsidian"},
+    "Logseq":           {"flatpak": "com.logseq.Logseq"},
+    "Element":          {"flatpak": "im.riot.Riot"},
+    "Zotero":           {"flatpak": "org.zotero.Zotero"},
+    "OnlyOffice":       {"flatpak": "org.onlyoffice.desktopeditors"},
+    "Bruno":            {"flatpak": "com.usebruno.Bruno"},
+    "DBeaver":          {"flatpak": "io.dbeaver.DBeaverCommunity"},
+    "Stremio":          {"flatpak": "com.stremio.Stremio"},
+}
+
+
+def _catalog_deterministic_cmd(entry, bctx):
+    """Return (command, requires_root) to install a catalog entry WITHOUT the AI,
+    or None if there's no known method (caller falls back to the AI installer).
+    Prefers the native distro package (Debian 'native-first'); otherwise a Flathub
+    app-id via user-level Flatpak when flatpak is present."""
+    spec = _CATALOG_INSTALL.get(entry.get("name", ""))
+    if not spec:
+        return None
+    pm = (bctx.get("pkg_mgr") or "").strip()
+    pkg = spec.get("pkg")
+    if pkg:
+        native = {
+            "apt":    f"sudo apt-get install -y {pkg}",
+            "dnf":    f"sudo dnf install -y {pkg}",
+            "yum":    f"sudo yum install -y {pkg}",
+            "zypper": f"sudo zypper install -y {pkg}",
+            "pacman": f"sudo pacman -S --noconfirm {pkg}",
+            "apk":    f"sudo apk add {pkg}",
+        }.get(pm)
+        if native:
+            return (native, True)
+    fid = spec.get("flatpak")
+    if fid and shutil.which("flatpak"):
+        cmd = ("flatpak remote-add --user --if-not-exists flathub "
+               "https://flathub.org/repo/flathub.flatpakrepo && "
+               f"flatpak install --user --noninteractive flathub {fid}")
+        return (cmd, False)
+    return None
+
+
+def _install_catalog_entry(entry, bctx, sudo_state):
+    """Try to install a catalog entry deterministically (no AI). Returns True on a
+    clean install, False if there's no deterministic method or it didn't complete
+    (the caller then falls back to the AI installer)."""
+    spec = _catalog_deterministic_cmd(entry, bctx)
+    if not spec:
+        return False
+    cmd, requires_root = spec
+    if is_dangerous(cmd):          # installs never should be — but never bypass the gate
+        return False
+    print(f"  {DIM}$ {cmd}{R}")
+    pw = None
+    if requires_root:
+        if sudo_state.get("pw") is None:
+            sudo_state["pw"] = get_or_cache_sudo_password()
+        pw = sudo_state["pw"]
+    rc, _, _ = run_cmd_live(cmd, sudo_password=pw, timeout=1800)
+    if rc == 0:
+        ok(f"{entry['name']} installed.")
+        return True
+    warn(f"Direct install didn't complete (exit {rc}) — letting the AI handle {entry['name']}.")
+    return False
+
+
 def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_label, history_tag):
     """Shared multi-select picker used by both Install Apps ([30]) and AI Tools
     ([40]). Renders the catalog grouped by category, accepts numbers/ranges,
@@ -8566,10 +8683,14 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
         info("Cancelled — nothing was installed.")
         return
 
+    sudo_state = {"pw": None}
     for i, entry in enumerate(chosen, 1):
         section(f"[{i}/{len(chosen)}] Installing {entry['name']}")
         try:
-            agentic_engine(backend, _distro_adapt_prompt(entry["prompt"], bctx), bctx, slog)
+            # Deterministic first: a known app installs by its known method, no AI.
+            # Only fall back to the AI when there's no method or it doesn't complete.
+            if not _install_catalog_entry(entry, bctx, sudo_state):
+                agentic_engine(backend, _distro_adapt_prompt(entry["prompt"], bctx), bctx, slog)
         except KeyboardInterrupt:
             warn(f"Cancelled. Skipping remaining {item_label}.")
             return

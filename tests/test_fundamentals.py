@@ -91,6 +91,31 @@ class TestCatalogFundamentals:
         assert len(tg.AI_CATALOG) >= 10
         self._check(tg.AI_CATALOG, ("id", "name", "cat", "prompt", "desc"))
 
+    def test_deterministic_install_map_names_are_real(self):
+        # Every key in the no-AI install map must be an actual catalog app name,
+        # otherwise a typo silently disables the deterministic path for that app.
+        names = {e["name"] for e in tg.APP_CATALOG}
+        for k in tg._CATALOG_INSTALL:
+            assert k in names, f"_CATALOG_INSTALL key not in catalog: {k!r}"
+        for k, spec in tg._CATALOG_INSTALL.items():
+            assert spec.get("pkg") or spec.get("flatpak"), f"no install method for {k}"
+
+    def test_catalog_install_is_deterministic_without_ai(self):
+        # A known in-repo app must produce a direct native command (no AI call).
+        cmd = tg._catalog_deterministic_cmd({"name": "VLC Media Player"}, {"pkg_mgr": "apt"})
+        assert cmd == ("sudo apt-get install -y vlc", True)
+        # An unknown app has no deterministic method → caller falls back to the AI.
+        assert tg._catalog_deterministic_cmd({"name": "Nonexistent App"}, {"pkg_mgr": "apt"}) is None
+
+    def test_catalog_vendor_app_uses_flatpak_when_available(self, monkeypatch):
+        # A vendor app (not in base repos) installs via Flathub when flatpak exists…
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/flatpak")
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Brave Browser"}, {"pkg_mgr": "apt"})
+        assert "flatpak install" in cmd and "com.brave.Browser" in cmd and root is False
+        # …but if flatpak isn't installed, defer to the AI (no partial/native guess).
+        monkeypatch.setattr(tg.shutil, "which", lambda name: None)
+        assert tg._catalog_deterministic_cmd({"name": "Brave Browser"}, {"pkg_mgr": "apt"}) is None
+
 
 class TestMenuFundamentals:
     def test_menu_numbers_unique_and_dispatch_valid(self):
