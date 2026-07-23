@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.39.0"
+__version__ = "6.40.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4028,7 +4028,7 @@ def _build_error_event(exc_type_name, summary, detail, feature="", tags=None):
     """Build a Sentry event dict. Everything user-facing is scrubbed first."""
     ev = {
         "event_id": os.urandom(16).hex(),
-        "timestamp": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "platform": "python",
         "level": "error",
         "logger": "tuxgenie",
@@ -9974,6 +9974,12 @@ _active_feature = "startup"
 
 def main():
     global _active_feature, _last_failed
+    # A consumer CLI shouldn't spew Python warnings (DeprecationWarning, etc.)
+    # onto a non-expert's screen. Silence them for the running app only — tests
+    # and CI still import the module without this filter, so warnings stay visible
+    # to developers.
+    import warnings
+    warnings.filterwarnings("ignore")
     _crash_guard()   # increment crash counter; rolls back if 3 consecutive crashes
     parser = argparse.ArgumentParser(
         prog="tuxgenie",
