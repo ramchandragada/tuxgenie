@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.34.0"
+__version__ = "6.35.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3536,6 +3536,34 @@ def _app_update_cmd_for_phrase(text: str):
     return None
 
 
+# English function-words that almost never appear as bare tokens in a real
+# shell command, but are everywhere in plain-English sentences. Used to catch
+# "franz is installed but it doesn't open" (first word IS a real program, yet
+# the input is clearly a question for the AI, not a command to execute).
+_NL_STOPWORDS = frozenset("""
+a an the is are am was were be been being it its i we you he she they my your
+our their this that these those when where why what who how but and or nor so
+because if then than not no does doesnt doesn dont don isnt arent cant wont
+cannot couldnt shouldnt wouldnt please to of in on at for with without after
+before while about from into over under again still just only every any some
+me him her them keeps keep working works open opens opening click clicking
+clicked doesn't don't isn't can't won't it's i'm there here now
+""".split())
+
+def _looks_like_sentence(parts):
+    """True if the tokens read like an English sentence rather than a command:
+    several function-words, and no flags or paths (quoted args stay one token,
+    so `-m "fix it when it opens"` is not tripped)."""
+    if len(parts) < 4:
+        return False
+    if any(p.startswith('-') for p in parts):
+        return False
+    if any(p.startswith(('/', '~', './', '../')) or '/' in p for p in parts):
+        return False
+    hits = sum(1 for p in parts if p.strip(".,!?;:'\"").lower() in _NL_STOPWORDS)
+    return hits >= 2
+
+
 def _looks_like_command(text):
     """
     Return (True, first_word) if text looks like a shell command.
@@ -3550,6 +3578,11 @@ def _looks_like_command(text):
     except ValueError:
         return False, ''
     if not parts:
+        return False, ''
+
+    # Plain-English sentence → send to the AI, even if the first word happens to
+    # be a real program in PATH (e.g. "franz is installed but it doesn't open").
+    if _looks_like_sentence(parts):
         return False, ''
 
     first = parts[0]

@@ -1257,6 +1257,27 @@ class TestProviderFailover:
         assert tg._free_failover_available("groq") is False
 
 
+class TestCommandVsSentence:
+    """A plain-English sentence must go to the AI even when its first word is a
+    real program (regression: 'franz is installed but it doesn't open' was being
+    executed as the command `franz` with the sentence as arguments)."""
+
+    def test_sentences_are_not_commands(self):
+        for s in ("franz is installed but when i click icon it doent open",
+                  "python3 is not opening when i click it",
+                  "my wifi is not working and it keeps dropping"):
+            ok, _ = tg._looks_like_command(s)
+            assert ok is False, f"sentence wrongly treated as command: {s!r}"
+
+    def test_real_commands_still_run(self):
+        for c in ("sudo apt install ./Franz_amd64.deb",
+                  "ls -la",
+                  "git log --oneline --graph --decorate",
+                  "systemctl status my-service"):
+            ok, _ = tg._looks_like_command(c)
+            assert ok is True, f"real command wrongly sent to AI: {c!r}"
+
+
 class TestCwdLabel:
     """The prompt shows the working directory so relative paths ('./x') are clear."""
 
