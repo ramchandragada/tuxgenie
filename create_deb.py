@@ -565,8 +565,10 @@ class Win(Gtk.ApplicationWindow):
                 pass
         self.term = Vte.Terminal()
         try:
-            self.term.set_scrollback_lines(-1)
+            self.term.set_scrollback_lines(-1)          # unlimited scrollback
             self.term.set_mouse_autohide(True)
+            self.term.set_scroll_on_keystroke(True)      # typing jumps to bottom
+            self.term.set_scroll_on_output(False)        # reading/selecting won't get yanked down
         except Exception:
             pass
         self.term.connect("child-exited", self._exited)
@@ -575,9 +577,18 @@ class Win(Gtk.ApplicationWindow):
         # free; without them you cannot copy or paste in this window).
         self.term.connect("key-press-event", self._on_key)
         self.term.connect("button-press-event", self._on_button)
-        sw = Gtk.ScrolledWindow()
-        sw.add(self.term)
-        self.add(sw)
+        # Use VTE's OWN scrolling with a Gtk.Scrollbar bound to its adjustment.
+        # NOT a Gtk.ScrolledWindow — that fights VTE's scrollback and clears the
+        # text selection when you scroll, so you cannot select past one screen.
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        box.pack_start(self.term, True, True, 0)
+        try:
+            sb = Gtk.Scrollbar(orientation=Gtk.Orientation.VERTICAL,
+                               adjustment=self.term.get_vadjustment())
+            box.pack_start(sb, False, False, 0)
+        except Exception:
+            pass
+        self.add(box)
         self.show_all()
         try:
             self.term.spawn_async(
