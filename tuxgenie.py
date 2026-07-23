@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.49.0"
+__version__ = "6.50.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3171,10 +3171,53 @@ def _is_scope_explosion(cmd: str) -> bool:
     return bool(_METAPKG_RE.search(cmd))
 
 
+# High-risk shapes that must be confirmed EVEN under auto-approve / "yes to all".
+# These are the categories most likely to arrive via prompt-injection (untrusted
+# file contents, command output or log lines steering the model) and that the
+# is_dangerous() hard-block intentionally doesn't ban outright (they have
+# legitimate uses — e.g. official curl|bash installers). auto_approve is a
+# convenience for ordinary installs/service restarts; it must never silently run
+# remote-code-execution or overwrite system configuration.
+_HIGH_RISK_RE = [
+    (re.compile(r'\b(?:curl|wget|fetch)\b[^|]*\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b', re.I),
+     "downloads a script and pipes it straight into a shell"),
+    (re.compile(r'\b(?:curl|wget|fetch)\b[^|]*\|\s*(?:sudo\s+)?(?:python|perl|ruby|node)\b', re.I),
+     "downloads code and pipes it into an interpreter"),
+    (re.compile(r'(?:>>?|\btee\b(?:\s+-a)?)\s*/(?:etc|boot|usr|lib|lib64|sys)/', re.I),
+     "writes to a protected system location"),
+    (re.compile(r'\bchmod\b\s+(?:-[A-Za-z]*R[A-Za-z]*\s+)\S*\s*/(?:etc|boot|usr|lib|lib64|var|root)\b', re.I),
+     "recursively changes permissions on a system directory"),
+    (re.compile(r'\bchown\b\s+(?:-[A-Za-z]*R[A-Za-z]*\s+)\S+\s+/(?:etc|boot|usr|lib|lib64|var|root)?\b', re.I),
+     "recursively changes ownership on a system path"),
+]
+
+def _high_risk_reason(cmd: str):
+    """Return a human reason if `cmd` is high-risk (confirm even under auto-approve), else None."""
+    for rx, reason in _HIGH_RISK_RE:
+        if rx.search(cmd):
+            return reason
+    return None
+
+
 def _approval_gate(cmd, requires_root, backend, approve_state):
     """Decide whether to run an AI-proposed command. Returns True to run, False
     to skip; raises _AbortSession to stop the whole session. Read-only commands
-    run silently; state-changing ones are confirmed unless auto_approve is set."""
+    run silently; state-changing ones are confirmed unless auto_approve is set.
+    A small set of HIGH-RISK shapes (remote-pipe-to-shell, writes to system
+    config, recursive perms on system dirs) are always confirmed, even under
+    auto_approve — these are the likeliest prompt-injection payloads."""
+    reason = _high_risk_reason(cmd)
+    if reason:
+        print(f"\n  {YELLOW}{BOLD}⚠  High-risk command — it {reason}.{R}")
+        print(f"  {DIM}This always needs your explicit OK, even with auto-approve on.{R}")
+        if not sys.stdin.isatty():
+            print(f"  {YELLOW}⚠  Skipped — a high-risk command needs explicit approval.{R}")
+            return False
+        try:
+            ans = input(f"  {BOLD}Run it anyway?{R} [{C('y',RED,BOLD)}=yes  {C('n',GREEN,BOLD)}=no]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            raise _AbortSession()
+        return ans in ("y", "yes")
     # Scope guard: installing a full desktop metapackage from a simple request is
     # almost always a misread (e.g. "update cursor" → apt install ubuntu-desktop).
     # Force an explicit confirmation EVEN under auto-approve / "yes to all".
@@ -7132,66 +7175,6 @@ def _download_verified(url, dest, expected_digest=None, progress=False):
     return True, ""
 
 
-def _try_silent_update(deb_url, deb_name, latest, expected_digest=None) -> bool:
-    """Attempt a fully silent auto-update using cached sudo credentials.
-
-    Uses `sudo -n` (non-interactive) so it never prompts for a password.
-    Returns True and re-execs if successful; returns False to let the caller
-    fall back to the interactive prompt.
-    """
-    # Reject anything that isn't a plain semver — defence against a tampered API response
-    if not re.match(r'^\d+\.\d+\.\d+$', latest):
-        return False
-    # Test whether sudo is usable without a password right now
-    probe = subprocess.run(
-        ["sudo", "-n", "true"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-    if probe.returncode != 0:
-        return False   # no cached credentials — caller will prompt
-
-    # Non-deb systems: try pip install --user (no sudo needed)
-    if not shutil.which("dpkg"):
-        rc = subprocess.run(
-            ["pip3", "install", f"tuxgenie=={latest}",
-             "--quiet", "--user", "--break-system-packages"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).returncode
-        if rc != 0:
-            rc = subprocess.run(
-                ["pip3", "install", f"tuxgenie=={latest}", "--quiet", "--user"],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            ).returncode
-        if rc == 0:
-            print(f"\n  {GREEN}{BOLD}🎉 Auto-updated to v{latest}!{R}  {DIM}Restarting…{R}\n")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-        return rc == 0
-
-    # Deb systems: download to a unique temp file, VERIFY, then sudo -n dpkg -i
-    import tempfile
-    fd, tmp_deb = tempfile.mkstemp(suffix=".deb", prefix="tuxgenie_upd_")
-    os.close(fd)
-    okdl, reason = _download_verified(deb_url, tmp_deb, expected_digest)
-    if not okdl:
-        # A silent update must never install an unverified/partial file.
-        try: os.unlink(tmp_deb)
-        except OSError: pass
-        return False
-
-    _save_version_backup()   # save current version before replacing
-    rc = subprocess.run(
-        ["sudo", "-n", "dpkg", "-i", tmp_deb],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    ).returncode
-    try: os.unlink(tmp_deb)
-    except OSError: pass
-
-    if rc == 0:
-        print(f"\n  {GREEN}{BOLD}🎉 Auto-updated to v{latest}!{R}  {DIM}Restarting…{R}\n")
-        os.execv(sys.executable, [sys.executable] + sys.argv)
-    return rc == 0
-
-
 def _do_update_install(deb_url, deb_name, latest, expected_digest=None):
     """Download and install a .deb update, or pip upgrade on non-deb systems."""
     # Validate version string before using it anywhere to prevent injection
@@ -7315,13 +7298,11 @@ def startup_update_check():
     if gap <= 0:
         return  # Already up to date
 
-    # ── 1 minor version behind: try silent auto-update first ──────────────────
+    # ── 1 minor version behind: recommend, but NEVER install without consent ──
+    # (No silent auto-install: installing a .deb as root is a privileged action
+    # and must always be an explicit, informed choice — even if a sudo timestamp
+    # happens to be cached.)
     if gap == 1:
-        if deb_url and deb_name:
-            # Silent path: works when sudo credentials are cached (15-min window)
-            if _try_silent_update(deb_url, deb_name, latest, deb_digest):
-                return  # re-exec already happened inside _try_silent_update
-        # Silent update wasn't possible — show the yellow banner and ask
         print(f"\n  {YELLOW}{BOLD}┌─────────────────────────────────────────────┐{R}")
         print(f"  {YELLOW}{BOLD}│  Update available: v{__version__} → v{latest:<10s}      │{R}")
         print(f"  {YELLOW}{BOLD}└─────────────────────────────────────────────┘{R}")
