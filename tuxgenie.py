@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.37.0"
+__version__ = "6.38.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1255,7 +1255,10 @@ class OpenAICompatBackend:
         want = max(max_tokens or 4096, 1)
         body = {"model": self.model,
                 "messages": _oai_messages_from_anthropic(system_text, messages),
-                "max_tokens": min(want, self._prov.get("max_tokens", 8192)), "temperature": 0.6}
+                "max_tokens": min(want, self._prov.get("max_tokens", 8192)),
+                # Lower temperature when tools are in play: open models like
+                # Groq's Llama emit far fewer malformed function calls at low temp.
+                "temperature": 0.3 if tools else 0.6}
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -1334,6 +1337,14 @@ class OpenAICompatBackend:
                     f"{lbl} limit reached (HTTP 429). Free tiers cap tokens per minute and per day — "
                     f"wait a minute and retry, or switch provider (Settings → 8)."
                     + (f"\n  ({lbl} said: {detail})" if detail else ""))
+            # Groq's Llama occasionally emits an invalid function call (HTTP 400,
+            # "failed to call a function"). It's stochastic, so retry once — a
+            # fresh sample usually succeeds.
+            _dl = detail.lower()
+            if (e.code == 400 and _retry
+                    and ("failed to call a function" in _dl or "failed_generation" in _dl)):
+                print(f"\r  {DIM}{lbl} had a tool-call hiccup — retrying once…{R}          ", flush=True)
+                return self._gen(system_text, messages, tools, max_tokens, _retry=False)
             raise RuntimeError(f"{lbl} API error {e.code}: {detail or 'no details returned'}")
 
     def _prompt_for_key(self):
