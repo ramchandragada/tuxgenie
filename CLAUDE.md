@@ -70,14 +70,13 @@ At every start the provider is chosen by PRIORITY, not by what was last used:
 1. **Claude** only when the user explicitly connected it (`provider == "claude"`
    with a key) — then it's sticky. `main()` warns that free options exist.
 2. Otherwise **always prefer free Gemini, then the free OpenAI-compatible
-   providers in registry order (Groq, Cerebras, …)** — regardless of the last
-   saved free provider. Gemini is the default whenever its key is present; if
-   only one free key exists, start with that provider.
+   providers in registry order (Groq, …)** — regardless of the last saved free
+   provider. Gemini is the default whenever its key is present; if only one free
+   key exists, start with that provider.
 3. If the only key present is Claude's, use it (with the same free-switch hint).
 
-Auto-failover during a session is still free→free only (Gemini → Groq →
-Cerebras → …), never Claude. `tests/test_fundamentals`/`test_tuxgenie` lock
-this priority.
+Auto-failover during a session is still free→free only (Gemini → Groq → …),
+never Claude. `tests/test_fundamentals`/`test_tuxgenie` lock this priority.
 
 ## Cost Optimisation Principles
 

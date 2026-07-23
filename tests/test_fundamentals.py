@@ -60,14 +60,13 @@ class TestStartupFundamentals:
         # Every free default must always be constructable with a dummy key.
         assert tg.GeminiBackend(api_key="AIza" + "x" * 35) is not None
         assert tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq") is not None
-        assert tg.OpenAICompatBackend(api_key="csk-" + "x" * 40, provider="cerebras") is not None
 
     def test_free_provider_registry_has_expected_providers(self):
-        # The registry must expose Groq and Cerebras as free OpenAI-compatible
-        # providers with a config key and a non-Chinese default model each
-        # (project policy: Meta Llama or OpenAI GPT-OSS only — never Qwen/DeepSeek/…).
+        # The registry must expose Groq as a free OpenAI-compatible provider with
+        # a config key and a non-Chinese default model (project policy: Meta Llama
+        # or OpenAI GPT-OSS only — never Qwen/DeepSeek/…).
         free = {n: p for n, p in tg._OAI_PROVIDERS.items() if p.get("free")}
-        assert {"groq", "cerebras"} <= set(free)
+        assert "groq" in free
         _chinese = ("qwen", "deepseek", "kimi", "glm", "ernie", "minimax", "baichuan")
         for name, prov in free.items():
             assert prov["cfg_key"] and prov["default_model"]
