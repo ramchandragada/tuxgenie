@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.45.0"
+__version__ = "6.46.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1340,6 +1340,16 @@ class OpenAICompatBackend:
                     f"account can't use this model yet. Common fixes: verify your {lbl} account email, "
                     f"accept any pending terms in the {lbl} console, or switch provider (Settings → 8)."
                     + (f"\n  ({lbl} said: {detail})" if detail else "\n  (Server returned no reason.)"))
+            if e.code == 402:
+                # Payment required — the account's free access needs activating
+                # (or this model is a paid one). NOT a rate limit; it won't clear
+                # by waiting. The user must enable billing/quota or use a free model.
+                raise RuntimeError(
+                    f"{lbl} needs billing enabled for this request (HTTP 402 — payment required). "
+                    f"Its free tier isn't active on your account (or {getattr(self, 'model', 'this model')} "
+                    f"is a paid model). Open your billing/quota page at {keys_url}, or switch provider "
+                    f"(Settings → 8) — Gemini and Groq stay free."
+                    + (f"\n  ({lbl} said: {detail})" if detail else ""))
             if e.code == 429:
                 # Free-tier tokens-per-minute limit. Groq tells us how long to
                 # wait ("try again in 51.9s"); honour it once so the agentic loop
@@ -1606,6 +1616,7 @@ def _is_user_actionable_error(exc) -> bool:
     m = str(exc).lower()
     signals = ("rejected", "unauthorized", "forbidden", "http 401", "http 403",
                "(401", "(403", "api key is set", "add one", "check it at",
+               "http 402", "payment required", "payment_required", "needs billing",
                "connection refused", "network busy", "network error",
                "no route to host", "name or service not known",
                "temporary failure in name resolution",

@@ -1239,6 +1239,15 @@ class TestProviderFailover:
         # No hint → None (so the caller falls through to giving up cleanly).
         assert tg._retry_after_seconds(RuntimeError("limit reached, try later")) is None
 
+    def test_payment_required_is_user_actionable_not_a_bug(self):
+        # HTTP 402 (Cerebras "payment required") is the user's account state, not
+        # a TuxGenie bug — so it must NOT be sent as an error report…
+        e = RuntimeError("Cerebras needs billing enabled for this request (HTTP 402 — payment "
+                         "required). ... (Cerebras said: payment_required_error, param quota)")
+        assert tg._is_user_actionable_error(e) is True
+        # …but it should still let auto-switch move on to the next free provider.
+        assert tg._is_transient_ai_error(e) is True
+
     def test_short_reason_is_single_line_and_bounded(self):
         # Multi-line provider errors collapse to one bounded line for the notice.
         r = tg._short_reason(RuntimeError("Cerebras limit reached (HTTP 429).\n  Free tiers cap tokens."))
