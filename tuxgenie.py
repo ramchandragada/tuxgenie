@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.33.0"
+__version__ = "6.34.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1316,7 +1316,12 @@ class OpenAICompatBackend:
                         wait = float(m.group(1))
                     except ValueError:
                         wait = 0.0
-                if _retry and 0 < wait <= 65:
+                # If another FREE provider is configured (e.g. Gemini) and
+                # auto-switch is on, don't make the user wait — raise so the
+                # engine fails over to it immediately. Only wait when there's
+                # nothing to switch to (single free provider).
+                if (_retry and 0 < wait <= 65
+                        and not _free_failover_available(getattr(self, "provider", "groq"))):
                     secs = int(wait) + 2
                     print(f"\r  {YELLOW}{lbl} free-tier limit — waiting {secs}s for the "
                           f"per-minute quota to reset, then continuing…{R}          ", flush=True)
@@ -1457,6 +1462,25 @@ def _make_backend(cfg, provider, key):
 
 
 # ── Automatic provider failover (free → free only, never Claude) ─────────────
+def _free_failover_available(exclude_provider: str) -> bool:
+    """True if auto-switch is on AND a *different* free provider (Gemini/Groq)
+    has a saved or env key. Used so a rate-limited provider fails over instead
+    of making the user wait, when there's actually somewhere to switch to."""
+    cfg = load_cfg()
+    if not cfg.get("auto_switch_providers", True):
+        return False
+    if exclude_provider != "gemini" and (
+            os.environ.get("GEMINI_API_KEY", "").strip()
+            or os.environ.get("GOOGLE_API_KEY", "").strip()
+            or cfg.get("gemini_api_key", "").strip()):
+        return True
+    if exclude_provider != "groq" and (
+            os.environ.get("GROQ_API_KEY", "").strip()
+            or cfg.get("groq_api_key", "").strip()):
+        return True
+    return False
+
+
 def _provider_name(backend) -> str:
     if isinstance(backend, GeminiBackend):
         return "gemini"

@@ -1245,6 +1245,17 @@ class TestProviderFailover:
                      "groq_api_key": "gsk_" + "x" * 40, "gemini_api_key": "AIza" + "y" * 35})
         assert tg._failover_backend(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
 
+    def test_free_failover_available_prefers_switch_over_wait(self):
+        # Groq rate-limited but a Gemini key exists → should switch, not wait.
+        tg.save_cfg({"gemini_api_key": "AIza" + "y" * 35})
+        assert tg._free_failover_available("groq") is True
+        # Only a Groq key and we're on Groq → nothing to switch to → wait.
+        tg.save_cfg({"groq_api_key": "gsk_" + "x" * 40, "gemini_api_key": ""})
+        assert tg._free_failover_available("groq") is False
+        # Auto-switch off → never switch.
+        tg.save_cfg({"auto_switch_providers": False, "gemini_api_key": "AIza" + "y" * 35})
+        assert tg._free_failover_available("groq") is False
+
 
 class TestCwdLabel:
     """The prompt shows the working directory so relative paths ('./x') are clear."""
