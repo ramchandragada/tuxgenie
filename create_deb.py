@@ -16,7 +16,6 @@ import sys
 import gzip
 import tarfile
 import hashlib
-import time
 import zlib
 import struct
 import math
@@ -287,7 +286,7 @@ Recommends: python3-pip, python3-gi, gir1.2-vte-2.91, gir1.2-gtk-3.0, xterm | gn
 Conflicts: ai-terminal, tuxgenie (<< {VERSION})
 Replaces: ai-terminal, tuxgenie (<< {VERSION})
 Provides: ai-terminal
-Maintainer: TuxGenie Project <noreply@example.com>
+Maintainer: TuxGenie Project <ramchandragada@users.noreply.github.com>
 Homepage: https://github.com/ramchandragada/tuxgenie
 Description: AI-powered Linux assistant using Claude
  TuxGenie is the ultimate Linux power tool. Describe any problem in plain

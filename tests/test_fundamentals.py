@@ -109,6 +109,17 @@ class TestSafetyFundamentals:
         out = tg._sanitize_tb("key AIza" + "Z" * 32 + " and gsk_" + "y" * 40)
         assert "AIza" not in out and "gsk_" not in out
 
+    def test_recalled_fix_is_danger_checked(self, monkeypatch):
+        # A saved/community fix must never bypass the danger hard-block. If a
+        # stored step is dangerous, _mem_apply_recalled must refuse (return False)
+        # and run NOTHING, falling back to the AI's own per-step gate.
+        ran = []
+        monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: ran.append(a) or (0, "", ""))
+        recalled = {"source": "community",
+                    "entry": {"problem": "x", "steps": ["sudo rm -rf /"]}}
+        assert tg._mem_apply_recalled(recalled) is False
+        assert ran == [], "a dangerous recalled step must not execute"
+
 
 class TestCrossDistroFundamentals:
     def test_prompt_unchanged_on_debian(self):

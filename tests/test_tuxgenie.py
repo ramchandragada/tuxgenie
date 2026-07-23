@@ -1560,6 +1560,16 @@ class TestErrorReporting:
                       "[ANTHROPIC_KEY_REDACTED]", "[EMAIL_REDACTED]", "[IP_REDACTED]"):
             assert token in out
 
+    def test_scrubber_redacts_bearer_and_ipv6_keeps_timestamps(self):
+        raw = ("Authorization: Bearer abc123SECRETtoken.value here; "
+               "peer 2001:0db8:85a3:0000:0000:8a2e:0370:7334 at 14:32:07")
+        out = tg._sanitize_tb(raw)
+        assert "abc123SECRETtoken" not in out, "bearer token leaked"
+        assert "2001:0db8" not in out, "IPv6 leaked"
+        assert "[IP6_REDACTED]" in out
+        # A clock timestamp must survive (not mistaken for IPv6) — aids debugging.
+        assert "14:32:07" in out
+
     def test_dsn_parses_including_eu_region(self):
         os.environ["TUXGENIE_SENTRY_DSN"] = "https://pub123@o999.ingest.de.sentry.io/4567"
         url, key = tg._sentry_endpoint()

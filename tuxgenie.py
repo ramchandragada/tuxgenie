@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.48.0"
+__version__ = "6.49.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -243,6 +243,12 @@ BACKUPS_DIR  = os.path.join(DATA_DIR, "backups")
 
 for _d in (CFG_DIR, DATA_DIR, SESSIONS_DIR, BACKUPS_DIR):
     os.makedirs(_d, exist_ok=True)
+    # These hold the API key, session logs and cross-session memory — keep them
+    # owner-only (0700) rather than the umask default (typically 0755).
+    try:
+        os.chmod(_d, 0o700)
+    except OSError:
+        pass
 
 def load_cfg() -> dict:
     try:
@@ -4083,12 +4089,19 @@ def _sanitize_tb(tb_text):
     tb_text = re.sub(r'/home/[^/\s"\']+', '/home/<user>', tb_text)
     # API keys / tokens for every provider we support (+ generic OpenAI-style)
     tb_text = re.sub(r'sk-ant-[A-Za-z0-9_\-]{10,}', '[ANTHROPIC_KEY_REDACTED]', tb_text)
-    tb_text = re.sub(r'AIza[A-Za-z0-9_\-]{20,}',    '[GEMINI_KEY_REDACTED]', tb_text)
+    tb_text = re.sub(r'AIza[A-Za-z0-9_\-]{10,}',    '[GEMINI_KEY_REDACTED]', tb_text)
     tb_text = re.sub(r'gsk_[A-Za-z0-9]{20,}',       '[GROQ_KEY_REDACTED]', tb_text)
     tb_text = re.sub(r'\bsk-[A-Za-z0-9]{20,}',      '[API_KEY_REDACTED]', tb_text)
-    # Email addresses and IP addresses
+    # Authorization headers / bearer tokens (any provider's key can ride here).
+    # Bearer first, so the token is gone before the header rule collapses the label.
+    tb_text = re.sub(r'(?i)\bBearer\s+[A-Za-z0-9._\-]+', 'Bearer [REDACTED]', tb_text)
+    tb_text = re.sub(r'(?i)(authorization|x-api-key|api[_-]?key)"?\s*[:=]\s*"?\S+',
+                     r'\1=[REDACTED]', tb_text)
+    # Email and IP addresses (IPv4 + IPv6)
     tb_text = re.sub(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}', '[EMAIL_REDACTED]', tb_text)
     tb_text = re.sub(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', '[IP_REDACTED]', tb_text)
+    # IPv6: require >=4 hextets so clock timestamps (HH:MM:SS) aren't clobbered.
+    tb_text = re.sub(r'\b(?:[0-9A-Fa-f]{1,4}:){4,7}[0-9A-Fa-f]{1,4}\b', '[IP6_REDACTED]', tb_text)
     # Cached sudo password if it appears in any repr/locals dump
     if _SESSION_SUDO_PW:
         tb_text = tb_text.replace(_SESSION_SUDO_PW, '[SUDO_PW_REDACTED]')
@@ -7874,6 +7887,15 @@ def _mem_apply_recalled(recalled: dict) -> bool:
     source = recalled["source"]
     steps  = [s for s in entry.get("steps", []) if s]
     if not steps:
+        return False
+    # Safety: recalled steps run through run_cmd_live directly, so apply the SAME
+    # hard-block every other execution path uses. If any stored step is dangerous
+    # (even a maintainer-curated community fix could be mismatched to this system),
+    # skip the saved fix entirely and let the AI re-plan under its per-step gate.
+    dangerous = [c for c in steps if is_dangerous(c)]
+    if dangerous:
+        warn("Saved fix contains a command flagged as dangerous on this system — "
+             "skipping it and asking the AI fresh (with per-step confirmation).")
         return False
     src_label = "your own past fix" if source == "local" else "the community knowledge base"
     print(f"\n  {GOLD}{BOLD}🧞 Genie Memory{R}")
