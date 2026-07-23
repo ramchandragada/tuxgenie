@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.43.0"
+__version__ = "6.44.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1569,6 +1569,27 @@ def _is_transient_ai_error(exc) -> bool:
     return any(s in m for s in signals)
 
 
+def _retry_after_seconds(exc):
+    """Best-effort parse of a provider's 'wait N seconds' hint out of a 429
+    error message, or None. Recognises Groq's 'try again in 12.5s', Gemini's
+    'retry after 30', and a bare 'retryDelay: 30s'. Used so that when the whole
+    free-provider rotation is briefly exhausted we can wait out the shortest
+    cooldown and continue, instead of giving up on a momentary limit."""
+    m = str(exc)
+    for pat in (r'try again in\s*([\d.]+)\s*s',
+                r'retry(?:\s|_)?(?:after|delay)["\s:]*([\d.]+)\s*s?',
+                r'in\s*([\d.]+)\s*seconds'):
+        hit = re.search(pat, m, re.I)
+        if hit:
+            try:
+                v = float(hit.group(1))
+                if v > 0:
+                    return v
+            except ValueError:
+                pass
+    return None
+
+
 def _is_user_actionable_error(exc) -> bool:
     """True for errors only the USER can resolve — a bad/missing API key or a
     dead network connection. These are NOT bugs, so we never send them as error
@@ -2729,6 +2750,8 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     # provider (Gemini → Groq → Cerebras → …) exactly once instead of bouncing
     # between the top two and never reaching the rest.
     _tried_providers = {_provider_name(backend)}
+    _exhaustion_waits = 0       # bounded auto-waits after the whole rotation is spent
+    _MAX_EXHAUSTION_WAITS = 1
     try:
         for turn in range(max_turns):
             print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
@@ -2751,6 +2774,26 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                         backend = nb
                         _tried_providers.add(_provider_name(nb))
                         _is_anthropic = False
+                        continue
+                # Whole free rotation is spent, but the provider told us how long
+                # to wait (a per-minute cooldown). Rather than give up on a
+                # momentary limit, wait out the shortest hint ONCE and rotate
+                # again — bounded so two dead providers can't hang us forever.
+                if _is_transient_ai_error(e) and _exhaustion_waits < _MAX_EXHAUSTION_WAITS:
+                    _wait = _retry_after_seconds(e)
+                    if _wait and 0 < _wait <= 65:
+                        _secs = int(_wait) + 2
+                        print(f"  {YELLOW}All free providers are briefly at their per-minute "
+                              f"limit — waiting {_secs}s, then retrying…{R}")
+                        print(f"  {DIM}(Press Ctrl-C to stop waiting.){R}")
+                        try:
+                            time.sleep(_secs)
+                        except KeyboardInterrupt:
+                            print(f"\n  {YELLOW}Cancelled.{R}")
+                            return
+                        _exhaustion_waits += 1
+                        _failover_tries = 0
+                        _tried_providers = {_provider_name(backend)}
                         continue
                 # Transient but we can't (or shouldn't) keep switching — the free
                 # providers are unavailable right now. Stop cleanly, don't loop.

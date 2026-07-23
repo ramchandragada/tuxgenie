@@ -1231,6 +1231,14 @@ class TestProviderFailover:
         assert tg._is_transient_ai_error(RuntimeError("service unavailable 503"))
         assert not tg._is_transient_ai_error(RuntimeError("API key rejected (HTTP 401)"))
 
+    def test_retry_after_seconds_parsing(self):
+        # Recognise the common phrasings providers use in 429 bodies.
+        assert tg._retry_after_seconds(RuntimeError("Please try again in 12.5s")) == 12.5
+        assert tg._retry_after_seconds(RuntimeError('"retryDelay": "30s"')) == 30.0
+        assert tg._retry_after_seconds(RuntimeError("retry after 8 seconds")) == 8.0
+        # No hint → None (so the caller falls through to giving up cleanly).
+        assert tg._retry_after_seconds(RuntimeError("limit reached, try later")) is None
+
     def test_gemini_limit_message_is_transient(self):
         # Regression: the Gemini 429 message must trigger failover even when
         # Google's raw detail body is empty/unparseable (no "quota" word).
