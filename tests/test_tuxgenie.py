@@ -16,6 +16,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import types
 _fake_anthropic = types.ModuleType("anthropic")
 sys.modules.setdefault("anthropic", _fake_anthropic)
+# A dummy Anthropic client so AnthropicBackend can be constructed in tests
+# (its __init__ builds a real client). Set on whichever stub module won.
+sys.modules["anthropic"].Anthropic = lambda *a, **k: None
 
 import tuxgenie as tg
 
@@ -1426,6 +1429,51 @@ class TestCrossProviderSwitch:
         contents = tg._gem_contents_from_anthropic(msgs)
         assert "functionCall" not in _j.dumps(contents), \
             "unsigned foreign tool call leaked as a Gemini functionCall"
+
+
+class TestStartupProviderPriority:
+    """Startup provider order: Gemini > Groq for free; Claude only when the user
+    explicitly connected it (then sticky). Regression: it was booting whatever
+    provider was last saved (Groq), instead of always preferring Gemini."""
+
+    def setup_method(self):
+        self._orig = tg.CFG_FILE
+        self._d = tempfile.mkdtemp()
+        tg.CFG_FILE = os.path.join(self._d, "config.json")
+        self._env = {k: os.environ.pop(k, None) for k in
+                     ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY")}
+
+    def teardown_method(self):
+        tg.CFG_FILE = self._orig
+        for k, v in self._env.items():
+            if v is not None:
+                os.environ[k] = v
+
+    def test_gemini_wins_when_both_free_keys_even_if_groq_saved(self):
+        tg.save_cfg({"provider": "groq",
+                     "gemini_api_key": "AIza" + "y" * 35, "groq_api_key": "gsk_" + "x" * 40})
+        assert isinstance(tg.load_backend(), tg.GeminiBackend)
+
+    def test_groq_when_only_groq_key(self):
+        tg.save_cfg({"provider": "groq", "groq_api_key": "gsk_" + "x" * 40})
+        b = tg.load_backend()
+        assert isinstance(b, tg.OpenAICompatBackend) and b.provider == "groq"
+
+    def test_gemini_when_only_gemini_key(self):
+        tg.save_cfg({"provider": "gemini", "gemini_api_key": "AIza" + "y" * 35})
+        assert isinstance(tg.load_backend(), tg.GeminiBackend)
+
+    def test_claude_sticky_only_when_connected(self):
+        # Explicitly connected Claude stays default even with a Gemini key present.
+        tg.save_cfg({"provider": "claude", "api_key": "sk-ant-" + "a" * 70,
+                     "gemini_api_key": "AIza" + "y" * 35})
+        assert isinstance(tg.load_backend(), tg.AnthropicBackend)
+
+    def test_claude_key_but_not_connected_prefers_free(self):
+        # Claude key present but provider not 'claude', plus a Gemini key → Gemini.
+        tg.save_cfg({"provider": "", "api_key": "sk-ant-" + "a" * 70,
+                     "gemini_api_key": "AIza" + "y" * 35})
+        assert isinstance(tg.load_backend(), tg.GeminiBackend)
 
 
 class TestErrorReporting:

@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.36.0"
+__version__ = "6.37.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1552,39 +1552,39 @@ def load_backend():
     cfg = load_cfg()
     provider = cfg.get("provider", "")
 
-    # 1. Explicit Gemini provider with a saved/env key.
-    if provider == "gemini":
-        gkey = (os.environ.get("GEMINI_API_KEY", "").strip()
-                or os.environ.get("GOOGLE_API_KEY", "").strip()
-                or cfg.get("gemini_api_key", "").strip())
-        if gkey:
-            save_cfg({"provider": "gemini", "gemini_api_key": gkey})
-            return _make_backend(cfg, "gemini", gkey)
+    # Resolve each provider's key (environment variables take priority over
+    # anything saved in config).
+    gkey = (os.environ.get("GEMINI_API_KEY", "").strip()
+            or os.environ.get("GOOGLE_API_KEY", "").strip()
+            or cfg.get("gemini_api_key", "").strip())
+    _gq = _OAI_PROVIDERS.get("groq", {})
+    qkey = ""
+    for _ev in _gq.get("env", ()):
+        qkey = qkey or os.environ.get(_ev, "").strip()
+    qkey = qkey or cfg.get(_gq.get("cfg_key", "groq_api_key"), "").strip()
+    ckey = _load_api_key(cfg)
 
-    # 1b. Explicit OpenAI-compatible provider (Groq, …) with a saved/env key.
-    if provider in _OAI_PROVIDERS:
-        prov = _OAI_PROVIDERS[provider]
-        okey = ""
-        for ev in prov.get("env", ()):
-            okey = okey or os.environ.get(ev, "").strip()
-        okey = okey or cfg.get(prov["cfg_key"], "").strip()
-        if okey:
-            save_cfg({"provider": provider, prov["cfg_key"]: okey})
-            return _make_backend(cfg, provider, okey)
-
-    # 2. Saved/env Claude key (the default, unchanged path).
-    key = _load_api_key(cfg)
-    if key:
-        save_cfg({"api_key": key, "provider": "claude", "backend": "claude"})
-        return _make_backend(cfg, "claude", key)
-
-    # 3. A Gemini key in the env even without an explicit provider.
-    gkey = os.environ.get("GEMINI_API_KEY", "").strip() or os.environ.get("GOOGLE_API_KEY", "").strip()
+    # Startup provider priority (see CLAUDE.md):
+    #   1. Claude ONLY when the user has explicitly connected it (a paid, manual
+    #      choice) — then it's sticky. main() warns that free options exist.
+    #   2. Otherwise ALWAYS prefer free Gemini, then Groq — regardless of the
+    #      last saved free provider. Gemini is the default whenever its key exists.
+    #   3. If the only key present is Claude's, use it (with the same warning).
+    if provider == "claude" and ckey:
+        return _make_backend(cfg, "claude", ckey)
     if gkey:
-        save_cfg({"provider": "gemini", "gemini_api_key": gkey})
+        if provider != "gemini":
+            save_cfg({"provider": "gemini"})
         return _make_backend(cfg, "gemini", gkey)
+    if qkey:
+        if provider != "groq":
+            save_cfg({"provider": "groq"})
+        return _make_backend(cfg, "groq", qkey)
+    if ckey:
+        save_cfg({"api_key": ckey, "provider": "claude", "backend": "claude"})
+        return _make_backend(cfg, "claude", ckey)
 
-    # 4. First run — ask which AI to use.
+    # First run — ask which AI to use.
     kind, value = _setup_wizard(cfg)
     if kind == "gemini":
         save_cfg({"provider": "gemini", "gemini_api_key": value})
@@ -10065,6 +10065,14 @@ def main():
         else:
             _keyhint = "Anthropic key · console.anthropic.com"
         print(f"  {DIM}Type {BOLD}k{R}{DIM} to add your {_keyhint} anytime{R}")
+        print(f"{_line}")
+    elif isinstance(backend, AnthropicBackend) and not backend._no_key:
+        # Claude is a paid, manual choice — remind the user free options exist.
+        _line = f"  {DIM}{'─'*54}{R}"
+        print(f"\n{_line}")
+        print(f"  {CYAN}{BOLD}⚡ Using Claude (Anthropic){R}{DIM} — best quality, ~$0.01/session{R}")
+        print(f"  {DIM}Prefer free? Press {BOLD}s{R}{DIM} → {BOLD}8{R}{DIM} to switch to "
+              f"Google Gemini or Groq (both free).{R}")
         print(f"{_line}")
 
     while True:

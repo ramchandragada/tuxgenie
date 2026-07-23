@@ -64,6 +64,19 @@ TuxGenie must work for **every** Linux user, not just Debian/Ubuntu:
   on non-Debian). Prefer a Flathub app-id in new catalog entries so they work everywhere.
 - `u` self-update handles both `.deb` (dpkg) and non-Debian (pip) systems.
 
+## Provider startup priority (load_backend)
+
+At every start the provider is chosen by PRIORITY, not by what was last used:
+1. **Claude** only when the user explicitly connected it (`provider == "claude"`
+   with a key) — then it's sticky. `main()` warns that free options exist.
+2. Otherwise **always prefer free Gemini, then Groq** — regardless of the last
+   saved free provider. Gemini is the default whenever its key is present; if
+   only a Groq key exists, start with Groq.
+3. If the only key present is Claude's, use it (with the same free-switch hint).
+
+Auto-failover during a session is still free→free only (Gemini ↔ Groq), never
+Claude. `tests/test_fundamentals`/`test_tuxgenie` lock this priority.
+
 ## Cost Optimisation Principles
 
 - Default model: Haiku (cheapest). Escalate to Sonnet only on failure.
