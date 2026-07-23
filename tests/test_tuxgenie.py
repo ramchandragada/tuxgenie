@@ -1310,6 +1310,27 @@ class TestProviderFailover:
         nb = tg._offer_claude_fallback(cur)
         assert nb is not None and tg._provider_name(nb) == "claude"
 
+    def test_history_normalized_to_json_serializable_for_claude(self):
+        # Regression: switching Gemini→Claude mid-task sent Gemini's _GBlock objects
+        # into Claude's SDK → "Object of type _GBlock is not JSON serializable".
+        import json
+        history = [
+            {"role": "user", "content": "install opera"},
+            {"role": "assistant", "content": [
+                tg._GBlock("text", text="I'll check the cache."),
+                tg._GBlock("tool_use", name="run_command", id="c1",
+                           input={"command": "apt-cache show opera-stable"},
+                           thought_signature="deadbeef"),
+            ]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": "Not found"}]},
+        ]
+        norm = tg._history_to_anthropic_dicts(history)
+        json.dumps(norm)   # must not raise
+        tu = norm[1]["content"][-1]
+        assert tu["type"] == "tool_use" and tu["id"] == "c1"
+        assert "thought_signature" not in tu   # provider-only field dropped for Claude
+
     def test_offer_claude_fallback_none_without_key(self, monkeypatch):
         # No Claude key → never offer (nothing to switch to).
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

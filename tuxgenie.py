@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.52.0"
+__version__ = "6.53.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -702,6 +702,43 @@ def _gem_tools_from_anthropic(tools):
 def _gem_bget(b, key, default=None):
     """Read a field from a block that may be a dict or a _GBlock object."""
     return b.get(key, default) if isinstance(b, dict) else getattr(b, key, default)
+
+
+def _history_to_anthropic_dicts(messages):
+    """Convert an accumulated agentic history — which may hold provider-specific
+    block OBJECTS (e.g. Gemini's _GBlock) — into plain, JSON-serialisable Anthropic
+    dicts. Used when switching TO Claude mid-task: Claude's SDK serialises the
+    message list, and a foreign _GBlock object would raise 'not JSON serializable'.
+    Provider-only fields (e.g. Gemini's thought_signature) are dropped, since we're
+    now talking to Claude. The free-provider paths never call this, so their
+    behaviour is unchanged."""
+    out = []
+    for m in messages:
+        role    = m.get("role", "user") if isinstance(m, dict) else _gem_bget(m, "role", "user")
+        content = m.get("content", "") if isinstance(m, dict) else _gem_bget(m, "content", "")
+        if isinstance(content, str):
+            out.append({"role": role, "content": content})
+            continue
+        blocks = []
+        for b in (content or []):
+            t = _gem_bget(b, "type", None)
+            if t == "text":
+                txt = _gem_bget(b, "text", "") or ""
+                if txt.strip():
+                    blocks.append({"type": "text", "text": txt})
+            elif t == "tool_use":
+                blocks.append({"type": "tool_use",
+                               "id":    _gem_bget(b, "id", "") or "",
+                               "name":  _gem_bget(b, "name", "") or "",
+                               "input": _gem_bget(b, "input", {}) or {}})
+            elif t == "tool_result":
+                blocks.append({"type": "tool_result",
+                               "tool_use_id": _gem_bget(b, "tool_use_id", "") or "",
+                               "content":     _gem_bget(b, "content", "") or ""})
+        if not blocks:
+            blocks = [{"type": "text", "text": "(no content)"}]
+        out.append({"role": role, "content": blocks})
+    return out
 
 
 def _gem_contents_from_anthropic(messages):
@@ -2808,6 +2845,9 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                     if cb is not None:
                         backend = cb
                         _is_anthropic = True
+                        # The history may hold Gemini/OAI block OBJECTS that
+                        # Claude's SDK can't serialise — normalise to plain dicts.
+                        messages = _history_to_anthropic_dicts(messages)
                         _failover_tries = 0
                         _tried_providers = {"claude"}
                         continue
