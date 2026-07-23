@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.47.0"
+__version__ = "6.48.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -85,7 +85,6 @@ _LFG = "\033[38;2;20;25;46m"      # near-black navy foreground
 R      = f"\033[0m{_LBG}{_LFG}"
 BOLD   = "\033[1m"
 DIM    = "\033[38;2;108;116;145m"  # medium blue-gray (secondary / hint text)
-ITALIC = "\033[3m"
 
 # Core UI colours — all dark enough to be crisp on white background
 GREEN   = "\033[38;2;22;132;58m"   # forest green
@@ -94,34 +93,26 @@ RED     = "\033[38;2;185;20;20m"   # dark crimson
 CYAN    = "\033[38;2;0;128;145m"   # dark teal
 BLUE    = "\033[38;2;18;80;198m"   # royal blue
 MAGENTA = "\033[38;2;148;10;168m"  # dark magenta
-WHITE   = "\033[38;2;20;25;46m"    # = _LFG (near-black)
 
 # Vivid variants — still dark enough for white-bg readability
 BRED    = "\033[38;2;198;22;22m"
 BGREEN  = "\033[38;2;22;158;68m"
-BYELLOW = "\033[38;2;198;132;0m"
-BBLUE   = "\033[38;2;22;98;218m"
 BMAGENTA= "\033[38;2;162;18;182m"
 BCYAN   = "\033[38;2;0;152;170m"
 BWHITE  = "\033[97m"               # true bright-white — only ever on dark bg headers
 
 # Accent colours
 ORANGE  = "\033[38;2;195;85;8m"
-PINK    = "\033[38;2;178;16;135m"
 LIME    = "\033[38;2;45;168;48m"
 GOLD    = "\033[38;2;172;122;0m"
 CORAL   = "\033[38;2;188;55;40m"
 TEAL    = "\033[38;2;0;125;130m"
 INDIGO  = "\033[38;2;78;8;178m"
-SKY     = "\033[38;2;20;118;205m"
-PEACH   = "\033[38;2;188;68;50m"
 
 # Section-header backgrounds — kept dark so BWHITE title text pops on any terminal
 BG_RED     = "\033[41m"
 BG_GREEN   = "\033[42m"
-BG_BLUE    = "\033[44m"
 BG_MAGENTA = "\033[45m"
-BG_CYAN    = "\033[46m"
 BG_DARK    = "\033[48;2;50;60;85m"     # dark slate-blue (section header)
 BG_NAVY    = "\033[48;2;12;42;115m"    # deep navy
 BG_PURPLE  = "\033[48;2;88;12;150m"    # deep purple
@@ -228,13 +219,6 @@ def _cwd_label(maxlen=34):
     if len(disp) > maxlen:
         disp = "…" + disp[-(maxlen - 1):]
     return disp
-
-def print_output(rc, stdout, stderr):
-    if stdout:
-        print(f"\n  {TEAL}{BOLD}OUTPUT{R}\n{DIM}{trunc(stdout,25)}{R}")
-    if rc != 0 and stderr:
-        print(f"\n  {CORAL}{BOLD}STDERR{R}\n{DIM}{trunc(stderr,10)}{R}")
-    print(f"  {BGREEN}{BOLD}✔ Done{R}" if rc == 0 else f"  {BRED}{BOLD}✘ Exit {rc}{R}")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 2 — CONFIG  (persistent API key + session log path)
@@ -2727,7 +2711,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     _MAX_EXHAUSTION_WAITS = 1
     _provider_errors = {}       # provider name → real reason, shown on exhaustion
     try:
-        for turn in range(max_turns):
+        for _ in range(max_turns):
             print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
             try:
                 response = _create_request()
