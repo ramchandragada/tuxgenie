@@ -56,10 +56,20 @@ class TestStartupFundamentals:
         ctx = tg.base_ctx()
         assert "pkg_mgr" in ctx and "os" in ctx
 
-    def test_all_three_backends_construct(self):
-        # The free defaults must always be constructable with a dummy key.
+    def test_all_free_backends_construct(self):
+        # Every free default must always be constructable with a dummy key.
         assert tg.GeminiBackend(api_key="AIza" + "x" * 35) is not None
         assert tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq") is not None
+        assert tg.OpenAICompatBackend(api_key="csk-" + "x" * 40, provider="cerebras") is not None
+
+    def test_free_provider_registry_has_expected_providers(self):
+        # The registry must expose Groq and Cerebras as free OpenAI-compatible
+        # providers with non-Chinese (Llama) default models and a config key each.
+        free = {n: p for n, p in tg._OAI_PROVIDERS.items() if p.get("free")}
+        assert {"groq", "cerebras"} <= set(free)
+        for name, prov in free.items():
+            assert prov["cfg_key"] and prov["default_model"]
+            assert "llama" in prov["default_model"].lower(), name
 
 
 class TestCatalogFundamentals:

@@ -6,7 +6,7 @@
 <meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. 42 built-in tools, app catalog, AI tools installer, cross-session memory. Free forever.">
 <meta name="author" content="Aspera Technologies">
 <meta property="og:title" content="TuxGenie — AI-Powered Linux Assistant">
-<meta property="og:description" content="Fix any Linux problem by describing it in plain English. Two free AI options (Google Gemini · Groq) or Claude. 42 built-in tools, app catalog, AI tools installer. Free forever.">
+<meta property="og:description" content="Fix any Linux problem by describing it in plain English. Three free AI options (Google Gemini · Groq · Cerebras) or Claude. 42 built-in tools, app catalog, AI tools installer. Free forever.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tuxgenie.com/">
 <meta property="og:image" content="https://opengraph.githubassets.com/1/ramchandragada/tuxgenie">
@@ -355,13 +355,13 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
   <div class="container">
     <div class="hero-grid">
       <div>
-        <span class="hero-tag">✨ Free · Open Source · MIT · Gemini · Groq · Claude</span>
+        <span class="hero-tag">✨ Free · Open Source · MIT · Gemini · Groq · Cerebras · Claude</span>
         <h1 class="hero-h1" aria-label="Linux, made effortlessly simple.">Linux,<br> made <span class="grad">effortlessly</span><br> simple.</h1>
         <p class="hero-sub">TuxGenie is an AI-powered Linux assistant. Describe what you need in plain English — it diagnoses, fixes, installs, and configures your system for you. No experience required.</p>
         <div class="api-note">
           <span style="font-size:16px;flex-shrink:0;line-height:1.3">🆓</span>
           <div style="font-size:13px;line-height:1.6">
-            <strong>Free to run — no credit card.</strong> Use <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a> or <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a> (both free), or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> for best quality (~$0.01/session). Pick on first launch.
+            <strong>Free to run — no credit card.</strong> Use <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a> or <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener">Cerebras</a> (all free), or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> for best quality (~$0.01/session). Pick on first launch.
           </div>
         </div>
         <div class="hero-ctas">
@@ -456,7 +456,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       <div class="step step-2 fade">
         <div class="step-num">2</div>
         <h3>Pick your AI — two free options</h3>
-        <p>On first launch, choose a <strong>free</strong> key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Google Gemini</a> or <a href="https://console.groq.com/keys" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Groq</a> (no credit card), or <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Claude</a> for best quality. Change it anytime with <code style="background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-family:var(--fm);font-weight:600">k</code>.</p>
+        <p>On first launch, choose a <strong>free</strong> key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Groq</a> or <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Cerebras</a> (no credit card), or <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Claude</a> for best quality. Change it anytime with <code style="background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-family:var(--fm);font-weight:600">k</code>.</p>
       </div>
       <div class="step step-3 fade">
         <div class="step-num">3</div>
@@ -688,12 +688,12 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
         <div class="faq-body"><p>Your API key is stored locally in <code>~/.config/tuxgenie/config.json</code> with owner-only permissions (<code>chmod 600</code>) and never leaves your machine. <strong>TuxGenie has no backend and collects zero telemetry</strong> — nothing is sent anywhere unless you run an AI task, and then only your chosen provider (Anthropic or Google) sees it, never us. Your sudo password is held in memory for the session only — never saved, never sent. Full details on our <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a> page.</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-btn" aria-expanded="false">Which AI should I pick — Gemini, Groq or Claude? Any privacy difference?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p><strong>All three work great.</strong> You have <strong>two free options</strong> — <strong>Google Gemini</strong> and <strong>Groq</strong> (fast Llama models) — both no credit card, perfect for everyday use. Prefer top quality or a confidential machine? Use <strong>Claude</strong> — Anthropic does <strong>not</strong> train on API data. One honest note: free tiers (Gemini, Groq) may use your prompts to improve their products, so pick Claude for sensitive systems. We tell you this at the point you choose, too. <strong>Bonus:</strong> if you add keys for both free providers, TuxGenie can <strong>auto-switch between them</strong> when one hits its rate limit — so you're never stuck (and it never falls back to paid Claude without asking). See <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a>.</p></div>
+        <button class="faq-btn" aria-expanded="false">Which AI should I pick — Gemini, Groq, Cerebras or Claude? Any privacy difference?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p><strong>They all work great.</strong> You have <strong>three free options</strong> — <strong>Google Gemini</strong>, <strong>Groq</strong> and <strong>Cerebras</strong> (fast Llama models) — all no credit card, perfect for everyday use. Prefer top quality or a confidential machine? Use <strong>Claude</strong> — Anthropic does <strong>not</strong> train on API data. One honest note: free tiers (Gemini, Groq, Cerebras) may use your prompts to improve their products, so pick Claude for sensitive systems. We tell you this at the point you choose, too. <strong>Bonus:</strong> if you add keys for more than one free provider, TuxGenie can <strong>auto-switch between them</strong> when one hits its rate limit — so you're never stuck (and it never falls back to paid Claude without asking). See <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a>.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">What does it actually cost per month?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p><strong>It can be completely free.</strong> Pick a free tier on first launch — <strong>Google Gemini</strong> or <strong>Groq</strong> — no credit card, nothing to pay. Prefer top quality? Use Claude and you pay Anthropic only for what it uses — typically <strong>~$0.01 per session</strong> ($5 lasts months). Either way, simple commands (ls, apt, systemctl…) bypass the AI entirely and cost nothing.</p></div>
+        <div class="faq-body"><p><strong>It can be completely free.</strong> Pick a free tier on first launch — <strong>Google Gemini</strong>, <strong>Groq</strong> or <strong>Cerebras</strong> — no credit card, nothing to pay. Prefer top quality? Use Claude and you pay Anthropic only for what it uses — typically <strong>~$0.01 per session</strong> ($5 lasts months). Either way, simple commands (ls, apt, systemctl…) bypass the AI entirely and cost nothing.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Can it break my system or run dangerous commands?<span class="faq-chevron">+</span></button>
@@ -701,7 +701,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Does it work offline?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p>Common commands (apt, systemctl, ls, grep, etc.) run offline instantly — TuxGenie only calls the AI for complex diagnostics and fixes. So basic usage works without internet. Full AI-powered fixes need a connection to reach your chosen AI provider (Gemini, Groq or Claude).</p></div>
+        <div class="faq-body"><p>Common commands (apt, systemctl, ls, grep, etc.) run offline instantly — TuxGenie only calls the AI for complex diagnostics and fixes. So basic usage works without internet. Full AI-powered fixes need a connection to reach your chosen AI provider (Gemini, Groq, Cerebras or Claude).</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Which Linux distributions are supported?<span class="faq-chevron">+</span></button>
@@ -747,8 +747,9 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       <span style="font-size:18px;flex-shrink:0;line-height:1.3">💡</span>
       <div style="font-size:14px;color:var(--t2);line-height:1.7">
         <strong style="color:var(--t1)">TuxGenie is free and open source.</strong> On first run, pick your AI —
-        two free options: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a> or
-        <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a> (both free, no credit card), or
+        three free options: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>,
+        <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a> or
+        <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener">Cerebras</a> (all free, no credit card), or
         <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> (best quality, ~$0.01/session).
         <strong style="color:var(--t1)">Terminal commands bypass AI entirely and are always free.</strong>
       </div>
@@ -774,7 +775,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
     </div>
     <div class="trust-grid">
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>At first run, pick a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a> or <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a>, or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> (~$0.01/session — $5 lasts months). Paste the key and you're done.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>At first run, pick a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a> or <a href="https://cloud.cerebras.ai" target="_blank" rel="noopener">Cerebras</a>, or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> (~$0.01/session — $5 lasts months). Paste the key and you're done.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. On Claude, smart routing picks the cheapest model that fits — Haiku first, escalating to Sonnet only when a task needs it.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔒</div><h4 style="color:#7e22ce">Privacy First</h4><p>No backend. No telemetry. No accounts. Your data goes directly from your machine to the AI provider you chose — never to us. Read the whole thing: it's one file. See our <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a> page.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔄</div><h4 style="color:#4338ca">Verified Auto-Updates</h4><p>New versions verify a <strong>SHA-256 checksum</strong> before installing, then apply at startup when sudo is cached. A corrupted or tampered download is refused — never installed.</p></div>

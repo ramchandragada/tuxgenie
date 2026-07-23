@@ -96,6 +96,8 @@ just press Enter):
   Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 - **Groq** — **also free, very fast** (Llama models).
   Get a free key at [console.groq.com/keys](https://console.groq.com/keys).
+- **Cerebras** — **also free, very fast** (Llama models), with a large daily limit.
+  Get a free key at [cloud.cerebras.ai](https://cloud.cerebras.ai).
 - **Claude (Anthropic)** — best quality. Free trial credit, then ~$0.01/session.
   Get a key at [console.anthropic.com](https://console.anthropic.com).
 
@@ -106,6 +108,8 @@ export GEMINI_API_KEY="..."             # Google Gemini (free tier)
 # or
 export GROQ_API_KEY="gsk_..."           # Groq (free tier)
 # or
+export CEREBRAS_API_KEY="csk-..."       # Cerebras (free tier)
+# or
 export ANTHROPIC_API_KEY="sk-ant-..."   # Claude
 
 tuxgenie
@@ -114,10 +118,11 @@ tuxgenie
 Switch providers anytime from **Settings → Switch AI provider**. Terminal
 commands (apt, systemctl, …) run without any key — always free.
 
-**Auto-switch on limits:** if you add keys for *both* free providers (Gemini
-and Groq), TuxGenie automatically falls back from one to the other when a free
-tier hits its rate limit — so a task never stalls. It never auto-switches to
-paid Claude (no surprise charges). Toggle it in **Settings → Auto-switch on limits**.
+**Auto-switch on limits:** if you add keys for *more than one* free provider
+(Gemini, Groq, Cerebras), TuxGenie automatically falls back from one to the
+next when a free tier hits its rate limit — so a task never stalls. It never
+auto-switches to paid Claude (no surprise charges). Toggle it in
+**Settings → Auto-switch on limits**.
 
 ---
 
@@ -273,8 +278,9 @@ a corrupted or tampered download is refused, never installed.
 
 - Python 3.8+
 - Linux
-- An AI key — a **free** one from **Google Gemini** ([get it](https://aistudio.google.com/apikey))
-  or **Groq** ([get it](https://console.groq.com/keys)), or **Anthropic Claude**
+- An AI key — a **free** one from **Google Gemini** ([get it](https://aistudio.google.com/apikey)),
+  **Groq** ([get it](https://console.groq.com/keys)) or **Cerebras**
+  ([get it](https://cloud.cerebras.ai)), or **Anthropic Claude**
   ([get one](https://console.anthropic.com)) for best quality. Terminal commands
   (apt, systemctl, …) run with no key at all.
 

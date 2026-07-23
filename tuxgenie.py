@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.40.0"
+__version__ = "6.41.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -997,6 +997,16 @@ _OAI_PROVIDERS = {
         # staying under the TPM limit.
         "max_tokens": 3072,
     },
+    "cerebras": {
+        "label": "Cerebras", "base_url": "https://api.cerebras.ai/v1",
+        # Llama 3.3 70B (Meta) — a non-Chinese model with tool-calling support.
+        "default_model": "llama-3.3-70b", "cfg_key": "cerebras_api_key",
+        "model_key": "cerebras_model", "keys_url": "https://cloud.cerebras.ai",
+        "env": ("CEREBRAS_API_KEY",), "free": True,
+        # Very generous free tier (~1M tokens/day, 30 req/min). Keep the output
+        # reservation modest so requests stay within the per-request context.
+        "max_tokens": 4096,
+    },
 }
 
 
@@ -1420,10 +1430,12 @@ def _setup_wizard(cfg):
     print(f"      {DIM}Get a free key at aistudio.google.com/apikey{R}")
     print(f"  {C('[2]',CYAN,BOLD)} {BOLD}Groq{R} — {GREEN}also free, very fast{R} {DIM}(Llama models){R}")
     print(f"      {DIM}Get a free key at console.groq.com/keys{R}")
-    print(f"  {C('[3]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
+    print(f"  {C('[3]',CYAN,BOLD)} {BOLD}Cerebras{R} — {GREEN}free tier, huge daily limit{R} {DIM}(Llama models){R}")
+    print(f"      {DIM}Get a free key at cloud.cerebras.ai{R}")
+    print(f"  {C('[4]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
     print(f"      {DIM}Free trial credit, then ~$0.01/session · console.anthropic.com{R}\n")
     try:
-        choice = input(f"  Choose {BOLD}1{R}, {BOLD}2{R} or {BOLD}3{R}  {DIM}(Enter = 1, the free option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
+        choice = input(f"  Choose {BOLD}1{R}-{BOLD}4{R}  {DIM}(Enter = 1, the free option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
     if choice in ("", "1"):   # Google Gemini — the free default
@@ -1446,6 +1458,15 @@ def _setup_wizard(cfg):
             return ("skip", None)
         return ("groq", key) if key else ("skip", None)
     if choice == "3":
+        print(f"\n  {DIM}Free Cerebras key: {CYAN}https://cloud.cerebras.ai{R}")
+        print(f"  {DIM}Heads-up: check Cerebras's terms for how free-tier data is used.")
+        print(f"  {DIM}Great for everyday use — pick Claude for confidential machines.{R}")
+        try:
+            key = input("  Paste your Cerebras API key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return ("skip", None)
+        return ("cerebras", key) if key else ("skip", None)
+    if choice == "4":
         print(f"\n  {DIM}Claude key: {CYAN}https://console.anthropic.com{R}")
         try:
             key = input("  Paste your Anthropic API key: ").strip()
@@ -1473,22 +1494,38 @@ def _make_backend(cfg, provider, key):
 
 
 # ── Automatic provider failover (free → free only, never Claude) ─────────────
+def _provider_key(pname: str, cfg=None) -> str:
+    """Resolve a provider's API key from env or config (env wins), else ''.
+    Works for 'gemini', 'claude', and any OpenAI-compatible provider (groq,
+    cerebras, …) — the single place key lookup happens."""
+    cfg = cfg if cfg is not None else load_cfg()
+    if pname == "gemini":
+        return (os.environ.get("GEMINI_API_KEY", "").strip()
+                or os.environ.get("GOOGLE_API_KEY", "").strip()
+                or cfg.get("gemini_api_key", "").strip())
+    if pname == "claude":
+        return _load_api_key(cfg)
+    prov = _OAI_PROVIDERS.get(pname)
+    if not prov:
+        return ""
+    k = ""
+    for ev in prov.get("env", ()):
+        k = k or os.environ.get(ev, "").strip()
+    return k or cfg.get(prov["cfg_key"], "").strip()
+
+
 def _free_failover_available(exclude_provider: str) -> bool:
-    """True if auto-switch is on AND a *different* free provider (Gemini/Groq)
-    has a saved or env key. Used so a rate-limited provider fails over instead
-    of making the user wait, when there's actually somewhere to switch to."""
+    """True if auto-switch is on AND a *different* free provider (Gemini or any
+    free OpenAI-compatible one — Groq, Cerebras, …) has a saved/env key. Used so
+    a rate-limited provider fails over instead of making the user wait."""
     cfg = load_cfg()
     if not cfg.get("auto_switch_providers", True):
         return False
-    if exclude_provider != "gemini" and (
-            os.environ.get("GEMINI_API_KEY", "").strip()
-            or os.environ.get("GOOGLE_API_KEY", "").strip()
-            or cfg.get("gemini_api_key", "").strip()):
+    if exclude_provider != "gemini" and _provider_key("gemini", cfg):
         return True
-    if exclude_provider != "groq" and (
-            os.environ.get("GROQ_API_KEY", "").strip()
-            or cfg.get("groq_api_key", "").strip()):
-        return True
+    for pname, prov in _OAI_PROVIDERS.items():
+        if prov.get("free") and pname != exclude_provider and _provider_key(pname, cfg):
+            return True
     return False
 
 
@@ -1534,17 +1571,18 @@ def _failover_backend(current):
         return None
     cur = _provider_name(current)
     candidates = []
+    # Gemini first (the preferred free default), then each free OpenAI-compatible
+    # provider in registry order (Groq, Cerebras, …) — skipping the current one.
     if cur != "gemini":
-        gk = (os.environ.get("GEMINI_API_KEY", "").strip()
-              or os.environ.get("GOOGLE_API_KEY", "").strip()
-              or cfg.get("gemini_api_key", "").strip())
+        gk = _provider_key("gemini", cfg)
         if gk:
             candidates.append(("gemini", gk))
-    if cur != "groq":
-        qk = (os.environ.get("GROQ_API_KEY", "").strip()
-              or cfg.get("groq_api_key", "").strip())
-        if qk:
-            candidates.append(("groq", qk))
+    for pname, prov in _OAI_PROVIDERS.items():
+        if not prov.get("free") or pname == cur:
+            continue
+        k = _provider_key(pname, cfg)
+        if k:
+            candidates.append((pname, k))
     for prov, key in candidates:
         try:
             nb = _make_backend(cfg, prov, key)
@@ -1565,20 +1603,14 @@ def load_backend():
 
     # Resolve each provider's key (environment variables take priority over
     # anything saved in config).
-    gkey = (os.environ.get("GEMINI_API_KEY", "").strip()
-            or os.environ.get("GOOGLE_API_KEY", "").strip()
-            or cfg.get("gemini_api_key", "").strip())
-    _gq = _OAI_PROVIDERS.get("groq", {})
-    qkey = ""
-    for _ev in _gq.get("env", ()):
-        qkey = qkey or os.environ.get(_ev, "").strip()
-    qkey = qkey or cfg.get(_gq.get("cfg_key", "groq_api_key"), "").strip()
+    gkey = _provider_key("gemini", cfg)
     ckey = _load_api_key(cfg)
 
     # Startup provider priority (see CLAUDE.md):
     #   1. Claude ONLY when the user has explicitly connected it (a paid, manual
     #      choice) — then it's sticky. main() warns that free options exist.
-    #   2. Otherwise ALWAYS prefer free Gemini, then Groq — regardless of the
+    #   2. Otherwise ALWAYS prefer free Gemini, then the free OpenAI-compatible
+    #      providers in registry order (Groq, Cerebras, …) — regardless of the
     #      last saved free provider. Gemini is the default whenever its key exists.
     #   3. If the only key present is Claude's, use it (with the same warning).
     if provider == "claude" and ckey:
@@ -1587,10 +1619,14 @@ def load_backend():
         if provider != "gemini":
             save_cfg({"provider": "gemini"})
         return _make_backend(cfg, "gemini", gkey)
-    if qkey:
-        if provider != "groq":
-            save_cfg({"provider": "groq"})
-        return _make_backend(cfg, "groq", qkey)
+    for _pname, _prov in _OAI_PROVIDERS.items():
+        if not _prov.get("free"):
+            continue
+        _pk = _provider_key(_pname, cfg)
+        if _pk:
+            if provider != _pname:
+                save_cfg({"provider": _pname})
+            return _make_backend(cfg, _pname, _pk)
     if ckey:
         save_cfg({"api_key": ckey, "provider": "claude", "backend": "claude"})
         return _make_backend(cfg, "claude", ckey)
@@ -1631,7 +1667,8 @@ def feat_set_api_key(backend):
     else:
         cur = "claude"
 
-    LABELS = {"claude": "Claude (Anthropic)", "gemini": "Google Gemini", "groq": "Groq"}
+    LABELS = {"claude": "Claude (Anthropic)", "gemini": "Google Gemini",
+              "groq": "Groq", "cerebras": "Cerebras"}
     HEAD = {
         "claude": ("Claude API Key", "https://console.anthropic.com",
                    "Sign-up is free. Anthropic charges by usage (a few cents/session)."),
@@ -1639,6 +1676,8 @@ def feat_set_api_key(backend):
                    "Gemini's free tier needs no credit card."),
         "groq":   ("Groq API Key", "https://console.groq.com/keys",
                    "Groq's free tier needs no credit card — and it's very fast."),
+        "cerebras": ("Cerebras API Key", "https://cloud.cerebras.ai",
+                     "Cerebras's free tier needs no credit card — with a big daily limit."),
     }
     title, url, note = HEAD[cur]
     hdr(title)
@@ -1660,6 +1699,8 @@ def feat_set_api_key(backend):
         kind = "gemini"
     elif re.match(r'^gsk_[A-Za-z0-9]{20,}$', key):
         kind = "groq"
+    elif re.match(r'^csk-[A-Za-z0-9_\-]{20,}$', key):
+        kind = "cerebras"
     else:
         kind = None
 
@@ -1670,6 +1711,7 @@ def feat_set_api_key(backend):
             "claude": {"provider": "claude", "backend": "claude", "api_key": key},
             "gemini": {"provider": "gemini", "gemini_api_key": key},
             "groq":   {"provider": "groq", "groq_api_key": key},
+            "cerebras": {"provider": "cerebras", "cerebras_api_key": key},
         }
         save_cfg(cfgmap[kind])
         ok(f"That's a {LABELS[kind]} key — saved and switched to {LABELS[kind]}.")
@@ -1723,7 +1765,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
-    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq — both free · or Claude){R}")
+    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq · Cerebras — all free · or Claude){R}")
     print(f"  {C('[9]',CYAN)} Toggle auto-switch on limits  {DIM}(fall back between free providers — never Claude){R}")
     print(f"  {C('[10]',CYAN)} Toggle anonymous error reports  {DIM}(scrubbed crashes/AI errors — helps us fix bugs){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
@@ -1816,10 +1858,12 @@ def feat_settings(backend, bctx, slog):
         print(f"      {DIM}Get a free key: {CYAN}https://aistudio.google.com/apikey{R}")
         print(f"  {C('[2]',CYAN)} Groq — {GREEN}free tier, very fast{R} {DIM}(Llama models){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://console.groq.com/keys{R}")
-        print(f"  {C('[3]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        print(f"  {C('[3]',CYAN)} Cerebras — {GREEN}free tier, huge daily limit{R} {DIM}(Llama models){R}")
+        print(f"      {DIM}Get a free key: {CYAN}https://cloud.cerebras.ai{R}")
+        print(f"  {C('[4]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
         print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
         try:
-            p = input(f"\n  {BOLD}Choose provider [1/2/3] (or Enter to cancel):{R} ").strip()
+            p = input(f"\n  {BOLD}Choose provider [1/2/3/4] (or Enter to cancel):{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             return
         if p == "1":
@@ -1852,6 +1896,20 @@ def feat_settings(backend, bctx, slog):
             save_cfg({"provider": "groq", "groq_api_key": k})
             ok("Switched to Groq (free tier). Restart TuxGenie for it to take effect.")
         elif p == "3":
+            print(f"  {DIM}Note: Cerebras's free tier is rate-limited; check Cerebras's terms for")
+            print(f"  {DIM}how free-tier data is used. Prefer Claude for sensitive systems.{R}")
+            k = load_cfg().get("cerebras_api_key", "").strip()
+            if not k:
+                print(f"  {DIM}Free Cerebras key: {CYAN}https://cloud.cerebras.ai{R}")
+                try:
+                    k = input("  Paste your Cerebras API key: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if not k:
+                    warn("No key entered — provider unchanged."); return
+            save_cfg({"provider": "cerebras", "cerebras_api_key": k})
+            ok("Switched to Cerebras (free tier). Restart TuxGenie for it to take effect.")
+        elif p == "4":
             k = load_cfg().get("api_key", "").strip()
             if not k:
                 print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
@@ -1870,7 +1928,7 @@ def feat_settings(backend, bctx, slog):
         save_cfg({"auto_switch_providers": new_state})
         if new_state:
             ok("Auto-switch ON — if a free provider hits its limit, TuxGenie falls back to your other free provider automatically (never Claude, so it never costs you).")
-            info("Needs a key saved for a second free provider (Gemini and/or Groq).")
+            info("Needs a key saved for a second free provider (Gemini, Groq and/or Cerebras).")
         else:
             ok("Auto-switch OFF — TuxGenie stays on your chosen provider and shows the limit message instead.")
     elif ch == "10":
@@ -3983,6 +4041,7 @@ def _sanitize_tb(tb_text):
     tb_text = re.sub(r'sk-ant-[A-Za-z0-9_\-]{10,}', '[ANTHROPIC_KEY_REDACTED]', tb_text)
     tb_text = re.sub(r'AIza[A-Za-z0-9_\-]{20,}',    '[GEMINI_KEY_REDACTED]', tb_text)
     tb_text = re.sub(r'gsk_[A-Za-z0-9]{20,}',       '[GROQ_KEY_REDACTED]', tb_text)
+    tb_text = re.sub(r'csk-[A-Za-z0-9_\-]{20,}',    '[CEREBRAS_KEY_REDACTED]', tb_text)
     tb_text = re.sub(r'\bsk-[A-Za-z0-9]{20,}',      '[API_KEY_REDACTED]', tb_text)
     # Email addresses and IP addresses
     tb_text = re.sub(r'[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}', '[EMAIL_REDACTED]', tb_text)
@@ -10109,7 +10168,7 @@ def main():
         print(f"\n{_line}")
         print(f"  {CYAN}{BOLD}⚡ Using Claude (Anthropic){R}{DIM} — best quality, ~$0.01/session{R}")
         print(f"  {DIM}Prefer free? Press {BOLD}s{R}{DIM} → {BOLD}8{R}{DIM} to switch to "
-              f"Google Gemini or Groq (both free).{R}")
+              f"Gemini, Groq or Cerebras (all free).{R}")
         print(f"{_line}")
 
     while True:

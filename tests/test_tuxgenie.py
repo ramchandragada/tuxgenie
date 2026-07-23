@@ -1083,8 +1083,12 @@ class TestSetupWizardDefault:
         kind, key = self._wizard(["2", "gsk_" + "a" * 40], monkeypatch)
         assert kind == "groq"
 
-    def test_three_is_claude(self, monkeypatch):
-        kind, key = self._wizard(["3", "sk-ant-" + "a" * 70], monkeypatch)
+    def test_three_is_cerebras(self, monkeypatch):
+        kind, key = self._wizard(["3", "csk-" + "a" * 40], monkeypatch)
+        assert kind == "cerebras"
+
+    def test_four_is_claude(self, monkeypatch):
+        kind, key = self._wizard(["4", "sk-ant-" + "a" * 70], monkeypatch)
         assert kind == "claude"
 
     def test_s_skips(self, monkeypatch):
@@ -1258,6 +1262,24 @@ class TestProviderFailover:
         # Auto-switch off → never switch.
         tg.save_cfg({"auto_switch_providers": False, "gemini_api_key": "AIza" + "y" * 35})
         assert tg._free_failover_available("groq") is False
+
+    def test_cerebras_is_a_valid_failover_target(self):
+        # On Gemini with only a Cerebras key present → fails over to Cerebras.
+        tg.save_cfg({"gemini_api_key": "AIza" + "y" * 35, "cerebras_api_key": "csk-" + "c" * 40})
+        nb = tg._failover_backend(tg.GeminiBackend(api_key="AIza" + "y" * 35))
+        assert nb is not None and tg._provider_name(nb) == "cerebras"
+
+    def test_cerebras_fails_over_to_gemini_first(self):
+        # Gemini is the preferred free target, ahead of any OpenAI-compatible one.
+        tg.save_cfg({"gemini_api_key": "AIza" + "y" * 35, "cerebras_api_key": "csk-" + "c" * 40})
+        nb = tg._failover_backend(tg.OpenAICompatBackend(api_key="csk-" + "c" * 40, provider="cerebras"))
+        assert nb is not None and tg._provider_name(nb) == "gemini"
+
+    def test_groq_fails_over_to_next_free_when_no_gemini(self):
+        # No Gemini key, on Groq, Cerebras key present → switch to Cerebras.
+        tg.save_cfg({"groq_api_key": "gsk_" + "x" * 40, "cerebras_api_key": "csk-" + "c" * 40})
+        nb = tg._failover_backend(tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq"))
+        assert nb is not None and tg._provider_name(nb) == "cerebras"
 
 
 class TestCommandVsSentence:
@@ -1441,7 +1463,8 @@ class TestStartupProviderPriority:
         self._d = tempfile.mkdtemp()
         tg.CFG_FILE = os.path.join(self._d, "config.json")
         self._env = {k: os.environ.pop(k, None) for k in
-                     ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY")}
+                     ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY",
+                      "CEREBRAS_API_KEY", "ANTHROPIC_API_KEY")}
 
     def teardown_method(self):
         tg.CFG_FILE = self._orig
@@ -1475,6 +1498,18 @@ class TestStartupProviderPriority:
                      "gemini_api_key": "AIza" + "y" * 35})
         assert isinstance(tg.load_backend(), tg.GeminiBackend)
 
+    def test_cerebras_when_only_cerebras_key(self):
+        # A free OpenAI-compatible provider other than Groq must also boot at startup.
+        tg.save_cfg({"provider": "cerebras", "cerebras_api_key": "csk-" + "c" * 40})
+        b = tg.load_backend()
+        assert isinstance(b, tg.OpenAICompatBackend) and b.provider == "cerebras"
+
+    def test_gemini_wins_over_cerebras(self):
+        # Gemini remains the free default ahead of any OpenAI-compatible provider.
+        tg.save_cfg({"provider": "cerebras",
+                     "gemini_api_key": "AIza" + "y" * 35, "cerebras_api_key": "csk-" + "c" * 40})
+        assert isinstance(tg.load_backend(), tg.GeminiBackend)
+
 
 class TestErrorReporting:
     """Opt-in, scrubbed, anonymous error reporting. The scrubber is the trust
@@ -1494,13 +1529,13 @@ class TestErrorReporting:
         os.environ.pop("TUXGENIE_SENTRY_DSN", None)
 
     def test_scrubber_redacts_every_secret_type(self):
-        raw = ("AIzaSyD" + "a" * 30 + " gsk_" + "b" * 40 + " sk-ant-" + "c" * 60
+        raw = ("AIzaSyD" + "a" * 30 + " gsk_" + "b" * 40 + " csk-" + "d" * 40 + " sk-ant-" + "c" * 60
                + " me@example.com 10.0.0.7 " + os.path.expanduser("~") + "/x /home/alice/y")
         out = tg._sanitize_tb(raw)
-        for leaked in ("AIzaSyD", "gsk_", "sk-ant-", "me@example.com", "10.0.0.7", "/home/alice"):
+        for leaked in ("AIzaSyD", "gsk_", "csk-", "sk-ant-", "me@example.com", "10.0.0.7", "/home/alice"):
             assert leaked not in out, f"scrubber leaked: {leaked}"
-        for token in ("[GEMINI_KEY_REDACTED]", "[GROQ_KEY_REDACTED]", "[ANTHROPIC_KEY_REDACTED]",
-                      "[EMAIL_REDACTED]", "[IP_REDACTED]"):
+        for token in ("[GEMINI_KEY_REDACTED]", "[GROQ_KEY_REDACTED]", "[CEREBRAS_KEY_REDACTED]",
+                      "[ANTHROPIC_KEY_REDACTED]", "[EMAIL_REDACTED]", "[IP_REDACTED]"):
             assert token in out
 
     def test_dsn_parses_including_eu_region(self):
