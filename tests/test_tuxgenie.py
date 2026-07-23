@@ -1281,6 +1281,29 @@ class TestProviderFailover:
         nb = tg._failover_backend(tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq"))
         assert nb is not None and tg._provider_name(nb) == "cerebras"
 
+    def test_exclude_set_rotates_through_all_three_providers(self):
+        # Regression: with only the current provider excluded, failover picks the
+        # highest-priority OTHER provider every time, so it ping-pongs Gemini<->Groq
+        # and NEVER reaches Cerebras. Tracking every tried provider must rotate
+        # through all three exactly once, then return None (all exhausted).
+        tg.save_cfg({"gemini_api_key": "AIza" + "y" * 35,
+                     "groq_api_key": "gsk_" + "x" * 40,
+                     "cerebras_api_key": "csk-" + "c" * 40})
+        start = tg.GeminiBackend(api_key="AIza" + "y" * 35)
+        tried = {"gemini"}
+        seen = []
+        cur = start
+        for _ in range(5):   # more than enough iterations to prove termination
+            nb = tg._failover_backend(cur, exclude=tried)
+            if nb is None:
+                break
+            name = tg._provider_name(nb)
+            seen.append(name)
+            tried.add(name)
+            cur = nb
+        assert seen == ["groq", "cerebras"], seen        # each reached once, in order
+        assert "cerebras" in seen, "Cerebras must be reachable via failover rotation"
+
 
 class TestCommandVsSentence:
     """A plain-English sentence must go to the AI even when its first word is a

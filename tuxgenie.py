@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.41.0"
+__version__ = "6.42.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1562,23 +1562,30 @@ def _is_user_actionable_error(exc) -> bool:
     return any(s in m for s in signals)
 
 
-def _failover_backend(current):
+def _failover_backend(current, exclude=None):
     """Return a fresh backend for the next FREE provider that has a saved key
-    (Gemini ↔ Groq), or None. Never returns Claude — auto-switch must never
-    silently incur cost. Honours the 'auto_switch_providers' setting."""
+    and has NOT already been tried this round, or None. Never returns Claude —
+    auto-switch must never silently incur cost. Honours 'auto_switch_providers'.
+
+    `exclude` is the set of provider names already tried in the current failover
+    sequence. Without it, a two-provider setup ping-pongs (Gemini→Groq→Gemini…)
+    and a third provider like Cerebras is never reached, because this always
+    returns the highest-priority *available* provider. Passing the tried set
+    makes it rotate through every free provider once before giving up."""
     cfg = load_cfg()
     if not cfg.get("auto_switch_providers", True):
         return None
-    cur = _provider_name(current)
+    skip = set(exclude or ())
+    skip.add(_provider_name(current))   # never fail over to ourselves
     candidates = []
     # Gemini first (the preferred free default), then each free OpenAI-compatible
-    # provider in registry order (Groq, Cerebras, …) — skipping the current one.
-    if cur != "gemini":
+    # provider in registry order (Groq, Cerebras, …) — skipping any already tried.
+    if "gemini" not in skip:
         gk = _provider_key("gemini", cfg)
         if gk:
             candidates.append(("gemini", gk))
     for pname, prov in _OAI_PROVIDERS.items():
-        if not prov.get("free") or pname == cur:
+        if not prov.get("free") or pname in skip:
             continue
         k = _provider_key(pname, cfg)
         if k:
@@ -2695,7 +2702,11 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
             )
 
     _failover_tries = 0
-    _MAX_FAILOVERS = 3          # cap switches so two failing providers can't ping-pong forever
+    _MAX_FAILOVERS = 3          # safety cap on switches within one failover round
+    # Providers already tried this round — so failover rotates through EVERY free
+    # provider (Gemini → Groq → Cerebras → …) exactly once instead of bouncing
+    # between the top two and never reaching the rest.
+    _tried_providers = {_provider_name(backend)}
     try:
         for turn in range(max_turns):
             print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
@@ -2710,12 +2721,13 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 # Claude), then retry this turn. Cap the switches so two failing
                 # providers can't bounce back and forth forever.
                 if _is_transient_ai_error(e) and _failover_tries < _MAX_FAILOVERS:
-                    nb = _failover_backend(backend)
+                    nb = _failover_backend(backend, exclude=_tried_providers)
                     if nb is not None:
                         _failover_tries += 1
                         warn(f"{_provider_name(backend).title()} unavailable — switching to "
                              f"{nb.label()} and continuing… ({_failover_tries}/{_MAX_FAILOVERS})")
                         backend = nb
+                        _tried_providers.add(_provider_name(nb))
                         _is_anthropic = False
                         continue
                 # Transient but we can't (or shouldn't) keep switching — the free
@@ -2755,9 +2767,10 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                                                  "reason": "unexpected_ai_error"})
                 return
 
-            # A call succeeded — reset the failover counter so an unrelated later
-            # limit can still trigger a fresh round of switching.
+            # A call succeeded — reset the failover counter AND the tried-set so an
+            # unrelated later limit can trigger a fresh round through all providers.
             _failover_tries = 0
+            _tried_providers = {_provider_name(backend)}
 
             # Track usage (regular + cache tokens) so session cost is accurate.
             if getattr(response, "usage", None):
@@ -4846,19 +4859,28 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
         try:
             raw = ask_ai(backend, system, messages, max_tokens=out_tokens)
         except RuntimeError as e:
-            # Auto-switch to another FREE provider on a limit/outage (never Claude).
-            nb = _failover_backend(backend) if _is_transient_ai_error(e) else None
-            if nb is not None:
+            # Auto-switch to another FREE provider on a limit/outage (never Claude),
+            # rotating through EVERY free provider (Gemini → Groq → Cerebras → …)
+            # once — tracking those already tried so it can't ping-pong between two.
+            raw = None
+            _tried = {_provider_name(backend)}
+            while raw is None and _is_transient_ai_error(e):
+                nb = _failover_backend(backend, exclude=_tried)
+                if nb is None:
+                    break
                 warn(f"{_provider_name(backend).title()} unavailable — switching to {nb.label()} and retrying…")
                 backend = nb
+                _tried.add(_provider_name(nb))
                 out_tokens = 3072 if "haiku" in backend.model else 4096
                 try:
                     raw = ask_ai(backend, system, messages, max_tokens=out_tokens)
+                except RuntimeError as e2:
+                    e = e2          # this provider also failed — try the next one
                 except Exception as e2:
                     err(str(e2)[:400]); return
-            else:
-                # Backends raise clear, provider-specific messages (with fix steps) —
-                # show them verbatim rather than a generic guess.
+            if raw is None:
+                # Couldn't recover. Backends raise clear, provider-specific messages
+                # (with fix steps) — show the last one verbatim rather than a guess.
                 msg = str(e)
                 (warn if "429" in msg else err)(msg[:400])
                 # Report anything that isn't the user's to fix (bad key/offline):
