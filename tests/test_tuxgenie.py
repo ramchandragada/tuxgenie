@@ -923,6 +923,19 @@ class TestOpenAICompatBackend:
             ["whisper-large-v3", "llama-3.1-8b-instant", "llama-3.3-70b-versatile"]
         ) == "llama-3.3-70b-versatile"
 
+    def test_model_picker_never_selects_chinese_models(self):
+        # Project policy: never auto-select a Chinese-origin model. Even when a
+        # Qwen/DeepSeek model would otherwise "win", a Llama/GPT-OSS must be chosen.
+        picked = tg._oai_pick_model(["qwen-3-235b", "deepseek-r1", "gpt-oss-120b"])
+        assert picked == "gpt-oss-120b", picked
+        # And if ONLY blocklisted models are offered, refuse rather than pick one.
+        assert tg._oai_pick_model(["qwen-3-235b", "deepseek-r1", "kimi-k2"]) is None
+
+    def test_model_picker_handles_cerebras_naming(self):
+        # Cerebras lists Llama without Groq's "-versatile" suffix; it must still win
+        # over gpt-oss, and never fall through to a Chinese model.
+        assert tg._oai_pick_model(["llama-3.3-70b", "gpt-oss-120b", "qwen-3-32b"]) == "llama-3.3-70b"
+
     def test_backend_basics(self):
         be = tg.OpenAICompatBackend(api_key=tg._NO_KEY, provider="groq")
         assert "Groq" in be.label()

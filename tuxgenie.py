@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.42.0"
+__version__ = "6.43.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -999,8 +999,11 @@ _OAI_PROVIDERS = {
     },
     "cerebras": {
         "label": "Cerebras", "base_url": "https://api.cerebras.ai/v1",
-        # Llama 3.3 70B (Meta) — a non-Chinese model with tool-calling support.
-        "default_model": "llama-3.3-70b", "cfg_key": "cerebras_api_key",
+        # GPT-OSS 120B (OpenAI open-weight) — a non-Chinese model with solid
+        # tool-calling that is currently live on Cerebras's free tier. If it's
+        # ever retired, _oai_pick_model auto-heals to another Llama/GPT-OSS model
+        # (never a Chinese-origin one — see _OAI_MODEL_BLOCKLIST).
+        "default_model": "gpt-oss-120b", "cfg_key": "cerebras_api_key",
         "model_key": "cerebras_model", "keys_url": "https://cloud.cerebras.ai",
         "env": ("CEREBRAS_API_KEY",), "free": True,
         # Very generous free tier (~1M tokens/day, 30 req/min). Keep the output
@@ -1161,15 +1164,34 @@ def _oai_usage(data):
     return _GUsage(u.get("prompt_tokens", 0) or 0, u.get("completion_tokens", 0) or 0)
 
 
+# Model families we deliberately never auto-select. Chinese-origin models are
+# excluded by project policy (kept to Meta Llama / OpenAI GPT-OSS); the rest are
+# non-chat models that would break the agentic loop.
+_OAI_MODEL_BLOCKLIST = (
+    "qwen", "deepseek", "kimi", "glm", "yi-", "ernie", "minimax", "baichuan",  # Chinese-origin
+    "whisper", "embed", "guard", "tts", "vision",                             # non-chat
+)
+
+
 def _oai_pick_model(available):
-    """Choose the best general chat model from a provider's model list."""
-    for p in ("llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama-3.1-8b-instant"):
-        if p in (available or []):
+    """Choose the best general chat model from a provider's model list. Prefers
+    Meta Llama, then OpenAI GPT-OSS; never auto-selects a blocklisted family
+    (Chinese-origin models, or non-chat models like whisper/embeddings)."""
+    avail = available or []
+
+    def blocked(n):
+        return any(x in n.lower() for x in _OAI_MODEL_BLOCKLIST)
+
+    # Exact-match preferences across the providers we support (Groq + Cerebras
+    # naming). First hit that's present and not blocklisted wins.
+    for p in ("llama-3.3-70b-versatile", "llama-3.1-70b-versatile",
+              "llama-3.3-70b", "llama-3.1-8b-instant", "gpt-oss-120b"):
+        if p in avail and not blocked(p):
             return p
 
     def score(n):
         n = n.lower()
-        if any(x in n for x in ("whisper", "embed", "guard", "tts", "vision")):
+        if blocked(n):
             return -1000
         s = 0
         if "llama" in n: s += 50
@@ -1177,7 +1199,7 @@ def _oai_pick_model(available):
         if "gpt-oss" in n: s += 15
         if "instant" in n or "8b" in n: s += 5
         return s
-    cands = [m for m in (available or []) if score(m) > -1000]
+    cands = [m for m in avail if score(m) > -1000]
     return max(cands, key=score) if cands else None
 
 

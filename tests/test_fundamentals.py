@@ -64,12 +64,16 @@ class TestStartupFundamentals:
 
     def test_free_provider_registry_has_expected_providers(self):
         # The registry must expose Groq and Cerebras as free OpenAI-compatible
-        # providers with non-Chinese (Llama) default models and a config key each.
+        # providers with a config key and a non-Chinese default model each
+        # (project policy: Meta Llama or OpenAI GPT-OSS only — never Qwen/DeepSeek/…).
         free = {n: p for n, p in tg._OAI_PROVIDERS.items() if p.get("free")}
         assert {"groq", "cerebras"} <= set(free)
+        _chinese = ("qwen", "deepseek", "kimi", "glm", "ernie", "minimax", "baichuan")
         for name, prov in free.items():
             assert prov["cfg_key"] and prov["default_model"]
-            assert "llama" in prov["default_model"].lower(), name
+            dm = prov["default_model"].lower()
+            assert ("llama" in dm or "gpt-oss" in dm), f"{name}: {dm}"
+            assert not any(c in dm for c in _chinese), f"{name}: {dm}"
 
 
 class TestCatalogFundamentals:
