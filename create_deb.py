@@ -288,17 +288,18 @@ Replaces: ai-terminal, tuxgenie (<< {VERSION})
 Provides: ai-terminal
 Maintainer: TuxGenie Project <ramchandragada@users.noreply.github.com>
 Homepage: https://github.com/ramchandragada/tuxgenie
-Description: AI-powered Linux assistant using Claude
- TuxGenie is the ultimate Linux power tool. Describe any problem in plain
- English and TuxGenie fixes it using Claude AI. Features include: system
- health dashboard, network diagnostics, security audit, disk management,
+Description: AI-powered Linux assistant (plain-English troubleshooting)
+ TuxGenie fixes Linux problems described in plain English. Features include: a
+ system health dashboard, network diagnostics, security audit, disk management,
  service control, log analysis, update management, script generation, cron
  scheduling, permission fixer, boot repair, Docker management, config backup,
  hardware info, SSH diagnostics, process manager, and session rollback.
  .
  Usage: tuxgenie
  .
- Requires an Anthropic API key: https://console.anthropic.com
+ Free to run: choose a free AI provider on first launch (Google Gemini or Groq,
+ no credit card) or Anthropic Claude for best quality. Common terminal commands
+ run with no key at all. The Claude SDK is fetched only if you connect Claude.
 """.encode()
 
 POSTINST = b"""\
@@ -311,85 +312,13 @@ case "$1" in
     rm -rf /usr/lib/ai-terminal 2>/dev/null || true
     rm -f  /usr/share/applications/ai-terminal.desktop 2>/dev/null || true
 
-    # -- Robust dependency bootstrap --
-    # Goal: get the 'anthropic' Python package installed by any means.
-    # We try multiple strategies because distros vary widely:
-    #   1. pip already available     -> use it directly
-    #   2. pip missing, apt works    -> install python3-pip via apt, then pip
-    #   3. pip missing, no apt       -> try ensurepip (stdlib bootstrap)
-    #   4. all pip methods fail      -> create a venv with built-in pip
-    # Strategy 4 always works if python3-venv is installed (declared as dep).
-
-    _install_sdk() {
-        # Try pip methods in order of preference
-        python3 -m pip install anthropic --quiet --upgrade 2>/dev/null && return 0
-        python3 -m pip install anthropic --quiet --upgrade --break-system-packages 2>/dev/null && return 0
-        pip3 install anthropic --quiet --upgrade 2>/dev/null && return 0
-        pip3 install anthropic --quiet --upgrade --break-system-packages 2>/dev/null && return 0
-        return 1
-    }
-
-    SDK_OK=0
-
-    # Strategy 1: pip already works
-    if python3 -m pip --version >/dev/null 2>&1; then
-        _install_sdk && SDK_OK=1
-    fi
-
-    # Compute version-specific venv package (e.g. python3.12-venv) - on minimal
-    # Debian/Ubuntu images this is sometimes the only resolvable name.
-    PY_VER=$(python3 -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null)
-    PY_VENV_PKG="python${PY_VER}-venv"
-
-    # Strategy 2: install python3-pip via apt
-    if [ "$SDK_OK" -eq 0 ]; then
-        apt-get install -y python3-pip >/dev/null 2>&1 \
-          || { apt-get update >/dev/null 2>&1; apt-get install -y python3-pip >/dev/null 2>&1; } \
-          || true
-        if python3 -m pip --version >/dev/null 2>&1; then
-            _install_sdk && SDK_OK=1
-        fi
-    fi
-
-    # Strategy 3: ensurepip (Python's built-in pip bootstrapper)
-    if [ "$SDK_OK" -eq 0 ]; then
-        python3 -m ensurepip --upgrade >/dev/null 2>&1 || true
-        if python3 -m pip --version >/dev/null 2>&1; then
-            _install_sdk && SDK_OK=1
-        fi
-    fi
-
-    # Strategy 4: create a venv with its own pip, install there, copy to system
-    if [ "$SDK_OK" -eq 0 ]; then
-        # Use mktemp -d for an unpredictable path - avoids TOCTOU symlink attacks
-        # on the well-known /tmp/.tuxgenie-bootstrap-venv that previous versions used.
-        VENV_DIR=$(mktemp -d /tmp/tuxgenie-bootstrap-XXXXXX 2>/dev/null) || VENV_DIR=""
-        if [ -n "$VENV_DIR" ]; then
-            # Try the version-specific venv package first, then the meta-package.
-            # Refresh apt cache and retry once if both fail (common on minimal images).
-            apt-get install -y "$PY_VENV_PKG" >/dev/null 2>&1 \
-              || apt-get install -y python3-venv >/dev/null 2>&1 \
-              || { apt-get update >/dev/null 2>&1; \
-                   apt-get install -y "$PY_VENV_PKG" python3-venv >/dev/null 2>&1; } \
-              || true
-            if python3 -m venv "$VENV_DIR" >/dev/null 2>&1; then
-                "$VENV_DIR/bin/pip" install anthropic --quiet 2>/dev/null || true
-                # Copy installed packages to the system site-packages
-                SITE=$("$VENV_DIR/bin/python3" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
-                SYS_SITE=$(python3 -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
-                if [ -n "$SITE" ] && [ -n "$SYS_SITE" ] && [ -d "$SITE" ]; then
-                    cp -rn "$SITE"/* "$SYS_SITE/" 2>/dev/null || true
-                    SDK_OK=1
-                fi
-            fi
-            rm -rf "$VENV_DIR" 2>/dev/null || true
-        fi
-    fi
-
-    # If all strategies failed, don't block install -- runtime will retry
-    if [ "$SDK_OK" -eq 0 ]; then
-        echo "  Note: anthropic SDK will be installed on first run of tuxgenie." >&2
-    fi
+    # NOTE: no dependency installation happens here.
+    # Debian policy forbids network access from maintainer scripts, and the free
+    # providers (Google Gemini, Groq) need no extra packages at all - TuxGenie
+    # talks to them over the standard-library urllib. The 'anthropic' SDK is only
+    # needed if the user explicitly connects Claude, and in that case the app
+    # installs it lazily, in user space, on first use (see _bootstrap_anthropic_sdk
+    # in tuxgenie.py). So there is nothing to fetch as root at install time.
 
     # Always (re)write tuxgenie-gui launcher to keep the terminal-detection
     # logic in sync with create_deb.py. This is the same script that ships
