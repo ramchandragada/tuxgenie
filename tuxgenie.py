@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.38.0"
+__version__ = "6.39.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2636,6 +2636,8 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 messages     = msgs,
             )
 
+    _failover_tries = 0
+    _MAX_FAILOVERS = 3          # cap switches so two failing providers can't ping-pong forever
     try:
         for turn in range(max_turns):
             print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
@@ -2646,14 +2648,31 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 return
             except Exception as e:
                 print(" " * 40, end="\r")
-                # Auto-switch to another FREE provider on a limit/outage (never Claude),
-                # then retry this same turn — the conversation so far is unchanged.
-                nb = _failover_backend(backend) if _is_transient_ai_error(e) else None
-                if nb is not None:
-                    warn(f"{_provider_name(backend).title()} unavailable — switching to {nb.label()} and continuing…")
-                    backend = nb
-                    _is_anthropic = False
-                    continue
+                # Auto-switch to another FREE provider on a limit/outage (never
+                # Claude), then retry this turn. Cap the switches so two failing
+                # providers can't bounce back and forth forever.
+                if _is_transient_ai_error(e) and _failover_tries < _MAX_FAILOVERS:
+                    nb = _failover_backend(backend)
+                    if nb is not None:
+                        _failover_tries += 1
+                        warn(f"{_provider_name(backend).title()} unavailable — switching to "
+                             f"{nb.label()} and continuing… ({_failover_tries}/{_MAX_FAILOVERS})")
+                        backend = nb
+                        _is_anthropic = False
+                        continue
+                # Transient but we can't (or shouldn't) keep switching — the free
+                # providers are unavailable right now. Stop cleanly, don't loop.
+                if _is_transient_ai_error(e):
+                    err("The free AI providers are unavailable right now "
+                        "(rate limits or a temporary outage).")
+                    print(f"  {DIM}Please wait a minute and try again. For maximum reliability "
+                          f"you can connect Claude (Settings → 8).{R}")
+                    if not _is_user_actionable_error(e):
+                        _report_error_from_exc(e, feature=_active_feature or "agentic",
+                                               tags={"provider": _provider_name(backend),
+                                                     "reason": ("failover_exhausted" if _failover_tries
+                                                                else "transient_no_failover")})
+                    return
                 if _is_anthropic:
                     kind, msg = _classify_anthropic_error(e)
                     if kind == "billing":
@@ -2670,16 +2689,17 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                     # which would mislabel e.g. a Groq quota error as an Anthropic one).
                     print(f"  {RED}{e}{R}")
                     print(f"  {DIM}Tip: press {BOLD}k{R}{DIM} to change the key · Settings → 8 to switch AI provider.{R}")
-                # Report any error that isn't the user's to fix (bad key/offline):
-                # a capacity/outage we couldn't fail over from, OR a genuinely
-                # unexpected provider error. Auth/network stay excluded as noise.
+                # Report a genuinely unexpected provider error (auth/network stay
+                # excluded as noise).
                 if not _is_user_actionable_error(e):
-                    reason = ("transient_no_failover" if _is_transient_ai_error(e)
-                              else "unexpected_ai_error")
                     _report_error_from_exc(e, feature=_active_feature or "agentic",
                                            tags={"provider": _provider_name(backend),
-                                                 "reason": reason})
+                                                 "reason": "unexpected_ai_error"})
                 return
+
+            # A call succeeded — reset the failover counter so an unrelated later
+            # limit can still trigger a fresh round of switching.
+            _failover_tries = 0
 
             # Track usage (regular + cache tokens) so session cost is accurate.
             if getattr(response, "usage", None):
