@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.51.0"
+__version__ = "6.52.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1629,6 +1629,42 @@ def _failover_backend(current, exclude=None):
     return None
 
 
+def _offer_claude_fallback(current):
+    """When the free rotation is exhausted, OFFER to finish on Claude — but only
+    with explicit consent, since Claude is paid. Returns a ready Claude backend if
+    the user says yes, else None. Never switches silently (that's the whole point
+    of keeping Claude out of auto-failover): we ask, and only spend on a 'yes'.
+
+    Returns None (no prompt) when: there's no saved Claude key, we're already on
+    Claude, or the session isn't interactive."""
+    if _provider_name(current) == "claude":
+        return None
+    cfg = load_cfg()
+    ckey = _load_api_key(cfg)
+    if not ckey:
+        return None
+    if not sys.stdin.isatty():
+        return None
+    print(f"\n  {CYAN}{BOLD}The free providers are rate-limited right now.{R}")
+    print(f"  {DIM}You have Claude connected. Claude is paid (~$0.01/session) but has no "
+          f"free-tier limit.{R}")
+    try:
+        ans = input(f"  {BOLD}Switch to Claude to finish this task?{R} "
+                    f"[{C('y',GREEN,BOLD)}=yes  {C('n',YELLOW,BOLD)}=no]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if ans not in ("y", "yes"):
+        return None
+    try:
+        nb = _make_backend(cfg, "claude", ckey)
+        nb.expert_mode = getattr(current, "expert_mode", False)
+        nb.auto_approve = getattr(current, "auto_approve", False)
+        ok("Switched to Claude for this task.")
+        return nb
+    except Exception:
+        return None
+
+
 def load_backend():
     """Load config and return the configured backend. Defaults to Claude and is
     fully back-compatible: existing installs (api_key set, no 'provider') load
@@ -2762,9 +2798,19 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                         _tried_providers = {_provider_name(backend)}
                         continue
                 # Transient but we can't (or shouldn't) keep switching — the free
-                # providers are unavailable right now. Stop cleanly, don't loop.
+                # providers are unavailable right now.
                 if _is_transient_ai_error(e):
                     _provider_errors[_provider_name(backend)] = _short_reason(e)
+                    # Free rotation is spent — if Claude is connected, OFFER it
+                    # (paid, so only with an explicit yes). On yes, continue the
+                    # same task on Claude instead of giving up.
+                    cb = _offer_claude_fallback(backend)
+                    if cb is not None:
+                        backend = cb
+                        _is_anthropic = True
+                        _failover_tries = 0
+                        _tried_providers = {"claude"}
+                        continue
                     err("The free AI providers are unavailable right now "
                         "(rate limits or a temporary outage).")
                     # Show the REAL reason each provider gave, so a genuine
@@ -4965,6 +5011,16 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     e = e2          # this provider also failed — try the next one
                 except Exception as e2:
                     err(str(e2)[:400]); return
+            if raw is None and _is_transient_ai_error(e):
+                # Free rotation spent — offer Claude (paid, explicit consent only).
+                cb = _offer_claude_fallback(backend)
+                if cb is not None:
+                    backend = cb
+                    out_tokens = 3072 if "haiku" in backend.model else 4096
+                    try:
+                        raw = ask_ai(backend, system, messages, max_tokens=out_tokens)
+                    except Exception as e2:
+                        err(str(e2)[:400]); return
             if raw is None:
                 # Couldn't recover. Backends raise clear, provider-specific messages
                 # (with fix steps) — show the last one verbatim rather than a guess.

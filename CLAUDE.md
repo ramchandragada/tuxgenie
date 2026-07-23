@@ -75,8 +75,11 @@ At every start the provider is chosen by PRIORITY, not by what was last used:
    key exists, start with that provider.
 3. If the only key present is Claude's, use it (with the same free-switch hint).
 
-Auto-failover during a session is still free→free only (Gemini → Groq → …),
-never Claude. `tests/test_fundamentals`/`test_tuxgenie` lock this priority.
+Auto-failover during a session is still free→free only (Gemini → Groq → …) and
+never *silently* uses Claude. But when the whole free rotation is exhausted and a
+Claude key is connected, TuxGenie **offers** to finish the task on Claude — paid,
+so only after an explicit "yes" (`_offer_claude_fallback`). It never spends on
+Claude without consent. `tests/test_fundamentals`/`test_tuxgenie` lock this.
 
 ## Cost Optimisation Principles
 

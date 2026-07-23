@@ -1296,6 +1296,28 @@ class TestProviderFailover:
         tg.save_cfg({"auto_switch_providers": False, "gemini_api_key": "AIza" + "y" * 35})
         assert tg._free_failover_available("groq") is False
 
+    def test_offer_claude_fallback_is_consent_gated(self, monkeypatch):
+        # Free rotation spent + a Claude key present: OFFER Claude, switch only on yes.
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        tg.save_cfg({"api_key": "sk-ant-" + "a" * 70})
+        monkeypatch.setattr(tg.sys.stdin, "isatty", lambda: True)
+        cur = tg.GeminiBackend(api_key="AIza" + "y" * 35)
+        # "no" → no switch, no spend.
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "n")
+        assert tg._offer_claude_fallback(cur) is None
+        # "yes" → a Claude backend to finish the task on.
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "y")
+        nb = tg._offer_claude_fallback(cur)
+        assert nb is not None and tg._provider_name(nb) == "claude"
+
+    def test_offer_claude_fallback_none_without_key(self, monkeypatch):
+        # No Claude key → never offer (nothing to switch to).
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        tg.save_cfg({})
+        monkeypatch.setattr(tg.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "y")
+        assert tg._offer_claude_fallback(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
+
     def test_exclude_set_rotates_through_every_provider_once(self):
         # Regression: with only the current provider excluded, failover picks the
         # highest-priority OTHER provider every time, so it can ping-pong forever
