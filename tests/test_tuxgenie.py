@@ -1239,6 +1239,13 @@ class TestProviderFailover:
         # No hint → None (so the caller falls through to giving up cleanly).
         assert tg._retry_after_seconds(RuntimeError("limit reached, try later")) is None
 
+    def test_short_reason_is_single_line_and_bounded(self):
+        # Multi-line provider errors collapse to one bounded line for the notice.
+        r = tg._short_reason(RuntimeError("Cerebras limit reached (HTTP 429).\n  Free tiers cap tokens."))
+        assert "\n" not in r and "HTTP 429" in r
+        long = tg._short_reason(RuntimeError("x" * 500), limit=100)
+        assert len(long) <= 101 and long.endswith("…")
+
     def test_gemini_limit_message_is_transient(self):
         # Regression: the Gemini 429 message must trigger failover even when
         # Google's raw detail body is empty/unparseable (no "quota" word).

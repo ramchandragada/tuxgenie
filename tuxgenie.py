@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.44.0"
+__version__ = "6.45.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1590,6 +1590,14 @@ def _retry_after_seconds(exc):
     return None
 
 
+def _short_reason(exc, limit=150):
+    """A compact, single-line version of a provider error for the failover
+    notices — so 'X unavailable' actually says WHY (rate limit vs auth vs model
+    vs network), instead of hiding the real cause behind a generic word."""
+    m = " ".join(str(exc).split())          # collapse newlines/indentation
+    return (m[:limit] + "…") if len(m) > limit else m
+
+
 def _is_user_actionable_error(exc) -> bool:
     """True for errors only the USER can resolve — a bad/missing API key or a
     dead network connection. These are NOT bugs, so we never send them as error
@@ -2752,6 +2760,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
     _tried_providers = {_provider_name(backend)}
     _exhaustion_waits = 0       # bounded auto-waits after the whole rotation is spent
     _MAX_EXHAUSTION_WAITS = 1
+    _provider_errors = {}       # provider name → real reason, shown on exhaustion
     try:
         for turn in range(max_turns):
             print(f"  {DIM}🤔 Thinking…{R}", end="\r", flush=True)
@@ -2769,7 +2778,9 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                     nb = _failover_backend(backend, exclude=_tried_providers)
                     if nb is not None:
                         _failover_tries += 1
-                        warn(f"{_provider_name(backend).title()} unavailable — switching to "
+                        _provider_errors[_provider_name(backend)] = _short_reason(e)
+                        warn(f"{_provider_name(backend).title()} unavailable "
+                             f"({_short_reason(e, 90)}) — switching to "
                              f"{nb.label()} and continuing… ({_failover_tries}/{_MAX_FAILOVERS})")
                         backend = nb
                         _tried_providers.add(_provider_name(nb))
@@ -2798,8 +2809,14 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 # Transient but we can't (or shouldn't) keep switching — the free
                 # providers are unavailable right now. Stop cleanly, don't loop.
                 if _is_transient_ai_error(e):
+                    _provider_errors[_provider_name(backend)] = _short_reason(e)
                     err("The free AI providers are unavailable right now "
                         "(rate limits or a temporary outage).")
+                    # Show the REAL reason each provider gave, so a genuine
+                    # rate limit is distinguishable from an auth/model/network
+                    # problem hiding behind the generic word "unavailable".
+                    for _pn, _reason in _provider_errors.items():
+                        print(f"  {DIM}• {_pn.title()}: {_reason}{R}")
                     print(f"  {DIM}Please wait a minute and try again. For maximum reliability "
                           f"you can connect Claude (Settings → 8).{R}")
                     if not _is_user_actionable_error(e):
@@ -4933,7 +4950,8 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 nb = _failover_backend(backend, exclude=_tried)
                 if nb is None:
                     break
-                warn(f"{_provider_name(backend).title()} unavailable — switching to {nb.label()} and retrying…")
+                warn(f"{_provider_name(backend).title()} unavailable ({_short_reason(e, 90)}) "
+                     f"— switching to {nb.label()} and retrying…")
                 backend = nb
                 _tried.add(_provider_name(nb))
                 out_tokens = 3072 if "haiku" in backend.model else 4096
