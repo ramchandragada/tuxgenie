@@ -221,7 +221,8 @@ You never *have* to pick a number — just type what you need in plain English. 
 
 | # | Feature | What it does |
 |---|---------|--------------|
-| 77 | **Install Apps** | One-tap catalog of **111 popular Linux apps** — browsers, messaging, office, media, graphics, dev tools, gaming, security … (Brave, Signal, Obsidian, Blender, Bitwarden, Steam, Zoho Mail …) |
+| 77 | **Install Apps** | One-tap catalog of **200 popular Linux apps** — browsers, messaging, office, media, graphics, dev tools, gaming, security … (Brave, Signal, Obsidian, Blender, Bitwarden, Steam, Zoho Mail …). Each installs deterministically (apt / snap / flatpak / vendor repo), no AI. |
+| 78 | **Remove Apps** | The mirror of Install Apps — lists the apps actually installed on your PC (apt / snap / flatpak) and uninstalls the ones you pick. Deterministic, no AI; system-critical packages are hidden so nothing essential can be removed. |
 | 88 | **Cloud Sync** | Guided rclone wrapper — Google Drive, Dropbox, OneDrive, S3, WebDAV from a single menu |
 | 99 | **AI Tools** | One-tap installer for **22 AI tools** — Cursor, Windsurf, Zed, Ollama, Claude Code, GitHub Copilot CLI, Gemini CLI, GPT4All, Whisper, a local-AI starter pack … |
 

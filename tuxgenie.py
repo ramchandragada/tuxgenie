@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.64.0"
+__version__ = "6.65.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3906,6 +3906,145 @@ def _app_remove_cmd_for_phrase(text: str):
         if shutil.which("flatpak") and _flatpak_installed(pkg):
             return (f"flatpak uninstall -y {pkg}", pkg, False)
     return None
+
+
+# ── Remove-Apps catalog (the mirror of the install catalog) ─────────────────────
+# Packages that must NEVER be offered for one-click removal — uninstalling them
+# can break boot, the desktop session, package management, or TuxGenie itself.
+_APP_REMOVE_DENYLIST = {
+    "ubuntu-desktop", "ubuntu-session", "ubuntu-minimal", "ubuntu-standard",
+    "gnome-shell", "gnome-session", "gnome-session-bin", "gnome-control-center",
+    "gnome-terminal", "gdm3", "mutter", "nautilus", "xorg", "xwayland",
+    "plasma-desktop", "plasma-workspace", "sddm", "kwin", "kwin-x11", "kwin-wayland",
+    "systemd", "systemd-sysv", "init", "network-manager", "dbus", "policykit-1",
+    "polkitd", "snapd", "flatpak", "apt", "dpkg", "bash", "coreutils", "sudo",
+    "libc6", "software-properties-gtk", "software-properties-common",
+    "tuxgenie",
+}
+
+# Snap "apps" that are really bases/runtimes/themes — never user apps to remove.
+_SNAP_BASE_DENYLIST = {
+    "core", "core18", "core20", "core22", "core24", "snapd", "bare",
+    "gtk-common-themes", "gnome-3-28-1804", "gnome-3-34-1804", "gnome-3-38-2004",
+    "gnome-42-2204", "gnome-46-2404", "mesa-2404", "ffmpeg-2404",
+}
+
+
+def _looks_like_system_pkg(pkg):
+    """True for apt packages that are runtimes, toolchains, fonts, kernels, or
+    shared sub-packages rather than user-facing apps — so the Remove-Apps list
+    stays to real apps (vlc, gimp, brave-browser…) and never offers to purge a
+    language runtime or a '-common'/'-data' base package."""
+    if pkg.startswith(("python3", "python2", "openjdk", "default-jre", "default-jdk",
+                        "gir1.2-", "linux-", "fonts-", "gcc-", "g++-")):
+        return True
+    if pkg.endswith(("-common", "-data", "-doc", "-dbg", "-dev", "-core",
+                     "-jre", "-jdk", "-headers", "-runtime")):
+        return True
+    return False
+
+
+def _remove_cmd_for(method, target, root):
+    """Deterministic uninstall command for an installed app, chosen by HOW it was
+    installed. Returns (command, requires_root) or (None, False). apt purges then
+    autoremoves orphaned dependencies (apt only removes deps no other manual
+    package needs, so this is safe); flatpak needs sudo only for system installs."""
+    if method == "apt":
+        return (f"sudo apt-get purge -y {target} && sudo apt-get autoremove -y", True)
+    if method == "snap":
+        return (f"sudo snap remove {target}", True)
+    if method == "flatpak":
+        base = f"flatpak uninstall -y {target}"
+        return (f"sudo {base}", True) if root else (base, False)
+    return (None, False)
+
+
+def _installed_user_apps():
+    """Enumerate the user-FACING apps actually installed on this machine (never
+    system libraries), across apt, snap and flatpak, so they can be uninstalled
+    from a catalog. Critical system packages and TuxGenie itself are excluded.
+    Returns a list of {id, name, cat, desc, method, target, root}."""
+    apps, seen = [], set()
+
+    def _add(name, method, target, root, desc):
+        key = (method, target)
+        if not target or key in seen:
+            return
+        seen.add(key)
+        apps.append({"name": name or target, "method": method, "target": target,
+                     "root": bool(root), "desc": desc,
+                     "cat": {"apt": "APT packages", "snap": "Snap",
+                             "flatpak": "Flatpak"}[method]})
+
+    # Flatpak — an explicit, clean app list (id · name · version · scope).
+    if shutil.which("flatpak"):
+        try:
+            r = subprocess.run(
+                ["flatpak", "list", "--app",
+                 "--columns=application,name,version,installation"],
+                capture_output=True, text=True, timeout=15)
+            for ln in r.stdout.splitlines():
+                parts = ln.split("\t") if "\t" in ln else re.split(r"\s{2,}", ln)
+                parts = [p.strip() for p in parts if p.strip()]
+                if not parts:
+                    continue
+                appid = parts[0]
+                nm    = parts[1] if len(parts) > 1 else appid
+                ver   = parts[2] if len(parts) > 2 else ""
+                scope = parts[3] if len(parts) > 3 else "system"
+                _add(nm, "flatpak", appid, scope.lower().startswith("system"),
+                     ("Flatpak · " + ver).strip(" ·"))
+        except Exception:
+            pass
+
+    # Snap — skip bases/runtimes/themes.
+    if shutil.which("snap"):
+        try:
+            r = subprocess.run(["snap", "list"], capture_output=True, text=True, timeout=15)
+            for ln in r.stdout.splitlines()[1:]:   # drop header
+                cols = ln.split()
+                if not cols:
+                    continue
+                nm = cols[0]
+                if nm in _SNAP_BASE_DENYLIST or nm.endswith("-platform"):
+                    continue
+                ver = cols[1] if len(cols) > 1 else ""
+                _add(nm, "snap", nm, True, ("Snap · " + ver).strip(" ·"))
+        except Exception:
+            pass
+
+    # apt — packages the USER explicitly installed (apt-mark showmanual) that also
+    # ship a .desktop launcher. That intersection is the reliable "real app, not a
+    # library" signal; system-critical packages are then filtered by the denylist.
+    if shutil.which("dpkg"):
+        try:
+            manual = set(subprocess.run(["apt-mark", "showmanual"],
+                                        capture_output=True, text=True, timeout=20).stdout.split())
+        except Exception:
+            manual = set()
+        owners = set()
+        try:
+            r = subprocess.run(
+                "dpkg -S /usr/share/applications/*.desktop "
+                "$HOME/.local/share/applications/*.desktop 2>/dev/null",
+                shell=True, capture_output=True, text=True, timeout=20)
+            for ln in r.stdout.splitlines():
+                if ":" not in ln:
+                    continue
+                for p in ln.split(":", 1)[0].split(","):
+                    owners.add(p.strip())
+        except Exception:
+            pass
+        for pkg in sorted(manual & owners):
+            if pkg in _APP_REMOVE_DENYLIST or _looks_like_system_pkg(pkg):
+                continue
+            _add(pkg.replace("-", " ").title(), "apt", pkg, True, "apt · " + pkg)
+
+    apps.sort(key=lambda a: (a["cat"], a["name"].lower()))
+    for i, a in enumerate(apps, 1):
+        a["id"] = i
+    return apps
+
 
 def _app_update_cmd_for_phrase(text: str):
     """If the input means 'update <a single named app>', return (cmd, label) that
@@ -9320,6 +9459,160 @@ def feat_install_apps(backend, bctx, slog):
     )
 
 
+def _select_entries(entries, item_label):
+    """Multi-select picker over a list of {id,name,cat,desc} rows, with search —
+    the same UX as the install catalog. Returns the chosen list, or None if the
+    user cancels."""
+    def _render(rows):
+        cats, by = [], {}
+        for e in rows:
+            if e["cat"] not in by:
+                by[e["cat"]] = []; cats.append(e["cat"])
+            by[e["cat"]].append(e)
+        for c in cats:
+            print(f"\n  {BOLD}{CYAN}{c.upper()}{R}")
+            for e in by[c]:
+                num  = f"[{e['id']:>3}]"
+                name = f"{BOLD}{e['name']}{R}".ljust(38 + len(BOLD) + len(R))
+                print(f"   {C(num, GREEN)}  {name}  {DIM}{e['desc']}{R}")
+
+    def _match(t):
+        t = t.lower()
+        return [e for e in entries
+                if t in e["name"].lower() or t in e["desc"].lower() or t in e["cat"].lower()]
+
+    term = ""
+    while True:
+        rows = entries if not term else _match(term)
+        if term and not rows:
+            warn(f"Nothing matches '{term}'. Showing everything."); term = ""; rows = entries
+        if term:
+            print(f"\n  {BOLD}{GREEN}🔎 {len(rows)} result(s) for '{term}'{R}   "
+                  f"{DIM}(type {BOLD}*{R}{DIM} to show all){R}")
+        _render(rows)
+        print(f"\n  {DIM}Pick numbers ('1'  '1,3,5'  '1-5'), or type a word to "
+              f"{BOLD}search{R}{DIM}. 'q' cancels.{R}")
+        try:
+            sel = input(f"\n  {BOLD}Pick {item_label} or search:{R} ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        low = sel.lower()
+        if not sel or low in ("q", "quit", "exit", "back"):
+            return None
+        if sel == "*" or low in ("all", "clear", "reset"):
+            term = ""; continue
+        if sel.startswith("/"):
+            term = sel[1:].strip(); continue
+        if not any(ch.isdigit() for ch in sel):
+            term = sel; continue
+        ids = _parse_app_selection(sel, max_id=len(entries))
+        if not ids:
+            if any(ch.isalpha() for ch in sel):
+                term = sel; continue
+            warn("Couldn't parse — use numbers like '1' or '1,5', or a word to search."); continue
+        return [e for e in entries if e["id"] in ids]
+
+
+def _offer_leftover_cleanup(removed):
+    """After uninstalling, offer to delete leftover *installer* files (~/Downloads
+    or home *.deb) matching the removed apps — pure wasted space, safe to delete.
+    Config folders in $HOME are deliberately left alone (that's your data)."""
+    import glob
+    targets = [e["target"] for e in removed if e["method"] == "apt"]
+    if not targets:
+        return
+    hits = set()
+    for t in targets:
+        for d in ("~/Downloads", "~/downloads", "~"):
+            base = os.path.expanduser(d)
+            hits.update(glob.glob(os.path.join(base, f"{t}*.deb")))
+            hits.update(glob.glob(os.path.join(base, f"{t.replace('-', '_')}*.deb")))
+    hits = sorted(h for h in hits if os.path.isfile(h))
+    if not hits:
+        return
+    total = sum(os.path.getsize(h) for h in hits)
+    print(f"\n  {DIM}Leftover installer file(s) from the removed app(s):{R}")
+    for h in hits:
+        print(f"   {DIM}• {h}  ({os.path.getsize(h)//(1024*1024)} MB){R}")
+    try:
+        c = input(f"\n  Delete these {len(hits)} file(s) to free ~{total//(1024*1024)} MB? [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if c not in ("y", "yes"):
+        info("Left the files in place."); return
+    freed = 0
+    for h in hits:
+        try:
+            sz = os.path.getsize(h); os.remove(h); freed += sz
+        except Exception as e:
+            warn(f"Couldn't delete {h}: {e}")
+    ok(f"Freed ~{freed//(1024*1024)} MB.")
+
+
+def _run_remove_picker(bctx):
+    """List the user-facing apps installed on this PC and uninstall the chosen
+    ones deterministically (no AI). System-critical packages are never listed."""
+    hdr("Remove Apps — installed on this PC")
+    print(f"\n  {DIM}Scanning installed apps…{R}")
+    apps = _installed_user_apps()
+    if not apps:
+        info("No removable user apps detected — system packages are hidden for safety.")
+        return
+    print(f"  {DIM}These are the apps installed on your PC. Pick the ones to uninstall — "
+          f"TuxGenie removes each by the right method (apt/snap/flatpak) and shows every "
+          f"command first. Essential system packages are hidden so nothing critical can "
+          f"be removed.{R}")
+    chosen = _select_entries(apps, "app(s) to remove")
+    if not chosen:
+        info("Cancelled — nothing was removed."); return
+    print(f"\n  {BOLD}{YELLOW}⚠  You're about to REMOVE {len(chosen)} app(s):{R}")
+    for e in chosen:
+        print(f"   {RED}•{R} {BOLD}{e['name']}{R}  {DIM}({e['desc']}){R}")
+    try:
+        confirm = input(f"\n  {BOLD}Uninstall these?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if confirm not in ("y", "yes"):
+        info("Cancelled — nothing was removed."); return
+
+    sudo_state, removed = {"pw": None}, []
+    for i, e in enumerate(chosen, 1):
+        section(f"[{i}/{len(chosen)}] Removing {e['name']}")
+        cmd, root = _remove_cmd_for(e["method"], e["target"], e["root"])
+        if not cmd or is_dangerous(cmd):
+            warn(f"No safe removal method for {e['name']} — skipped."); continue
+        print(f"  {DIM}$ {cmd}{R}")
+        pw = None
+        if root:
+            if sudo_state["pw"] is None:
+                sudo_state["pw"] = get_or_cache_sudo_password()
+            pw = sudo_state["pw"]
+        try:
+            rc, _, err_out = run_cmd_live(cmd, sudo_password=pw, timeout=900)
+        except KeyboardInterrupt:
+            warn("Cancelled. Skipping remaining app(s)."); return
+        if rc in (130, 143) or (rc == -1 and "Cancelled" in (err_out or "")):
+            warn("Cancelled. Skipping remaining app(s)."); return
+        if rc == 0:
+            ok(f"{e['name']} removed."); removed.append(e)
+        else:
+            warn(f"Couldn't remove {e['name']} (exit {rc}).")
+
+    if removed:
+        _offer_leftover_cleanup(removed)
+    if len(removed) > 1:
+        print(f"\n  {GREEN}{BOLD}✓ Removed {len(removed)} app(s).{R}")
+
+
+def feat_remove_apps(backend, bctx, slog):
+    """Remove Apps — the mirror of the install catalog. Lists the user-facing apps
+    actually installed (apt/snap/flatpak), hides system-critical packages and
+    TuxGenie itself, and uninstalls the chosen ones deterministically (no AI),
+    showing every command before it runs."""
+    _run_remove_picker(bctx)
+    _history_append("Remove apps (catalog)", "remove_apps")
+
+
 AI_CATALOG = [
     # ── AI Code Editors ───────────────────────────────────────────────────────
     {"id": 1,  "name": "Cursor",                "cat": "AI Editors",      "prompt": "Install Cursor, the AI-first code editor (a VS Code fork by Anysphere). Download the official Linux AppImage from https://cursor.com/download (x64), save it under ~/Applications, make it executable, and create a ~/.local/share/applications/cursor.desktop launcher so it shows in the app menu. Optionally also install the Cursor CLI agent with: curl https://cursor.com/install -fsS | bash.", "desc": "AI-first code editor (VS Code fork)"},
@@ -10650,6 +10943,7 @@ MENU_ITEMS = [
     ("40", "env",       "Dev Environments",   "Ready-to-run stacks: LAMP/LEMP, Node, Python, DBs, WordPress", feat_dev_environments),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
     ("77", "apps",      "Install Apps",       "200-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
+    ("78", "remove",    "Remove Apps",        "Uninstall installed apps — apt/snap/flatpak, no AI, system pkgs hidden", feat_remove_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
     ("99", "ai",        "AI Tools",           "22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI…", feat_install_ai_tools),
     # ── LETTER SHORTCUTS ─────────────────────────────────────────
@@ -10701,7 +10995,7 @@ def show_menu(compact=False):
         _row("⚙️", "Developers",  [("26","Script"),("27","Schedule"),("28","Docker"),("29","SSH"),("30","Git")])
         _row("🎮", "Gaming",      [("31","Gaming Setup")])
         _row("🧭", "Setups",      [("39","Suggest ⭐"),("32","New-to-Linux"),("33","Dev"),("34","Creator"),("35","Privacy"),("36","Student"),("37","Homelab"),("38","Access"),("40","Dev Envs")])
-        _row("🎁", "Catalogs",    [("77","Apps"),("88","Cloud"),("99","AI Tools")])
+        _row("🎁", "Catalogs",    [("77","Apps"),("78","Remove"),("88","Cloud"),("99","AI Tools")])
         print(f"\n  {DIM}{'─' * 65}{R}")
         print(f"  {C('[s]',GOLD,BOLD)} Settings · {C('[i]',LIME,BOLD)} Shell · {C('[u]',BCYAN,BOLD)} Update · {C('[h]',BMAGENTA,BOLD)} History · {C('[q]',BRED,BOLD)} Quit"
               f"   {DIM}· {BOLD}menu{R}{DIM} = this screen anytime  ·  {C('100',BOLD)}{DIM} = full detailed list{R}")
@@ -10771,6 +11065,7 @@ def show_menu(compact=False):
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
     _item("77", "Install Apps",        "🎁 200 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
+    _item("78", "Remove Apps",         "🗑  Uninstall apps you no longer need — safely, no AI")
     _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
     _item("99", "AI Tools",            "🤖 22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI, GPT4All…")
 

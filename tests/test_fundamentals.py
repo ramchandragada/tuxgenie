@@ -225,6 +225,56 @@ class TestCatalogFundamentals:
         assert root is False   # extracts to ~/Applications, no sudo
 
 
+class TestRemoveAppsFundamentals:
+    """The Remove-Apps catalog uninstalls software — its safety promises are
+    fundamental: never build a dangerous command, and never expose critical
+    system packages for one-click removal."""
+
+    def test_remove_command_builder(self):
+        assert tg._remove_cmd_for("apt", "vlc", True) == (
+            "sudo apt-get purge -y vlc && sudo apt-get autoremove -y", True)
+        assert tg._remove_cmd_for("snap", "android-studio", True) == (
+            "sudo snap remove android-studio", True)
+        # Flatpak needs sudo only for system-wide installs.
+        assert tg._remove_cmd_for("flatpak", "org.videolan.VLC", True) == (
+            "sudo flatpak uninstall -y org.videolan.VLC", True)
+        assert tg._remove_cmd_for("flatpak", "org.videolan.VLC", False) == (
+            "flatpak uninstall -y org.videolan.VLC", False)
+
+    def test_critical_packages_are_denylisted(self):
+        # Removing any of these would break boot, the desktop, package management,
+        # or TuxGenie itself — they must never be offered for removal.
+        for pkg in ("ubuntu-desktop", "gnome-shell", "gdm3", "systemd", "apt",
+                    "dpkg", "network-manager", "tuxgenie"):
+            assert pkg in tg._APP_REMOVE_DENYLIST
+
+    def test_remove_commands_are_not_dangerous(self):
+        for m, t, root in (("apt", "vlc", True), ("snap", "zed", True),
+                           ("flatpak", "org.x.Y", False)):
+            cmd, _ = tg._remove_cmd_for(m, t, root)
+            assert not tg.is_dangerous(cmd), cmd
+
+    def test_remove_apps_menu_registered(self):
+        by_num = {row[0]: row for row in tg.MENU_ITEMS}
+        assert "78" in by_num and callable(by_num["78"][-1])
+
+    def test_system_pkg_filter_hides_runtimes_keeps_apps(self):
+        # Runtimes / toolchains / shared sub-packages must be hidden from the
+        # Remove-Apps list; real user apps must stay visible.
+        for hidden in ("python3.11", "openjdk-21-jre", "libreoffice-common",
+                       "vim-common", "linux-image-generic", "fonts-noto"):
+            assert tg._looks_like_system_pkg(hidden), hidden
+        for kept in ("vlc", "gimp", "brave-browser", "libreoffice-writer", "digikam"):
+            assert not tg._looks_like_system_pkg(kept), kept
+
+    def test_installed_user_apps_runs_without_crashing(self):
+        # It shells out to dpkg/snap/flatpak; must degrade gracefully and never
+        # surface a denylisted critical package.
+        apps = tg._installed_user_apps()
+        assert isinstance(apps, list)
+        assert not [a for a in apps if a["target"] in tg._APP_REMOVE_DENYLIST]
+
+
 class TestMenuFundamentals:
     def test_menu_numbers_unique_and_dispatch_valid(self):
         nums = [row[0] for row in tg.MENU_ITEMS]
