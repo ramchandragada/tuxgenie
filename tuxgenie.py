@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.60.0"
+__version__ = "6.61.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8828,7 +8828,10 @@ _CATALOG_INSTALL = {
     "Calibre":          {"pkg": "calibre", "flatpak": "com.calibre_ebook.calibre"},
     "Steam":            {"flatpak": "com.valvesoftware.Steam"},
     "btop / htop":      {"pkg": "btop htop"},
-    "neofetch":         {"pkg": "neofetch"},
+    # neofetch was discontinued upstream (2024) and dropped from newer Ubuntu, so
+    # a bare `apt install neofetch` now fails there. Try it first (older distros
+    # still ship it), then its maintained forks neowofetch / fastfetch.
+    "neofetch":         {"pkg": ["neofetch", "neowofetch", "fastfetch"]},
     "Dev Essentials Pack": {"pkg": "build-essential curl wget git unzip htop tree"},
     "Kooha":            {"flatpak": "io.github.seadve.Kooha"},
     "Czkawka":          {"flatpak": "com.github.qarmin.czkawka"},
@@ -8837,6 +8840,15 @@ _CATALOG_INSTALL = {
     "Espanso":          {"flatpak": "org.espanso.Espanso"},
     "Variety":          {"pkg": "variety"},
     "Gear Lever":       {"flatpak": "it.mijorus.gearlever"},
+    # balenaEtcher ships an official .deb on its GitHub releases (no apt repo).
+    # Fetch the newest amd64 .deb and install it. If the download can't be found
+    # (network/API), the script exits non-zero and the installer falls back to AI.
+    "balenaEtcher":     {"script": "set -e; url=$(curl -fsSL "
+                                    "https://api.github.com/repos/balena-io/etcher/releases/latest "
+                                    "| grep -oE 'https://[^\"[:space:]]+_amd64\\.deb' | head -1); "
+                                    "[ -n \"$url\" ]; curl -fL -o /tmp/balena-etcher.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/balena-etcher.deb",
+                         "script_root": True},
     "yt-dlp":           {"pkg": "yt-dlp"},
     "Blanket":          {"flatpak": "com.rafaelmardojai.Blanket"},
     "Stellarium":       {"pkg": "stellarium", "flatpak": "org.stellarium.Stellarium"},
@@ -8888,8 +8900,7 @@ _CATALOG_INSTALL = {
 _CATALOG_GUIDED = {
     "Zoho Mail",        # per-machine PWA: detect browser, create --app launcher
     "DaVinci Resolve",  # free-registration download wall + GPU checks
-    "Ventoy",           # download latest release tarball + run its installer
-    "balenaEtcher",     # .deb/AppImage download from GitHub releases
+    "Ventoy",           # portable tarball GUI tool — no system-install package
 }
 
 
@@ -8944,16 +8955,22 @@ def _downloaded_installer_for(spec):
     cands = []
     if spec.get("deb"):
         cands.append(spec["deb"].get("pkg"))
-    if spec.get("pkg"):
-        cands.append(spec["pkg"])
+    pkg = spec.get("pkg")
+    if isinstance(pkg, list):        # rename-fallback list (e.g. neofetch/neowofetch)
+        cands += pkg
+    elif pkg:
+        cands.append(pkg)
     if spec.get("snap"):
         cands.append(spec["snap"])
     for pkg in cands:
         if not pkg:
             continue
-        hit = _local_deb_for(pkg)
-        if hit:
-            return hit
+        # A "pkg" may be a space-separated SET (e.g. "btop htop"); a downloaded
+        # .deb only ever matches a single package name, so try each token.
+        for name in str(pkg).split():
+            hit = _local_deb_for(name)
+            if hit:
+                return hit
     return None
 
 
@@ -8971,91 +8988,131 @@ def _flathub_install_cmd(fid):
     return " && ".join(parts)
 
 
-def _catalog_deterministic_cmd(entry, bctx):
-    """Return (command, requires_root) to install a catalog entry WITHOUT the AI,
-    or None if the entry has no deterministic method (a tiny set of genuinely
-    manual apps — see _CATALOG_GUIDED). Order is the user's install priority:
+def _native_pkg_cmd(pm, pkg):
+    """Install command for a native distro package. `pkg` is normally a string
+    (one package, or a space-separated set). It may also be a LIST of alternative
+    package names to try in order — for apps whose package was renamed or dropped
+    across releases (e.g. neofetch was discontinued upstream and replaced by
+    neowofetch, then fastfetch). On apt we chain them with `||` so the first one
+    that actually exists gets installed; every `sudo apt-get` still gets the
+    noninteractive + live-progress hardening (run_cmd_live rewrites each one)."""
+    if isinstance(pkg, list):
+        if pm == "apt":
+            return " || ".join(f"sudo apt-get install -y {p}" for p in pkg if p)
+        pkg = pkg[0]   # rename fallbacks are Debian-specific; other distros use the first
+    return {
+        "apt":    f"sudo apt-get install -y {pkg}",
+        "dnf":    f"sudo dnf install -y {pkg}",
+        "yum":    f"sudo yum install -y {pkg}",
+        "zypper": f"sudo zypper install -y {pkg}",
+        "pacman": f"sudo pacman -S --noconfirm {pkg}",
+        "apk":    f"sudo apk add {pkg}",
+    }.get(pm)
+
+
+def _catalog_install_plan(entry, bctx):
+    """Ordered list of deterministic install ATTEMPTS for a catalog entry:
+    [(command, requires_root, label), ...]. The installer runs them in order and
+    only falls back to the AI if EVERY one fails — so a single method missing a
+    package (e.g. apt no longer carries it) transparently tries the app's Flatpak
+    or Snap instead of dead-ending at the AI. Order is the user's install
+    priority:
       1. an already-downloaded installer file in ~/Downloads (never re-fetch)
       2. apt  — in-repo package, then the vendor's official .deb apt repo
       3. Flatpak (Flathub, auto-enabling Flatpak on apt systems)
       4. Snap
       5. official upstream installer script
-    Only if NONE apply does the caller fall back to the AI."""
+    Returns [] for an entry with no deterministic method (see _CATALOG_GUIDED)."""
     spec = _CATALOG_INSTALL.get(entry.get("name", ""))
     if not spec:
-        return None
+        return []
     pm = (bctx.get("pkg_mgr") or "").strip()
+    plan = []
     # 1. Already-downloaded installer file — install THAT, never re-download.
     #    (A downloaded .deb is only usable on apt/dpkg systems.)
     if pm == "apt":
         local = _downloaded_installer_for(spec)
         if local:
-            return (f"sudo apt-get install -y {shlex.quote(local)}", True)
+            plan.append((f"sudo apt-get install -y {shlex.quote(local)}", True, "downloaded installer"))
     # 2a. apt / native distro package.
     pkg = spec.get("pkg")
     if pkg:
-        native = {
-            "apt":    f"sudo apt-get install -y {pkg}",
-            "dnf":    f"sudo dnf install -y {pkg}",
-            "yum":    f"sudo yum install -y {pkg}",
-            "zypper": f"sudo zypper install -y {pkg}",
-            "pacman": f"sudo pacman -S --noconfirm {pkg}",
-            "apk":    f"sudo apk add {pkg}",
-        }.get(pm)
+        native = _native_pkg_cmd(pm, pkg)
         if native:
-            return (native, True)
+            plan.append((native, True, f"{pm or 'native'} package"))
     # 2b. Vendor's official apt repo (native .deb, keeps updating via apt).
     deb = spec.get("deb")
     if deb and pm == "apt" and shutil.which("curl") and shutil.which("gpg"):
-        return (_apt_vendor_repo_cmd(deb), True)
+        plan.append((_apt_vendor_repo_cmd(deb), True, "vendor apt repo"))
     # 3. Flathub — auto-enables Flatpak on apt systems, so it works with no AI.
     fid = spec.get("flatpak")
     if fid and (pm == "apt" or shutil.which("flatpak")):
-        return (_flathub_install_cmd(fid), True)
+        plan.append((_flathub_install_cmd(fid), True, "Flatpak (Flathub)"))
     # 4. Snap (classic confinement where the app needs it).
     snap = spec.get("snap")
     if snap and shutil.which("snap"):
         classic = " --classic" if spec.get("classic") else ""
-        return (f"sudo snap install {snap}{classic}", True)
+        plan.append((f"sudo snap install {snap}{classic}", True, "Snap"))
     # 5. Official upstream installer script (curl|sh, download .deb, etc).
     sc = spec.get("script")
     if sc:
-        return (sc, bool(spec.get("script_root")))
-    return None
+        plan.append((sc, bool(spec.get("script_root")), "installer script"))
+    return plan
+
+
+def _catalog_deterministic_cmd(entry, bctx):
+    """The PRIMARY deterministic install command for an entry as (command,
+    requires_root), or None if the entry has no deterministic method. Thin
+    back-compat wrapper over _catalog_install_plan (which the installer uses to
+    try every method before the AI)."""
+    plan = _catalog_install_plan(entry, bctx)
+    if not plan:
+        return None
+    cmd, requires_root, _label = plan[0]
+    return (cmd, requires_root)
 
 
 def _install_catalog_entry(entry, bctx, sudo_state):
-    """Try to install a catalog entry deterministically (no AI). Returns True on a
-    clean install, False if there's no deterministic method or it didn't complete
-    (the caller then falls back to the AI installer)."""
-    spec = _catalog_deterministic_cmd(entry, bctx)
-    if not spec:
+    """Install a catalog entry deterministically (no AI), trying EVERY known
+    method for the app in priority order (Downloads → apt → Flatpak → Snap →
+    script) until one succeeds. Returns True on a clean install; False only when
+    no method exists or every one failed (the caller then falls back to the AI).
+    A deliberate user cancel (Ctrl-C) stops immediately — it never advances to the
+    next method or to the AI."""
+    plan = _catalog_install_plan(entry, bctx)
+    if not plan:
         return False
-    cmd, requires_root = spec
-    if is_dangerous(cmd):          # installs never should be — but never bypass the gate
+    # Never bypass the danger gate, even for our own install recipes.
+    plan = [step for step in plan if not is_dangerous(step[0])]
+    if not plan:
         return False
-    print(f"  {DIM}$ {cmd}{R}")
-    # Browsers/large vendor apps are big downloads from the vendor's own server,
-    # which can be slow regardless of your connection. Set the expectation so the
-    # live timer reads as "working", not "stuck".
-    if "://" in cmd:
-        print(f"  {DIM}Downloading from the vendor — a browser is ~100-150 MB and can take "
-              f"a few minutes on a slow mirror. The % below is live; Ctrl-C to cancel.{R}")
-    pw = None
-    if requires_root:
-        if sudo_state.get("pw") is None:
-            sudo_state["pw"] = get_or_cache_sudo_password()
-        pw = sudo_state["pw"]
-    rc, _, err_out = run_cmd_live(cmd, sudo_password=pw, timeout=1800)
-    if rc == 0:
-        ok(f"{entry['name']} installed.")
-        return True
-    # A deliberate user cancel must STOP — never fall through to the AI and
-    # silently restart the very install they just cancelled. Ctrl-C on a piped
-    # shell command comes back as exit 130 (SIGINT) or 143 (SIGTERM), NOT -1.
-    if rc in (130, 143) or (rc == -1 and "Cancelled" in (err_out or "")):
-        raise KeyboardInterrupt
-    warn(f"Direct install didn't complete (exit {rc}) — letting the AI handle {entry['name']}.")
+    for idx, (cmd, requires_root, label) in enumerate(plan):
+        if idx:
+            warn(f"Trying {label} instead…")
+        print(f"  {DIM}$ {cmd}{R}")
+        # Browsers/large vendor apps are big downloads from the vendor's own
+        # server, which can be slow regardless of your connection. Set the
+        # expectation so the live timer reads as "working", not "stuck".
+        if "://" in cmd:
+            print(f"  {DIM}Downloading from the vendor — a browser is ~100-150 MB and can take "
+                  f"a few minutes on a slow mirror. The % below is live; Ctrl-C to cancel.{R}")
+        pw = None
+        if requires_root:
+            if sudo_state.get("pw") is None:
+                sudo_state["pw"] = get_or_cache_sudo_password()
+            pw = sudo_state["pw"]
+        rc, _, err_out = run_cmd_live(cmd, sudo_password=pw, timeout=1800)
+        if rc == 0:
+            ok(f"{entry['name']} installed.")
+            return True
+        # A deliberate user cancel must STOP — never fall through to another
+        # method or the AI and silently restart what they just cancelled. Ctrl-C
+        # on a piped shell command comes back as exit 130 (SIGINT) or 143
+        # (SIGTERM), NOT -1.
+        if rc in (130, 143) or (rc == -1 and "Cancelled" in (err_out or "")):
+            raise KeyboardInterrupt
+        last_rc = rc
+    warn(f"Direct install didn't complete (exit {last_rc}) — letting the AI handle {entry['name']}.")
     return False
 
 

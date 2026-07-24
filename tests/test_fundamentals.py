@@ -181,6 +181,38 @@ class TestCatalogFundamentals:
         scmd, _ = tg._catalog_deterministic_cmd({"name": "Zed"}, {"pkg_mgr": "apt"})
         assert "zed.dev/install.sh" in scmd
 
+    def test_catalog_pkg_list_tries_alternatives(self):
+        # A package renamed/discontinued upstream (neofetch → neowofetch → fastfetch)
+        # lists fallbacks; on apt they chain with || so the first that exists wins,
+        # instead of a bare `apt install neofetch` failing and dead-ending at the AI.
+        cmd, root = tg._catalog_deterministic_cmd({"name": "neofetch"}, {"pkg_mgr": "apt"})
+        assert root is True
+        assert cmd == ("sudo apt-get install -y neofetch || sudo apt-get install -y neowofetch "
+                       "|| sudo apt-get install -y fastfetch")
+        # On a non-apt distro (no || chaining) it uses the first candidate name.
+        dcmd, _ = tg._catalog_deterministic_cmd({"name": "neofetch"}, {"pkg_mgr": "dnf"})
+        assert dcmd == "sudo dnf install -y neofetch"
+
+    def test_install_plan_tries_all_methods_before_ai(self, monkeypatch):
+        # The catalog installer must try EVERY method for an app before the AI.
+        # VLC: apt package first, then its Flatpak — so if apt no longer carries
+        # the package, the Flatpak still installs it (no AI).
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        plan = tg._catalog_install_plan({"name": "VLC Media Player"}, {"pkg_mgr": "apt"})
+        cmds = [step[0] for step in plan]
+        assert cmds[0] == "sudo apt-get install -y vlc"
+        assert any("org.videolan.VLC" in c for c in cmds), "Flatpak fallback missing"
+        assert len(plan) >= 2
+
+    def test_balena_etcher_installs_without_ai(self, monkeypatch):
+        # balenaEtcher used to be in the AI-guided set; it now installs its official
+        # GitHub .deb deterministically (worst case the script fails and falls to AI).
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        assert "balenaEtcher" not in tg._CATALOG_GUIDED
+        cmd, root = tg._catalog_deterministic_cmd({"name": "balenaEtcher"}, {"pkg_mgr": "apt"})
+        assert "balena-io/etcher" in cmd and root is True
+
 
 class TestMenuFundamentals:
     def test_menu_numbers_unique_and_dispatch_valid(self):
