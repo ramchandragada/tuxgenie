@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.62.0"
+__version__ = "6.63.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1024,6 +1024,18 @@ _OAI_PROVIDERS = {
         # staying under the TPM limit.
         "max_tokens": 3072,
     },
+    "sambanova": {
+        "label": "SambaNova", "base_url": "https://api.sambanova.ai/v1",
+        "default_model": "Meta-Llama-3.3-70B-Instruct", "cfg_key": "sambanova_api_key",
+        "model_key": "sambanova_model", "keys_url": "https://cloud.sambanova.ai/apis",
+        "env": ("SAMBANOVA_API_KEY",), "free": True,
+        # SambaNova's free tier (no card, persists with no payment method linked)
+        # is capped per-DAY on tokens rather than a tight per-minute window, so a
+        # modest per-request output reservation keeps a session inside the daily
+        # budget. Default model is Llama 3.3 70B (per the Llama/gpt-oss policy;
+        # never its Qwen/DeepSeek options).
+        "max_tokens": 4096,
+    },
 }
 
 
@@ -1775,7 +1787,8 @@ def feat_set_api_key(backend):
     else:
         cur = "claude"
 
-    LABELS = {"claude": "Claude (Anthropic)", "gemini": "Google Gemini", "groq": "Groq"}
+    LABELS = {"claude": "Claude (Anthropic)", "gemini": "Google Gemini",
+              "groq": "Groq", "sambanova": "SambaNova"}
     HEAD = {
         "claude": ("Claude API Key", "https://console.anthropic.com",
                    "Sign-up is free. Anthropic charges by usage (a few cents/session)."),
@@ -1783,6 +1796,8 @@ def feat_set_api_key(backend):
                    "Gemini's free tier needs no credit card."),
         "groq":   ("Groq API Key", "https://console.groq.com/keys",
                    "Groq's free tier needs no credit card — and it's very fast."),
+        "sambanova": ("SambaNova API Key", "https://cloud.sambanova.ai/apis",
+                      "SambaNova's free tier needs no credit card (fast Llama models)."),
     }
     title, url, note = HEAD[cur]
     hdr(title)
@@ -1867,7 +1882,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
-    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq — both free · or Claude){R}")
+    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq · SambaNova — all free · or Claude){R}")
     print(f"  {C('[9]',CYAN)} Toggle auto-switch on limits  {DIM}(fall back between free providers — never Claude){R}")
     print(f"  {C('[10]',CYAN)} Toggle anonymous error reports  {DIM}(scrubbed crashes/AI errors — helps us fix bugs){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
@@ -1960,10 +1975,12 @@ def feat_settings(backend, bctx, slog):
         print(f"      {DIM}Get a free key: {CYAN}https://aistudio.google.com/apikey{R}")
         print(f"  {C('[2]',CYAN)} Groq — {GREEN}free tier, very fast{R} {DIM}(Llama models){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://console.groq.com/keys{R}")
-        print(f"  {C('[3]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        print(f"  {C('[3]',CYAN)} SambaNova — {GREEN}free tier, no credit card{R} {DIM}(Llama models){R}")
+        print(f"      {DIM}Get a free key: {CYAN}https://cloud.sambanova.ai/apis{R}")
+        print(f"  {C('[4]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
         print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
         try:
-            p = input(f"\n  {BOLD}Choose provider [1/2/3] (or Enter to cancel):{R} ").strip()
+            p = input(f"\n  {BOLD}Choose provider [1/2/3/4] (or Enter to cancel):{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             return
         if p == "1":
@@ -1996,6 +2013,21 @@ def feat_settings(backend, bctx, slog):
             save_cfg({"provider": "groq", "groq_api_key": k})
             ok("Switched to Groq (free tier). Restart TuxGenie for it to take effect.")
         elif p == "3":
+            print(f"  {DIM}Note: SambaNova's free tier is rate-limited (a daily token cap);")
+            print(f"  {DIM}check SambaNova's terms for how free-tier data is used. Prefer")
+            print(f"  {DIM}Claude for sensitive systems.{R}")
+            k = load_cfg().get("sambanova_api_key", "").strip()
+            if not k:
+                print(f"  {DIM}Free SambaNova key: {CYAN}https://cloud.sambanova.ai/apis{R}")
+                try:
+                    k = input("  Paste your SambaNova API key: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if not k:
+                    warn("No key entered — provider unchanged."); return
+            save_cfg({"provider": "sambanova", "sambanova_api_key": k})
+            ok("Switched to SambaNova (free tier). Restart TuxGenie for it to take effect.")
+        elif p == "4":
             k = load_cfg().get("api_key", "").strip()
             if not k:
                 print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
@@ -2014,7 +2046,7 @@ def feat_settings(backend, bctx, slog):
         save_cfg({"auto_switch_providers": new_state})
         if new_state:
             ok("Auto-switch ON — if a free provider hits its limit, TuxGenie falls back to your other free provider automatically (never Claude, so it never costs you).")
-            info("Needs a key saved for a second free provider (Gemini and/or Groq).")
+            info("Needs a key saved for a second free provider (Gemini, Groq and/or SambaNova).")
         else:
             ok("Auto-switch OFF — TuxGenie stays on your chosen provider and shows the limit message instead.")
     elif ch == "10":
