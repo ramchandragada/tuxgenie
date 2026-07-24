@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.57.0"
+__version__ = "6.58.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4767,6 +4767,20 @@ class _LiveProgress:
 
     def feed(self, raw_line):
         """Update progress hints from a raw output line."""
+        # apt's machine-readable progress (APT::Status-Fd=1):
+        #   "dlstatus:1:45.0000:Retrieving file 1 of 1"
+        #   "pmstatus:opera-stable:60.0000:Unpacking opera-stable"
+        # Gives a real live % during a piped download/install (no TTY progress bar).
+        m2 = re.match(r'(?:dl|pm)status:[^:]*:([\d.]+):(.*)', raw_line)
+        if m2:
+            try:
+                self.apt_pct = int(float(m2.group(1)))
+            except ValueError:
+                pass
+            desc = m2.group(2).strip()
+            if desc:
+                self.last_action = desc[:70]
+            return
         m = _APT_PCT_RE.search(raw_line)
         if m:
             try:
@@ -4798,13 +4812,26 @@ def _progress_stem(s: str) -> str:
 
 
 def _apt_noninteractive(cmd):
-    """Inject DEBIAN_FRONTEND=noninteractive THROUGH sudo on every apt/dpkg call in
-    a command, so a piped install can't hang on an interactive debconf prompt.
-    (Setting the env var in the parent process is not enough — sudo strips it.)"""
-    return re.sub(
-        r'\bsudo\s+((?:-S\s+)?)(apt-get|apt|aptitude|dpkg)\b',
+    """Harden apt/dpkg commands for piped, non-interactive execution:
+    1. Inject DEBIAN_FRONTEND=noninteractive THROUGH sudo (sudo strips the parent
+       env, so setting it in proc_env alone isn't enough) — stops a package with
+       an interactive debconf prompt from hanging forever waiting on a TTY.
+    2. Add `-o APT::Status-Fd=1` to apt/apt-get so it emits machine-readable
+       progress (dlstatus/pmstatus) even when piped — otherwise a big single-file
+       download shows NOTHING and looks frozen. The reader turns those into a live
+       percentage on the status line."""
+    # apt / apt-get: env + machine-readable progress.
+    cmd = re.sub(
+        r'\bsudo\s+((?:-S\s+)?)(apt-get|apt)\b',
+        r'sudo \1env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none '
+        r'\2 -o APT::Status-Fd=1',
+        cmd)
+    # dpkg / aptitude: env only (Status-Fd is apt-specific).
+    cmd = re.sub(
+        r'\bsudo\s+((?:-S\s+)?)(aptitude|dpkg)\b',
         r'sudo \1env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \2',
         cmd)
+    return cmd
 
 
 def run_cmd_live(cmd, sudo_password=None, timeout=120):
@@ -4891,10 +4918,19 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
                         continue
                     safe = _safe_line(line)
                     if safe.strip():
+                        # apt's machine-readable status lines (APT::Status-Fd=1) are
+                        # for the live % only — feed them to the spinner, never print
+                        # the raw "dlstatus:…/pmstatus:…" noise.
+                        if safe.startswith(("dlstatus:", "pmstatus:", "status:")):
+                            progress.feed(safe)
+                            continue
                         # Collapse apt/snap progress spam (hundreds of % / spinner
                         # frames) to ONE clean line per task — display only; the
-                        # captured buffer above keeps the raw output intact.
+                        # captured buffer above keeps the raw output intact. Still
+                        # feed EVERY frame so the live % keeps advancing even while
+                        # we suppress the duplicate output lines.
                         if _is_progress_line(safe):
+                            progress.feed(safe)
                             stem = _progress_stem(safe)
                             if stem and stem == _last_stem[0]:
                                 continue
@@ -4902,7 +4938,7 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
                             safe = (stem + " …") if stem else safe
                         else:
                             _last_stem[0] = None
-                        progress.feed(safe)
+                            progress.feed(safe)
                         progress.print_line(f"  {color}{safe}{R}")
         except Exception:
             pass
@@ -8735,6 +8771,12 @@ def _install_catalog_entry(entry, bctx, sudo_state):
     if is_dangerous(cmd):          # installs never should be — but never bypass the gate
         return False
     print(f"  {DIM}$ {cmd}{R}")
+    # Browsers/large vendor apps are big downloads from the vendor's own server,
+    # which can be slow regardless of your connection. Set the expectation so the
+    # live timer reads as "working", not "stuck".
+    if "://" in cmd:
+        print(f"  {DIM}Downloading from the vendor — a browser is ~100-150 MB and can take "
+              f"a few minutes on a slow mirror. The % below is live; Ctrl-C to cancel.{R}")
     pw = None
     if requires_root:
         if sudo_state.get("pw") is None:

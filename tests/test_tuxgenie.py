@@ -1731,15 +1731,29 @@ class TestDeterministicRemoveAndCancel:
 
     def test_apt_debconf_made_noninteractive_through_sudo(self):
         # The hang fix: sudo strips the env, so DEBIAN_FRONTEND must be injected
-        # via `env` on each apt/dpkg call. Opera's install must become non-interactive.
+        # via `env` on each apt/dpkg call; apt also gets Status-Fd for live progress.
         out = tg._apt_noninteractive("sudo apt-get install -y opera-stable")
-        assert out == "sudo env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none apt-get install -y opera-stable"
-        # Works with the -S password flag already injected, and on chained calls.
+        assert "sudo env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none apt-get" in out
+        assert "-o APT::Status-Fd=1" in out and out.endswith("install -y opera-stable")
+        # Applies to every apt call in a chain (env + progress each time).
         chained = tg._apt_noninteractive("sudo -S apt-get update && sudo apt-get install -y x")
         assert chained.count("DEBIAN_FRONTEND=noninteractive") == 2
+        assert chained.count("APT::Status-Fd=1") == 2
         assert "sudo -S env DEBIAN_FRONTEND=noninteractive" in chained
+        # dpkg gets the env fix but NOT Status-Fd (apt-only option).
+        dpkg = tg._apt_noninteractive("sudo dpkg -i x.deb")
+        assert "DEBIAN_FRONTEND=noninteractive" in dpkg and "APT::Status-Fd" not in dpkg
         # Non-apt sudo commands are untouched.
         assert tg._apt_noninteractive("sudo systemctl restart nginx") == "sudo systemctl restart nginx"
+
+    def test_live_progress_parses_apt_status_fd(self):
+        # apt's machine-readable progress must drive the live % so a piped download
+        # doesn't look frozen (it emits no TTY progress bar).
+        p = tg._LiveProgress()
+        p.feed("dlstatus:1:45.5000:Retrieving file 1 of 1")
+        assert p.apt_pct == 45 and "Retrieving" in p.last_action
+        p.feed("pmstatus:opera-stable:80.0000:Unpacking opera-stable")
+        assert p.apt_pct == 80 and "Unpacking" in p.last_action
 
     def test_nl_remove_is_deterministic_when_installed(self, monkeypatch):
         monkeypatch.setattr(tg.shutil, "which", lambda n: f"/usr/bin/{n}")
