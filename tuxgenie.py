@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.59.0"
+__version__ = "6.60.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8935,6 +8935,28 @@ def _local_deb_for(pkg):
     return max(pats, key=lambda p: os.path.getmtime(p))
 
 
+def _downloaded_installer_for(spec):
+    """Look in ~/Downloads (etc.) for an already-downloaded .deb that matches ANY
+    package name we know for this catalog app — the vendor .deb package, the native
+    distro package, or the snap name. Returns the newest matching file, or None.
+    This lets us install what the user already fetched instead of re-downloading
+    from a slow vendor mirror."""
+    cands = []
+    if spec.get("deb"):
+        cands.append(spec["deb"].get("pkg"))
+    if spec.get("pkg"):
+        cands.append(spec["pkg"])
+    if spec.get("snap"):
+        cands.append(spec["snap"])
+    for pkg in cands:
+        if not pkg:
+            continue
+        hit = _local_deb_for(pkg)
+        if hit:
+            return hit
+    return None
+
+
 def _flathub_install_cmd(fid):
     """Install a Flathub app deterministically — auto-enabling Flatpak + the
     Flathub remote first if they're missing (so a machine without Flatpak, like a
@@ -8952,14 +8974,24 @@ def _flathub_install_cmd(fid):
 def _catalog_deterministic_cmd(entry, bctx):
     """Return (command, requires_root) to install a catalog entry WITHOUT the AI,
     or None if the entry has no deterministic method (a tiny set of genuinely
-    manual apps — see _CATALOG_GUIDED). Order (Debian 'native-first'):
-    in-repo package → vendor .deb repo (reusing an already-downloaded .deb) →
-    snap → Flathub (auto-enabling Flatpak) → official installer script."""
+    manual apps — see _CATALOG_GUIDED). Order is the user's install priority:
+      1. an already-downloaded installer file in ~/Downloads (never re-fetch)
+      2. apt  — in-repo package, then the vendor's official .deb apt repo
+      3. Flatpak (Flathub, auto-enabling Flatpak on apt systems)
+      4. Snap
+      5. official upstream installer script
+    Only if NONE apply does the caller fall back to the AI."""
     spec = _CATALOG_INSTALL.get(entry.get("name", ""))
     if not spec:
         return None
     pm = (bctx.get("pkg_mgr") or "").strip()
-    # 1. Native distro package.
+    # 1. Already-downloaded installer file — install THAT, never re-download.
+    #    (A downloaded .deb is only usable on apt/dpkg systems.)
+    if pm == "apt":
+        local = _downloaded_installer_for(spec)
+        if local:
+            return (f"sudo apt-get install -y {shlex.quote(local)}", True)
+    # 2a. apt / native distro package.
     pkg = spec.get("pkg")
     if pkg:
         native = {
@@ -8972,22 +9004,19 @@ def _catalog_deterministic_cmd(entry, bctx):
         }.get(pm)
         if native:
             return (native, True)
-    # 2. Vendor's official apt repo (native .deb) — reuse a downloaded .deb first.
+    # 2b. Vendor's official apt repo (native .deb, keeps updating via apt).
     deb = spec.get("deb")
     if deb and pm == "apt" and shutil.which("curl") and shutil.which("gpg"):
-        local = _local_deb_for(deb["pkg"])
-        if local:
-            return (f"sudo apt-get install -y {shlex.quote(local)}", True)
         return (_apt_vendor_repo_cmd(deb), True)
-    # 3. Snap (Ubuntu's default; classic confinement where the app needs it).
+    # 3. Flathub — auto-enables Flatpak on apt systems, so it works with no AI.
+    fid = spec.get("flatpak")
+    if fid and (pm == "apt" or shutil.which("flatpak")):
+        return (_flathub_install_cmd(fid), True)
+    # 4. Snap (classic confinement where the app needs it).
     snap = spec.get("snap")
     if snap and shutil.which("snap"):
         classic = " --classic" if spec.get("classic") else ""
         return (f"sudo snap install {snap}{classic}", True)
-    # 4. Flathub — auto-enables Flatpak on apt systems, so it works with no AI.
-    fid = spec.get("flatpak")
-    if fid and (pm == "apt" or shutil.which("flatpak")):
-        return (_flathub_install_cmd(fid), True)
     # 5. Official upstream installer script (curl|sh, download .deb, etc).
     sc = spec.get("script")
     if sc:

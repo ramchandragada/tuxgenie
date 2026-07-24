@@ -156,6 +156,22 @@ class TestCatalogFundamentals:
         assert cmd == "sudo apt-get install -y /home/u/Downloads/opera-stable_133_amd64.deb"
         assert "deb.opera.com" not in cmd   # did NOT re-add the repo / re-download
 
+    def test_catalog_install_order_is_downloads_apt_flatpak_snap(self, monkeypatch):
+        # The user's install priority: a downloaded installer wins over everything;
+        # then apt; then Flatpak BEFORE Snap. Chromium ships both snap + flatpak, so
+        # it exercises the flatpak-before-snap rule.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        # No downloaded file → Flatpak is chosen over Snap.
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Chromium"}, {"pkg_mgr": "apt"})
+        assert "org.chromium.Chromium" in cmd and "snap install" not in cmd and root is True
+        # A downloaded .deb matching the app (by any known package name) wins first,
+        # even for an app whose normal method is Flatpak/Snap.
+        monkeypatch.setattr(tg, "_local_deb_for",
+                            lambda pkg: "/home/u/Downloads/chromium_120_amd64.deb" if pkg == "chromium" else None)
+        cmd2, _ = tg._catalog_deterministic_cmd({"name": "Chromium"}, {"pkg_mgr": "apt"})
+        assert cmd2 == "sudo apt-get install -y /home/u/Downloads/chromium_120_amd64.deb"
+
     def test_catalog_snap_and_script_methods(self, monkeypatch):
         monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
         # Snap app with classic confinement.
