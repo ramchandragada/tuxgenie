@@ -267,6 +267,16 @@ class TestRemoveAppsFundamentals:
         for kept in ("vlc", "gimp", "brave-browser", "libreoffice-writer", "digikam"):
             assert not tg._looks_like_system_pkg(kept), kept
 
+    def test_system_snaps_hidden_keeps_real_apps(self):
+        # Ubuntu system/infrastructure snaps (esp. cups = printing) must be hidden;
+        # genuine user-app snaps must stay removable.
+        for hidden in ("cups", "snap-store", "snapd-desktop-integration",
+                       "desktop-security-center", "firmware-updater",
+                       "prompting-client", "chromium-ffmpeg", "core24", "gnome-46-2404"):
+            assert tg._looks_like_system_snap(hidden), hidden
+        for kept in ("firefox", "vivaldi", "thunderbird", "rambox", "teams-for-linux"):
+            assert not tg._looks_like_system_snap(kept), kept
+
     def test_installed_user_apps_runs_without_crashing(self):
         # It shells out to dpkg/snap/flatpak; must degrade gracefully and never
         # surface a denylisted critical package.

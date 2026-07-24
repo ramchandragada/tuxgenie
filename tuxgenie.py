@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.65.0"
+__version__ = "6.66.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3924,10 +3924,30 @@ _APP_REMOVE_DENYLIST = {
 
 # Snap "apps" that are really bases/runtimes/themes — never user apps to remove.
 _SNAP_BASE_DENYLIST = {
+    # Runtimes / bases / themes.
     "core", "core18", "core20", "core22", "core24", "snapd", "bare",
     "gtk-common-themes", "gnome-3-28-1804", "gnome-3-34-1804", "gnome-3-38-2004",
     "gnome-42-2204", "gnome-46-2404", "mesa-2404", "ffmpeg-2404",
+    # Ubuntu system/infrastructure snaps — NOT user apps. Removing these can
+    # break printing (cups), the software store, codecs, or system integration.
+    "cups", "snap-store", "snapd-desktop-integration", "desktop-security-center",
+    "firmware-updater", "prompting-client", "chromium-ffmpeg",
 }
+
+
+def _looks_like_system_snap(name):
+    """True for snaps that are bases/runtimes or Ubuntu system infrastructure
+    rather than user-facing apps — kept out of the Remove-Apps list so a beginner
+    can't one-click uninstall printing, the store, or codec/integration snaps."""
+    if name in _SNAP_BASE_DENYLIST:
+        return True
+    if name.endswith(("-platform", "-ffmpeg")):
+        return True
+    if name.startswith(("firmware-", "prompting-", "desktop-security")):
+        return True
+    if "snapd" in name:
+        return True
+    return False
 
 
 def _looks_like_system_pkg(pkg):
@@ -4006,7 +4026,7 @@ def _installed_user_apps():
                 if not cols:
                     continue
                 nm = cols[0]
-                if nm in _SNAP_BASE_DENYLIST or nm.endswith("-platform"):
+                if _looks_like_system_snap(nm):
                     continue
                 ver = cols[1] if len(cols) > 1 else ""
                 _add(nm, "snap", nm, True, ("Snap · " + ver).strip(" ·"))
