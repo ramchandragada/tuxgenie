@@ -285,6 +285,35 @@ class TestRemoveAppsFundamentals:
         assert not [a for a in apps if a["target"] in tg._APP_REMOVE_DENYLIST]
 
 
+class TestLocalDebInstallFundamentals:
+    """When the user says 'install <app>, deb version, file downloaded', TuxGenie
+    must find the .deb they already downloaded instead of letting the AI guess a
+    filename or fabricate a download URL."""
+
+    def test_finds_matching_downloaded_deb(self, monkeypatch, tmp_path):
+        deb = tmp_path / "Notebook-3.7.5.deb"
+        deb.write_text("x")
+        monkeypatch.setattr(tg.os.path, "expanduser",
+                            lambda p: str(tmp_path) if p in ("~", "~/Downloads", "~/downloads") else p)
+        res = tg._local_deb_install_for_phrase("install zoho notebook deb version file downloaded")
+        assert res is not None
+        cmd, fname = res
+        assert fname == "Notebook-3.7.5.deb"
+        assert cmd.startswith("sudo apt-get install -y ") and cmd.endswith("Notebook-3.7.5.deb")
+
+    def test_no_deb_hint_does_not_trigger(self, monkeypatch, tmp_path):
+        (tmp_path / "Notebook-3.7.5.deb").write_text("x")
+        monkeypatch.setattr(tg.os.path, "expanduser", lambda p: str(tmp_path))
+        # No 'deb'/'downloaded' hint → leave it to the normal install/AI path.
+        assert tg._local_deb_install_for_phrase("install zoho notebook") is None
+
+    def test_no_matching_file_returns_none(self, monkeypatch, tmp_path):
+        (tmp_path / "google-chrome-stable_amd64.deb").write_text("x")
+        monkeypatch.setattr(tg.os.path, "expanduser", lambda p: str(tmp_path))
+        # Asked for notebook, only a chrome .deb present → no false match.
+        assert tg._local_deb_install_for_phrase("install zoho notebook deb downloaded") is None
+
+
 class TestMenuFundamentals:
     def test_menu_numbers_unique_and_dispatch_valid(self):
         nums = [row[0] for row in tg.MENU_ITEMS]

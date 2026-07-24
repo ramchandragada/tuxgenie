@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.67.0"
+__version__ = "6.68.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4248,6 +4248,47 @@ def _classify_cmd_risk(cmd, effective_word):
 
     return 'moderate'
 
+_INSTALL_INTENT_RE  = re.compile(r"\b(install|set\s*up|get)\b", re.I)
+_LOCAL_FILE_HINT_RE = re.compile(r"(\.deb\b|\bdeb\b|\bdownload(?:ed|s)?\b|\blocal file\b)", re.I)
+# Words to strip when working out which app the user means, so what's left is the
+# app name to match against a downloaded filename.
+_LOCAL_DEB_STOPWORDS = {
+    "i", "want", "to", "install", "set", "up", "get", "the", "a", "an", "my",
+    "this", "that", "on", "in", "pc", "computer", "laptop", "machine", "system",
+    "deb", "version", "file", "files", "downloaded", "download", "folder",
+    "downloads", "please", "local", "from", "of", "it", "already", "have", "has",
+    "using", "use", "with", "package", "and", "or", "for", "app", "application",
+}
+
+
+def _local_deb_install_for_phrase(text: str):
+    """If the user asked to install an app AND referenced a downloaded/.deb file,
+    find the matching .deb they already downloaded (~/Downloads, ~) and return
+    (install_cmd, filename) to install THAT with apt — which also resolves its
+    dependencies. Returns None if there's no download hint or no matching file,
+    so the AI never has to guess a filename or fabricate a download URL."""
+    import glob
+    t = (text or "").strip()
+    if not (_INSTALL_INTENT_RE.search(t) and _LOCAL_FILE_HINT_RE.search(t)):
+        return None
+    tokens = [w for w in re.findall(r"[a-z0-9]+", t.lower())
+              if w not in _LOCAL_DEB_STOPWORDS and len(w) >= 3]
+    if not tokens:
+        return None
+    debs = []
+    for d in ("~/Downloads", "~/downloads", "~"):
+        debs += glob.glob(os.path.join(os.path.expanduser(d), "*.deb"))
+    debs = [p for p in set(debs) if os.path.isfile(p)]
+    if not debs:
+        return None
+    debs.sort(key=lambda p: os.path.getmtime(p), reverse=True)   # newest first
+    for p in debs:
+        base = os.path.basename(p).lower()
+        if any(tok in base for tok in tokens):
+            return (f"sudo apt-get install -y {shlex.quote(p)}", os.path.basename(p))
+    return None
+
+
 def try_passthrough(user_input, session_log, backend=None, bctx=None):
     """
     If user_input looks like a shell command, run it directly without
@@ -4326,6 +4367,32 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
             err(f"Couldn't remove {label} (exit code {rc}). Try a terminal, or type "
                 f"{BOLD}!!{R} to ask the AI to investigate.")
         session_log.append({"command": rm_cmd, "rc": rc, "source": "app-remove"})
+        return True
+
+    # Install a .deb the user already downloaded: "install zoho notebook, deb
+    # version, file downloaded". Rather than let the AI guess a filename or
+    # fabricate a download URL (both of which fail), find the matching .deb in
+    # ~/Downloads and install THAT with apt (which resolves its dependencies too).
+    local_deb = _local_deb_install_for_phrase(cmd)
+    if local_deb:
+        deb_cmd, fname = local_deb
+        if is_dangerous(deb_cmd):        # defensive — never bypass the hard gate
+            return False
+        print(f"\n  {CYAN}⚡ Found {BOLD}{fname}{R}{CYAN} in your Downloads — installing it…{R}")
+        print(f"  {DIM}{deb_cmd}{R}")
+        try:
+            sudo_pw = get_or_cache_sudo_password()
+        except KeyboardInterrupt:
+            return True
+        rc, _out, _err = run_cmd_live(deb_cmd, sudo_password=sudo_pw, timeout=900)
+        if rc == 0:
+            ok(f"Installed {fname}.")
+        elif rc in (130, 143) or (rc == -1 and "Cancelled" in (_err or "")):
+            pass                          # user cancelled — just stop
+        else:
+            _last_failed = {"cmd": deb_cmd, "rc": rc, "stdout": _out[:1500], "stderr": (_err or "")[:600]}
+            err(f"Couldn't install {fname} (exit code {rc}). Type {BOLD}!!{R} to ask the AI to investigate.")
+        session_log.append({"command": deb_cmd, "rc": rc, "source": "local-deb-install"})
         return True
 
     # Distribution upgrade: "upgrade to 26.04 LTS" (NL) or direct do-release-upgrade command.
