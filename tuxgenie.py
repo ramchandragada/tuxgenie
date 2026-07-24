@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.56.0"
+__version__ = "6.57.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4080,8 +4080,8 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
         rc, _out, _err = run_cmd_live(rm_cmd, sudo_password=sudo_pw, timeout=600)
         if rc == 0:
             ok(f"{label} removed.")
-        elif rc == -1 and "Cancelled" in (_err or ""):
-            pass                     # user cancelled — just stop, no AI
+        elif rc in (130, 143) or (rc == -1 and "Cancelled" in (_err or "")):
+            pass                     # user cancelled (Ctrl-C / signal) — just stop
         else:
             err(f"Couldn't remove {label} (exit code {rc}). Try a terminal, or type "
                 f"{BOLD}!!{R} to ask the AI to investigate.")
@@ -4797,6 +4797,16 @@ def _progress_stem(s: str) -> str:
     return x.strip()
 
 
+def _apt_noninteractive(cmd):
+    """Inject DEBIAN_FRONTEND=noninteractive THROUGH sudo on every apt/dpkg call in
+    a command, so a piped install can't hang on an interactive debconf prompt.
+    (Setting the env var in the parent process is not enough — sudo strips it.)"""
+    return re.sub(
+        r'\bsudo\s+((?:-S\s+)?)(apt-get|apt|aptitude|dpkg)\b',
+        r'sudo \1env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \2',
+        cmd)
+
+
 def run_cmd_live(cmd, sudo_password=None, timeout=120):
     """Run a command and stream its output line-by-line in real time.
     Returns (returncode, stdout_str, stderr_str)."""
@@ -4804,6 +4814,11 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
     if sudo_password is not None:
         # sudo -S reads the password from stdin (one line)
         actual_cmd = re.sub(r'^(\s*sudo\s+)', r'\1-S ', actual_cmd, count=1)
+    # apt/dpkg honour debconf; a package with an interactive prompt (e.g. Opera's
+    # postinst) HANGS forever here because we pipe I/O — there's no TTY to answer
+    # it. DEBIAN_FRONTEND=noninteractive is set in proc_env below, but `sudo`
+    # strips the environment, so it never reaches apt. Inject it THROUGH sudo.
+    actual_cmd = _apt_noninteractive(actual_cmd)
 
     stdout_lines = []
     stderr_lines = []
@@ -8729,9 +8744,10 @@ def _install_catalog_entry(entry, bctx, sudo_state):
     if rc == 0:
         ok(f"{entry['name']} installed.")
         return True
-    # A deliberate user cancel (Ctrl-C) must STOP — never fall through to the AI
-    # and silently restart the very install they just cancelled.
-    if rc == -1 and "Cancelled" in (err_out or ""):
+    # A deliberate user cancel must STOP — never fall through to the AI and
+    # silently restart the very install they just cancelled. Ctrl-C on a piped
+    # shell command comes back as exit 130 (SIGINT) or 143 (SIGTERM), NOT -1.
+    if rc in (130, 143) or (rc == -1 and "Cancelled" in (err_out or "")):
         raise KeyboardInterrupt
     warn(f"Direct install didn't complete (exit {rc}) — letting the AI handle {entry['name']}.")
     return False

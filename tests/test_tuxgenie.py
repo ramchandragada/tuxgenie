@@ -1729,6 +1729,18 @@ class TestDeterministicRemoveAndCancel:
     """Removing a known app is deterministic (no AI), and a cancelled catalog
     install must stop cleanly instead of cascading back into the AI."""
 
+    def test_apt_debconf_made_noninteractive_through_sudo(self):
+        # The hang fix: sudo strips the env, so DEBIAN_FRONTEND must be injected
+        # via `env` on each apt/dpkg call. Opera's install must become non-interactive.
+        out = tg._apt_noninteractive("sudo apt-get install -y opera-stable")
+        assert out == "sudo env DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none apt-get install -y opera-stable"
+        # Works with the -S password flag already injected, and on chained calls.
+        chained = tg._apt_noninteractive("sudo -S apt-get update && sudo apt-get install -y x")
+        assert chained.count("DEBIAN_FRONTEND=noninteractive") == 2
+        assert "sudo -S env DEBIAN_FRONTEND=noninteractive" in chained
+        # Non-apt sudo commands are untouched.
+        assert tg._apt_noninteractive("sudo systemctl restart nginx") == "sudo systemctl restart nginx"
+
     def test_nl_remove_is_deterministic_when_installed(self, monkeypatch):
         monkeypatch.setattr(tg.shutil, "which", lambda n: f"/usr/bin/{n}")
         monkeypatch.setattr(tg, "_dpkg_installed", lambda p: p == "opera-stable")
@@ -1759,10 +1771,16 @@ class TestDeterministicRemoveAndCancel:
         assert tg._app_remove_cmd_for_phrase("remove system") is None
 
     def test_catalog_install_cancel_does_not_cascade_to_ai(self, monkeypatch):
-        # rc -1 + "Cancelled" from run_cmd_live == user pressed Ctrl-C → must raise
-        # KeyboardInterrupt (caller stops), NOT return False (which re-runs via AI).
+        # A user cancel must raise KeyboardInterrupt (caller stops), NOT return
+        # False (which re-runs via AI). Ctrl-C on a piped command returns exit 130
+        # (SIGINT) — and the older -1 "Cancelled" path must still work too.
         monkeypatch.setattr(tg.shutil, "which", lambda n: f"/usr/bin/{n}")
         monkeypatch.setattr(tg, "get_or_cache_sudo_password", lambda: "pw")
-        monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: (-1, "", "Cancelled by user"))
-        with pytest.raises(KeyboardInterrupt):
-            tg._install_catalog_entry({"name": "VLC Media Player"}, {"pkg_mgr": "apt"}, {"pw": None})
+        for ret in ((130, "", ""), (143, "", ""), (-1, "", "Cancelled by user")):
+            monkeypatch.setattr(tg, "run_cmd_live", lambda *a, _r=ret, **k: _r)
+            with pytest.raises(KeyboardInterrupt):
+                tg._install_catalog_entry({"name": "VLC Media Player"}, {"pkg_mgr": "apt"}, {"pw": None})
+        # A genuine failure (apt exit 100) must NOT raise — it returns False so the
+        # AI fallback can take over.
+        monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: (100, "", "E: broken"))
+        assert tg._install_catalog_entry({"name": "VLC Media Player"}, {"pkg_mgr": "apt"}, {"pw": None}) is False
