@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.61.0"
+__version__ = "6.62.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2543,6 +2543,18 @@ SAFETY:
 - Mark anything that changes system state as moderate or dangerous risk.
 - Set requires_root: true for anything needing sudo.
 - One action per tool call — small, understandable chunks.
+
+PRIVACY (never violate — this is the user's personal machine):
+- NEVER read, cat, grep, tail, or search the user's shell history (~/.bash_history,
+  ~/.zsh_history), credential or secret files (~/.git-credentials, ~/.ssh, ~/.gnupg,
+  .env, anything matching *token*/*secret*/*password*/*.key), the app-internal
+  ~/.claude or ~/.config folders, or personal documents (~/Documents, ~/Downloads,
+  spreadsheets, PDFs, .docx). They are private and irrelevant to fixing Linux.
+- To learn how an app is installed, use package tools (dpkg -l, snap list,
+  flatpak list, which, apt-cache) — never a crawl of the home directory or its history.
+- If the request is a bare number, a single stray token, or otherwise unclear, do
+  NOT go looking through files to guess what it means. Ask the user, in one short
+  sentence, what they'd like to do.
 
 REMOVING / UNINSTALLING APPS:
 - FIRST step: run a single broad search to find HOW the app is installed:
@@ -8840,6 +8852,18 @@ _CATALOG_INSTALL = {
     "Espanso":          {"flatpak": "org.espanso.Espanso"},
     "Variety":          {"pkg": "variety"},
     "Gear Lever":       {"flatpak": "it.mijorus.gearlever"},
+    # Ventoy is a portable tool (no apt/snap/flatpak): download the latest Linux
+    # tarball from its GitHub releases and extract it to ~/Applications. No sudo
+    # needed to install; the user runs VentoyGUI from that folder.
+    "Ventoy":           {"script": "set -e; ver=$(curl -fsSL "
+                                    "https://api.github.com/repos/ventoy/Ventoy/releases/latest "
+                                    "| grep -oE '\"tag_name\": *\"v[0-9.]+\"' | grep -oE '[0-9.]+' | head -1); "
+                                    "[ -n \"$ver\" ]; mkdir -p \"$HOME/Applications\"; "
+                                    "curl -fL -o /tmp/ventoy.tar.gz "
+                                    "\"https://github.com/ventoy/Ventoy/releases/download/v$ver/ventoy-$ver-linux.tar.gz\"; "
+                                    "tar xzf /tmp/ventoy.tar.gz -C \"$HOME/Applications\"; "
+                                    "echo \"Ventoy $ver installed to ~/Applications/ventoy-$ver — "
+                                    "open that folder and run VentoyGUI.x86_64 to launch it.\""},
     # balenaEtcher ships an official .deb on its GitHub releases (no apt repo).
     # Fetch the newest amd64 .deb and install it. If the download can't be found
     # (network/API), the script exits non-zero and the installer falls back to AI.
@@ -8900,7 +8924,6 @@ _CATALOG_INSTALL = {
 _CATALOG_GUIDED = {
     "Zoho Mail",        # per-machine PWA: detect browser, create --app launcher
     "DaVinci Resolve",  # free-registration download wall + GPU checks
-    "Ventoy",           # portable tarball GUI tool — no system-install package
 }
 
 
@@ -9094,8 +9117,8 @@ def _install_catalog_entry(entry, bctx, sudo_state):
         # server, which can be slow regardless of your connection. Set the
         # expectation so the live timer reads as "working", not "stuck".
         if "://" in cmd:
-            print(f"  {DIM}Downloading from the vendor — a browser is ~100-150 MB and can take "
-                  f"a few minutes on a slow mirror. The % below is live; Ctrl-C to cancel.{R}")
+            print(f"  {DIM}Downloading from the vendor — this can be 100+ MB and take a few "
+                  f"minutes on a slow connection. The % below is live; Ctrl-C to cancel.{R}")
         pw = None
         if requires_root:
             if sudo_state.get("pw") is None:
@@ -11027,6 +11050,17 @@ def main():
                 fn(backend, bctx, session_log)
                 save_session(session_log)
                 _history_append(feature_name_map.get(choice, choice), feature_kw_map.get(choice, choice))
+            elif choice.isdigit():
+                # A bare number that isn't a menu item is almost always a mis-typed
+                # menu pick — most often a catalog app id typed at the top level
+                # (the app catalog lives behind [77]). NEVER hand a lone number to
+                # the AI: it can't know what "58" means, so it would waste a call
+                # and, in the worst case, go poking through the filesystem to guess.
+                # Point the user to the right place instead.
+                info(f"'{choice}' isn't a menu number. Type {BOLD}77{R}{CYAN} to browse the "
+                     f"app catalog, {BOLD}menu{R}{CYAN} for the main screen, or just tell me "
+                     f"what you want — e.g. \"install vlc\".{R}")
+                continue
             else:
                 # Natural language → try direct passthrough first, then agentic AI
                 passed = try_passthrough(choice, session_log, backend, bctx)

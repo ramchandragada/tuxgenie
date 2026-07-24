@@ -213,6 +213,15 @@ class TestCatalogFundamentals:
         cmd, root = tg._catalog_deterministic_cmd({"name": "balenaEtcher"}, {"pkg_mgr": "apt"})
         assert "balena-io/etcher" in cmd and root is True
 
+    def test_ventoy_installs_without_ai(self, monkeypatch):
+        # Ventoy is a portable tarball tool — it now installs deterministically by
+        # extracting the latest GitHub release, instead of routing to the AI.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        assert "Ventoy" not in tg._CATALOG_GUIDED
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Ventoy"}, {"pkg_mgr": "apt"})
+        assert "ventoy/Ventoy" in cmd and "ventoy-$ver-linux.tar.gz" in cmd
+        assert root is False   # extracts to ~/Applications, no sudo
+
 
 class TestMenuFundamentals:
     def test_menu_numbers_unique_and_dispatch_valid(self):
