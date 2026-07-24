@@ -1723,3 +1723,46 @@ class TestTransparency:
             "Gemini free-tier data note must appear in both the setup wizard "
             "and the Settings provider switch"
         )
+
+
+class TestDeterministicRemoveAndCancel:
+    """Removing a known app is deterministic (no AI), and a cancelled catalog
+    install must stop cleanly instead of cascading back into the AI."""
+
+    def test_nl_remove_is_deterministic_when_installed(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda n: f"/usr/bin/{n}")
+        monkeypatch.setattr(tg, "_dpkg_installed", lambda p: p == "opera-stable")
+        monkeypatch.setattr(tg, "_snap_installed", lambda p: False)
+        monkeypatch.setattr(tg, "_flatpak_installed", lambda p: False)
+        res = tg._app_remove_cmd_for_phrase("remove opera")
+        assert res == ("sudo apt-get remove -y opera-stable", "opera-stable", True)
+
+    def test_nl_remove_uses_snap_when_thats_how_its_installed(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda n: f"/usr/bin/{n}")
+        monkeypatch.setattr(tg, "_dpkg_installed", lambda p: False)
+        monkeypatch.setattr(tg, "_snap_installed", lambda p: p == "opera")
+        monkeypatch.setattr(tg, "_flatpak_installed", lambda p: False)
+        cmd, label, root = tg._app_remove_cmd_for_phrase("uninstall opera")
+        assert cmd == "sudo snap remove opera" and root is True
+
+    def test_nl_remove_none_when_not_installed(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda n: f"/usr/bin/{n}")
+        monkeypatch.setattr(tg, "_dpkg_installed", lambda p: False)
+        monkeypatch.setattr(tg, "_snap_installed", lambda p: False)
+        monkeypatch.setattr(tg, "_flatpak_installed", lambda p: False)
+        assert tg._app_remove_cmd_for_phrase("remove opera") is None
+
+    def test_nl_remove_refuses_whole_system_words(self):
+        # Must never turn into a mass uninstall.
+        assert tg._app_remove_cmd_for_phrase("remove everything") is None
+        assert tg._app_remove_cmd_for_phrase("uninstall all packages") is None
+        assert tg._app_remove_cmd_for_phrase("remove system") is None
+
+    def test_catalog_install_cancel_does_not_cascade_to_ai(self, monkeypatch):
+        # rc -1 + "Cancelled" from run_cmd_live == user pressed Ctrl-C → must raise
+        # KeyboardInterrupt (caller stops), NOT return False (which re-runs via AI).
+        monkeypatch.setattr(tg.shutil, "which", lambda n: f"/usr/bin/{n}")
+        monkeypatch.setattr(tg, "get_or_cache_sudo_password", lambda: "pw")
+        monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: (-1, "", "Cancelled by user"))
+        with pytest.raises(KeyboardInterrupt):
+            tg._install_catalog_entry({"name": "VLC Media Player"}, {"pkg_mgr": "apt"}, {"pw": None})

@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.55.0"
+__version__ = "6.56.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3743,6 +3743,7 @@ _APP_UPDATE_ALIASES = {
     "spotify": "spotify-client", "slack": "slack-desktop", "discord": "discord",
     "zoom": "zoom", "teamviewer": "teamviewer", "anydesk": "anydesk",
     "warp": "warp-terminal", "zed": "zed", "obsidian": "obsidian",
+    "opera": "opera-stable", "vivaldi": "vivaldi-stable",
 }
 
 # Words that mean "the whole system", handled by _system_update_cmd_for_phrase /
@@ -3776,6 +3777,54 @@ def _snap_installed(name: str) -> bool:
         return r.returncode == 0
     except Exception:
         return False
+
+def _flatpak_installed(name: str) -> bool:
+    try:
+        r = subprocess.run(["flatpak", "list", "--app", "--columns=application"],
+                           capture_output=True, text=True, timeout=5)
+        return any(name.lower() in ln.lower() for ln in r.stdout.splitlines())
+    except Exception:
+        return False
+
+
+_NL_APP_REMOVE_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:remove|uninstall|delete)\s+(?:my\s+|the\s+)?"
+    r"([a-z0-9][a-z0-9 .+_-]{1,40}?)"
+    r"(?:\s+(?:app|application|editor|browser|program|package))?"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _app_remove_cmd_for_phrase(text: str):
+    """If the input means 'remove <a single named app>', return
+    (cmd, label, requires_root) that uninstalls ONLY that app via however it's
+    actually installed (apt / snap / flatpak). Otherwise None — so removal of a
+    known app never needs the AI. Only routes when the app is genuinely installed,
+    so it can't delete the wrong thing or a whole meta-package; whole-system words
+    ('everything', 'all packages') are refused and left to other handlers."""
+    m = _NL_APP_REMOVE_RE.match((text or "").strip())
+    if not m:
+        return None
+    name = m.group(1).strip().lower()
+    if name in _APP_UPDATE_STOPWORDS:
+        return None
+    candidates = []
+    alias = _APP_UPDATE_ALIASES.get(name)
+    if alias:
+        candidates.append(alias)
+    token = name.replace(" ", "-")
+    if token not in candidates:
+        candidates.append(token)
+    apt = bool(shutil.which("apt-get") or shutil.which("apt"))
+    for pkg in candidates:
+        if apt and _dpkg_installed(pkg):
+            return (f"sudo apt-get remove -y {pkg}", pkg, True)
+        if shutil.which("snap") and _snap_installed(pkg):
+            return (f"sudo snap remove {pkg}", pkg, True)
+        if shutil.which("flatpak") and _flatpak_installed(pkg):
+            return (f"flatpak uninstall -y {pkg}", pkg, False)
+    return None
 
 def _app_update_cmd_for_phrase(text: str):
     """If the input means 'update <a single named app>', return (cmd, label) that
@@ -4010,6 +4059,33 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
             err(f"Couldn't update {label} (exit code {rc}).")
             print(f"  {DIM}Type {BOLD}!!{R}{DIM} to ask AI to diagnose and fix this.{R}")
         session_log.append({"command": upd_cmd, "rc": rc, "source": "app-update"})
+        return True
+
+    # Single-app removal: "remove opera", "uninstall vlc" — uninstall JUST that
+    # app the way it's actually installed (apt/snap/flatpak), deterministically,
+    # so removing a known app never needs the AI.
+    app_rm = _app_remove_cmd_for_phrase(cmd)
+    if app_rm:
+        rm_cmd, label, needs_root = app_rm
+        if is_dangerous(rm_cmd):     # defensive — never bypass the hard gate
+            return False
+        print(f"\n  {CYAN}⚡ Removing {label}…{R}")
+        print(f"  {DIM}{rm_cmd}{R}")
+        sudo_pw = None
+        if needs_root:
+            try:
+                sudo_pw = get_or_cache_sudo_password()
+            except KeyboardInterrupt:
+                return True
+        rc, _out, _err = run_cmd_live(rm_cmd, sudo_password=sudo_pw, timeout=600)
+        if rc == 0:
+            ok(f"{label} removed.")
+        elif rc == -1 and "Cancelled" in (_err or ""):
+            pass                     # user cancelled — just stop, no AI
+        else:
+            err(f"Couldn't remove {label} (exit code {rc}). Try a terminal, or type "
+                f"{BOLD}!!{R} to ask the AI to investigate.")
+        session_log.append({"command": rm_cmd, "rc": rc, "source": "app-remove"})
         return True
 
     # Distribution upgrade: "upgrade to 26.04 LTS" (NL) or direct do-release-upgrade command.
@@ -8649,10 +8725,14 @@ def _install_catalog_entry(entry, bctx, sudo_state):
         if sudo_state.get("pw") is None:
             sudo_state["pw"] = get_or_cache_sudo_password()
         pw = sudo_state["pw"]
-    rc, _, _ = run_cmd_live(cmd, sudo_password=pw, timeout=1800)
+    rc, _, err_out = run_cmd_live(cmd, sudo_password=pw, timeout=1800)
     if rc == 0:
         ok(f"{entry['name']} installed.")
         return True
+    # A deliberate user cancel (Ctrl-C) must STOP — never fall through to the AI
+    # and silently restart the very install they just cancelled.
+    if rc == -1 and "Cancelled" in (err_out or ""):
+        raise KeyboardInterrupt
     warn(f"Direct install didn't complete (exit {rc}) — letting the AI handle {entry['name']}.")
     return False
 
