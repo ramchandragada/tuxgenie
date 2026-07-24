@@ -91,14 +91,24 @@ class TestCatalogFundamentals:
         assert len(tg.AI_CATALOG) >= 10
         self._check(tg.AI_CATALOG, ("id", "name", "cat", "prompt", "desc"))
 
-    def test_deterministic_install_map_names_are_real(self):
-        # Every key in the no-AI install map must be an actual catalog app name,
-        # otherwise a typo silently disables the deterministic path for that app.
+    def test_every_catalog_app_installs_without_ai(self):
+        # THE catalog promise: every app installs by a known method (no AI). Each
+        # app is either in _CATALOG_INSTALL (deterministic) or _CATALOG_GUIDED (a
+        # tiny, documented set that genuinely can't be automated). This test fails
+        # the build if a new catalog app is added without an install method.
         names = {e["name"] for e in tg.APP_CATALOG}
-        for k in tg._CATALOG_INSTALL:
-            assert k in names, f"_CATALOG_INSTALL key not in catalog: {k!r}"
+        covered = set(tg._CATALOG_INSTALL) | set(tg._CATALOG_GUIDED)
+        missing = names - covered
+        assert not missing, f"catalog apps with no install method (would need AI): {sorted(missing)}"
+        # No stray map/guided keys that aren't real catalog apps (catches typos).
+        assert not (set(tg._CATALOG_INSTALL) - names), sorted(set(tg._CATALOG_INSTALL) - names)
+        assert not (tg._CATALOG_GUIDED - names), sorted(tg._CATALOG_GUIDED - names)
+        # Keep the genuinely-manual set tiny — deterministic is the default.
+        assert len(tg._CATALOG_GUIDED) <= 8
+
+    def test_every_install_spec_has_a_usable_method(self):
         for k, spec in tg._CATALOG_INSTALL.items():
-            assert spec.get("pkg") or spec.get("flatpak") or spec.get("deb"), \
+            assert any(spec.get(m) for m in ("pkg", "flatpak", "deb", "snap", "script")), \
                 f"no install method for {k}"
             if spec.get("deb"):   # vendor apt-repo recipe must be complete
                 for field in ("name", "key", "repo", "pkg"):
@@ -108,33 +118,52 @@ class TestCatalogFundamentals:
         # A known in-repo app must produce a direct native command (no AI call).
         cmd = tg._catalog_deterministic_cmd({"name": "VLC Media Player"}, {"pkg_mgr": "apt"})
         assert cmd == ("sudo apt-get install -y vlc", True)
-        # An unknown app has no deterministic method → caller falls back to the AI.
+        # An unmapped/guided app has no deterministic method → caller uses the AI.
         assert tg._catalog_deterministic_cmd({"name": "Nonexistent App"}, {"pkg_mgr": "apt"}) is None
 
-    def test_catalog_flatpak_only_app_uses_flatpak_when_available(self, monkeypatch):
-        # A Flatpak-only app (no native .deb) installs via Flathub when flatpak exists…
-        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/flatpak")
+    def test_flatpak_app_auto_enables_flatpak_when_missing(self, monkeypatch):
+        # A Flatpak-only app must install with NO AI even on a machine without
+        # flatpak — by installing flatpak + adding Flathub first.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: None)   # nothing installed
         cmd, root = tg._catalog_deterministic_cmd({"name": "Signal Desktop"}, {"pkg_mgr": "apt"})
-        assert "flatpak install" in cmd and "org.signal.Signal" in cmd and root is False
-        # …but if flatpak isn't installed, defer to the AI (no partial/native guess).
-        monkeypatch.setattr(tg.shutil, "which", lambda name: None)
-        assert tg._catalog_deterministic_cmd({"name": "Signal Desktop"}, {"pkg_mgr": "apt"}) is None
+        assert "apt-get install -y flatpak" in cmd and "flathub" in cmd
+        assert "org.signal.Signal" in cmd and root is True
+        # If flatpak is already present, skip the install step.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/flatpak")
+        cmd2, _ = tg._catalog_deterministic_cmd({"name": "Signal Desktop"}, {"pkg_mgr": "apt"})
+        assert "apt-get install -y flatpak" not in cmd2 and "org.signal.Signal" in cmd2
 
-    def test_catalog_vendor_app_prefers_native_deb_over_snap_flatpak(self, monkeypatch):
-        # The user's point: when a vendor ships an official .deb repo, use it —
-        # never Snap/Flatpak. Opera on apt must add its signed repo and apt-install.
+    def test_catalog_vendor_app_prefers_native_deb(self, monkeypatch):
+        # When a vendor ships an official .deb repo, use it. Opera on apt adds its
+        # signed repo and apt-installs — no Snap/Flatpak.
         monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)   # nothing pre-downloaded
         cmd, root = tg._catalog_deterministic_cmd({"name": "Opera"}, {"pkg_mgr": "apt"})
         assert root is True
         assert "deb.opera.com" in cmd and "apt-get install -y opera-stable" in cmd
-        assert "signed-by=/etc/apt/keyrings/opera.gpg" in cmd
-        assert "flatpak" not in cmd and "snap install" not in cmd
+        assert "signed-by=/etc/apt/keyrings/opera.gpg" in cmd and "flatpak" not in cmd
         # Brave's key is already a binary keyring → download as-is, no gpg --dearmor.
         bcmd, _ = tg._catalog_deterministic_cmd({"name": "Brave Browser"}, {"pkg_mgr": "apt"})
         assert "gpg --dearmor" not in bcmd and "brave-browser-archive-keyring.gpg" in bcmd
-        # Off Debian (dnf), the apt-repo method doesn't apply → Flatpak fallback.
-        fcmd, froot = tg._catalog_deterministic_cmd({"name": "Opera"}, {"pkg_mgr": "dnf"})
-        assert "flatpak install" in fcmd and "com.opera.Opera" in fcmd and froot is False
+
+    def test_catalog_reuses_already_downloaded_deb(self, monkeypatch):
+        # If the vendor .deb is already in Downloads, install THAT (don't re-fetch
+        # from a slow mirror).
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(tg, "_local_deb_for",
+                            lambda pkg: "/home/u/Downloads/opera-stable_133_amd64.deb" if pkg == "opera-stable" else None)
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Opera"}, {"pkg_mgr": "apt"})
+        assert cmd == "sudo apt-get install -y /home/u/Downloads/opera-stable_133_amd64.deb"
+        assert "deb.opera.com" not in cmd   # did NOT re-add the repo / re-download
+
+    def test_catalog_snap_and_script_methods(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        # Snap app with classic confinement.
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Android Studio"}, {"pkg_mgr": "apt"})
+        assert cmd == "sudo snap install android-studio --classic" and root is True
+        # Script-installed app (no pkg/flatpak/snap).
+        scmd, _ = tg._catalog_deterministic_cmd({"name": "Zed"}, {"pkg_mgr": "apt"})
+        assert "zed.dev/install.sh" in scmd
 
 
 class TestMenuFundamentals:

@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.58.0"
+__version__ = "6.59.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8625,76 +8625,271 @@ def _distro_adapt_prompt(install_prompt: str, bctx: dict) -> str:
 #               and handles vendor apps that would otherwise need a 3rd-party repo).
 # Apps not listed here — and any listed app whose direct install fails — fall back
 # to the AI installer, so nothing regresses. Extend this map over time.
+# Deterministic install method for EVERY catalog app — the catalog's whole point
+# is that a known app installs by a known method, no AI. Methods (resolved in
+# _catalog_deterministic_cmd, Debian-native first):
+#   "pkg"     native distro package        "snap"    snap name (+ "classic": True)
+#   "deb"     vendor apt-repo recipe        "flatpak" Flathub id (auto-enables flatpak)
+#   "script"  official upstream installer  ("script_root": True if it needs sudo)
+# Derived from each entry's own catalog install note. A tiny set of apps that
+# genuinely cannot be automated (registration walls, etc.) live in _CATALOG_GUIDED
+# and use the AI's guided flow instead. The completeness test in
+# tests/test_fundamentals.py fails the build if any catalog app is in neither.
 _CATALOG_INSTALL = {
-    # In-repo desktop apps (native package name is stable across apt/dnf/pacman).
-    "VLC Media Player": {"pkg": "vlc", "flatpak": "org.videolan.VLC"},
-    "MPV":              {"pkg": "mpv", "flatpak": "io.mpv.Mpv"},
-    "GIMP":             {"pkg": "gimp", "flatpak": "org.gimp.GIMP"},
-    "Inkscape":         {"pkg": "inkscape", "flatpak": "org.inkscape.Inkscape"},
-    "Krita":            {"pkg": "krita", "flatpak": "org.kde.krita"},
-    "Audacity":         {"pkg": "audacity", "flatpak": "org.audacityteam.Audacity"},
-    "Kdenlive":         {"pkg": "kdenlive", "flatpak": "org.kde.kdenlive"},
-    "OBS Studio":       {"pkg": "obs-studio", "flatpak": "com.obsproject.Studio"},
-    "HandBrake":        {"pkg": "handbrake", "flatpak": "fr.handbrake.ghb"},
-    "Darktable":        {"pkg": "darktable", "flatpak": "org.darktable.Darktable"},
-    "Blender":          {"pkg": "blender", "flatpak": "org.blender.Blender"},
-    "Shotcut":          {"pkg": "shotcut", "flatpak": "org.shotcut.Shotcut"},
-    "Pinta":            {"pkg": "pinta", "flatpak": "com.github.PintaProject.Pinta"},
-    "digiKam":          {"pkg": "digikam", "flatpak": "org.kde.digikam"},
-    "RawTherapee":      {"pkg": "rawtherapee", "flatpak": "com.rawtherapee.RawTherapee"},
-    "Strawberry":       {"pkg": "strawberry"},
-    "Thunderbird":      {"pkg": "thunderbird", "flatpak": "org.mozilla.Thunderbird"},
-    "LibreOffice":      {"pkg": "libreoffice", "flatpak": "org.libreoffice.LibreOffice"},
-    "Git":              {"pkg": "git"},
-    "FileZilla":        {"pkg": "filezilla", "flatpak": "org.filezillaproject.Filezilla"},
-    "Rclone":           {"pkg": "rclone"},
-    "qBittorrent":      {"pkg": "qbittorrent", "flatpak": "org.qbittorrent.qBittorrent"},
-    "KeePassXC":        {"pkg": "keepassxc", "flatpak": "org.keepassxc.KeePassXC"},
-    "Flameshot":        {"pkg": "flameshot", "flatpak": "org.flameshot.Flameshot"},
-    "CopyQ":            {"pkg": "copyq", "flatpak": "com.github.hluk.copyq"},
-    "Calibre":          {"pkg": "calibre", "flatpak": "com.calibre_ebook.calibre"},
-    "GParted":          {"pkg": "gparted"},
-    "BleachBit":        {"pkg": "bleachbit"},
-    "Synaptic":         {"pkg": "synaptic"},
-    "Timeshift":        {"pkg": "timeshift"},
-    "Xournal++":        {"pkg": "xournalpp", "flatpak": "com.github.xournalpp.xournalpp"},
-    "Kitty Terminal":   {"pkg": "kitty"},
-    "Nextcloud Client": {"pkg": "nextcloud-desktop", "flatpak": "com.nextcloud.desktopclient.nextcloud"},
-    "Jellyfin Media Player": {"flatpak": "com.github.iwalton3.jellyfin-media-player"},
-    # Vendor apps with an OFFICIAL apt repo — install the native .deb (no Snap/
-    # Flatpak needed on Debian/Ubuntu; keeps updating via `apt upgrade`). Flatpak
-    # id is kept as the non-apt (other-distro) fallback.
-    "Opera":            {"deb": {"name": "opera", "key": "https://deb.opera.com/archive.key",
-                                 "repo": "https://deb.opera.com/opera-stable/ stable non-free",
-                                 "pkg": "opera-stable"},
-                         "flatpak": "com.opera.Opera"},
-    "Google Chrome":    {"deb": {"name": "google-chrome", "key": "https://dl.google.com/linux/linux_signing_key.pub",
-                                 "repo": "https://dl.google.com/linux/chrome/deb/ stable main",
-                                 "pkg": "google-chrome-stable"}},
+    # ── Browsers ──
     "Brave Browser":    {"deb": {"name": "brave-browser", "dearmor": False,
                                  "key": "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg",
                                  "repo": "https://brave-browser-apt-release.s3.brave.com/ stable main",
-                                 "pkg": "brave-browser"},
-                         "flatpak": "com.brave.Browser"},
+                                 "pkg": "brave-browser"}, "flatpak": "com.brave.Browser"},
+    "Google Chrome":    {"deb": {"name": "google-chrome", "key": "https://dl.google.com/linux/linux_signing_key.pub",
+                                 "repo": "https://dl.google.com/linux/chrome/deb/ stable main",
+                                 "pkg": "google-chrome-stable"}},
+    "Mozilla Firefox":  {"snap": "firefox", "flatpak": "org.mozilla.firefox"},
+    "Vivaldi":          {"deb": {"name": "vivaldi", "key": "https://repo.vivaldi.com/archive/linux_signing_key.pub",
+                                 "repo": "https://repo.vivaldi.com/archive/deb/ stable main",
+                                 "pkg": "vivaldi-stable"}},
+    "Ulaa Browser":     {"script": "wget -O /tmp/install-ulaa-browser.sh "
+                                    "'https://ulaa.com/release/linux/stable/install-ulaa-browser.sh?isDownload=true' "
+                                    "&& bash /tmp/install-ulaa-browser.sh"},
+    "LibreWolf":        {"flatpak": "io.gitlab.librewolf-community"},
+    "Zen Browser":      {"flatpak": "app.zen_browser.zen"},
+    "Tor Browser":      {"pkg": "torbrowser-launcher", "flatpak": "org.torproject.torbrowser-launcher"},
     "Microsoft Edge":   {"deb": {"name": "microsoft-edge", "key": "https://packages.microsoft.com/keys/microsoft.asc",
                                  "repo": "https://packages.microsoft.com/repos/edge stable main",
                                  "pkg": "microsoft-edge-stable"}},
-    "Visual Studio Code": {"deb": {"name": "vscode", "key": "https://packages.microsoft.com/keys/microsoft.asc",
-                                   "repo": "https://packages.microsoft.com/repos/code stable main",
-                                   "pkg": "code"}},
-    "Signal Desktop":   {"flatpak": "org.signal.Signal"},
+    "Opera":            {"deb": {"name": "opera", "key": "https://deb.opera.com/archive.key",
+                                 "repo": "https://deb.opera.com/opera-stable/ stable non-free",
+                                 "pkg": "opera-stable"}, "flatpak": "com.opera.Opera"},
+    "Chromium":         {"snap": "chromium", "flatpak": "org.chromium.Chromium"},
+    # ── Communication ──
+    "Slack":            {"snap": "slack", "flatpak": "com.slack.Slack"},
     "Discord":          {"flatpak": "com.discordapp.Discord"},
-    "Telegram Desktop": {"flatpak": "org.telegram.desktop"},
-    "Slack":            {"flatpak": "com.slack.Slack"},
-    "Spotify":          {"flatpak": "com.spotify.Client"},
-    "Obsidian":         {"flatpak": "md.obsidian.Obsidian"},
-    "Logseq":           {"flatpak": "com.logseq.Logseq"},
+    "Telegram Desktop": {"pkg": "telegram-desktop", "flatpak": "org.telegram.desktop"},
+    "Signal Desktop":   {"flatpak": "org.signal.Signal"},
+    "Zoom":             {"flatpak": "us.zoom.Zoom"},
+    "Microsoft Teams":  {"flatpak": "com.github.IsmaelMartinez.teams_for_linux"},
+    "Rambox":           {"flatpak": "com.rambox.Rambox"},
+    "Arattai":          {"flatpak": "in.arattai.Arattai"},
     "Element":          {"flatpak": "im.riot.Riot"},
-    "Zotero":           {"flatpak": "org.zotero.Zotero"},
+    "Ferdium":          {"flatpak": "org.ferdium.Ferdium"},
+    "WhatsApp (ZapZap)": {"flatpak": "com.rtosta.zapzap"},
+    "Session":          {"flatpak": "network.loki.Session"},
+    "Jami":             {"flatpak": "net.jami.Jami"},
+    # ── Office & Notes ──
+    "LibreOffice":      {"pkg": "libreoffice", "flatpak": "org.libreoffice.LibreOffice"},
     "OnlyOffice":       {"flatpak": "org.onlyoffice.desktopeditors"},
-    "Bruno":            {"flatpak": "com.usebruno.Bruno"},
-    "DBeaver":          {"flatpak": "io.dbeaver.DBeaverCommunity"},
+    "WPS Office":       {"flatpak": "com.wps.Office"},
+    "Thunderbird":      {"pkg": "thunderbird", "flatpak": "org.mozilla.Thunderbird"},
+    "Obsidian":         {"flatpak": "md.obsidian.Obsidian"},
+    "Joplin":           {"script": "wget -O - "
+                                    "https://raw.githubusercontent.com/laurent22/joplin/dev/Joplin_install_and_update.sh | bash"},
+    "Logseq":           {"flatpak": "com.logseq.Logseq"},
+    "Zotero":           {"flatpak": "org.zotero.Zotero"},
+    "Standard Notes":   {"flatpak": "org.standardnotes.standardnotes"},
+    "Xournal++":        {"pkg": "xournalpp", "flatpak": "com.github.xournalpp.xournalpp"},
+    "Anki":             {"flatpak": "net.ankiweb.Anki"},
+    "AppFlowy":         {"flatpak": "io.appflowy.AppFlowy"},
+    "Foliate":          {"pkg": "foliate", "flatpak": "com.github.johnfactotum.Foliate"},
+    "Evolution":        {"pkg": "evolution", "flatpak": "org.gnome.Evolution"},
+    "Super Productivity": {"flatpak": "com.super_productivity.SuperProductivity"},
+    "Planify":          {"flatpak": "io.github.alainm23.planify"},
+    # ── Media ──
+    "VLC Media Player": {"pkg": "vlc", "flatpak": "org.videolan.VLC"},
+    "MPV":              {"pkg": "mpv", "flatpak": "io.mpv.Mpv"},
+    "Spotify":          {"flatpak": "com.spotify.Client"},
     "Stremio":          {"flatpak": "com.stremio.Stremio"},
+    "Jellyfin Media Player": {"flatpak": "com.github.iwalton3.jellyfin-media-player"},
+    "Strawberry":       {"pkg": "strawberry", "flatpak": "org.strawberrymusicplayer.strawberry"},
+    "Kodi":             {"pkg": "kodi", "flatpak": "tv.kodi.Kodi"},
+    "Plex Media Server": {"deb": {"name": "plexmediaserver", "key": "https://downloads.plex.tv/plex-keys/PlexSign.key",
+                                  "repo": "https://downloads.plex.tv/repo/deb public main",
+                                  "pkg": "plexmediaserver"}},
+    "FreeTube":         {"flatpak": "io.freetubeapp.FreeTube"},
+    "Rhythmbox":        {"pkg": "rhythmbox", "flatpak": "org.gnome.Rhythmbox3"},
+    "Jellyfin Server":  {"script": "curl -fsSL https://repo.jellyfin.org/install-debuntu.sh | sudo bash",
+                         "script_root": True},
+    # ── AV Creation ──
+    "OBS Studio":       {"pkg": "obs-studio", "flatpak": "com.obsproject.Studio"},
+    "Kdenlive":         {"pkg": "kdenlive", "flatpak": "org.kde.kdenlive"},
+    "HandBrake":        {"pkg": "handbrake", "flatpak": "fr.handbrake.ghb"},
+    "Audacity":         {"pkg": "audacity", "flatpak": "org.audacityteam.Audacity"},
+    "Shotcut":          {"pkg": "shotcut", "flatpak": "org.shotcut.Shotcut"},
+    "OpenShot":         {"pkg": "openshot-qt", "flatpak": "org.openshot.OpenShot"},
+    "Ardour":           {"pkg": "ardour", "flatpak": "org.ardour.Ardour"},
+    "LMMS":             {"pkg": "lmms", "flatpak": "io.lmms.LMMS"},
+    "MuseScore":        {"flatpak": "org.musescore.MuseScore"},
+    # ── Graphics ──
+    "GIMP":             {"pkg": "gimp", "flatpak": "org.gimp.GIMP"},
+    "Inkscape":         {"pkg": "inkscape", "flatpak": "org.inkscape.Inkscape"},
+    "Krita":            {"pkg": "krita", "flatpak": "org.kde.krita"},
+    "Darktable":        {"pkg": "darktable", "flatpak": "org.darktable.Darktable"},
+    "Blender":          {"pkg": "blender", "flatpak": "org.blender.Blender"},
+    "Pinta":            {"pkg": "pinta", "flatpak": "com.github.PintaProject.Pinta"},
+    "digiKam":          {"pkg": "digikam", "flatpak": "org.kde.digikam"},
+    "RawTherapee":      {"pkg": "rawtherapee", "flatpak": "com.rawtherapee.RawTherapee"},
+    "Scribus":          {"pkg": "scribus", "flatpak": "net.scribus.Scribus"},
+    "Upscayl":          {"flatpak": "org.upscayl.Upscayl"},
+    "FreeCAD":          {"pkg": "freecad", "flatpak": "org.freecad.FreeCAD"},
+    "KiCad":            {"pkg": "kicad", "flatpak": "org.kicad.KiCad"},
+    "drawio Desktop":   {"flatpak": "com.jgraph.drawio.desktop"},
+    "Pencil2D":         {"flatpak": "org.pencil2d.Pencil2D"},
+    "LibreSprite":      {"flatpak": "com.github.libresprite.LibreSprite"},
+    # ── Remote Access ──
+    "AnyDesk":          {"deb": {"name": "anydesk", "key": "https://keys.anydesk.com/repos/DEB-GPG-KEY",
+                                 "repo": "http://deb.anydesk.com/ all main", "pkg": "anydesk"}},
+    "TeamViewer":       {"flatpak": "com.teamviewer.TeamViewer"},
+    "RustDesk":         {"flatpak": "com.rustdesk.RustDesk"},
+    "Remmina":          {"pkg": "remmina", "flatpak": "org.remmina.Remmina"},
+    "Moonlight":        {"flatpak": "com.moonlight_stream.Moonlight"},
+    # ── Developer ──
+    "Visual Studio Code": {"deb": {"name": "vscode", "key": "https://packages.microsoft.com/keys/microsoft.asc",
+                                   "repo": "https://packages.microsoft.com/repos/code stable main", "pkg": "code"}},
+    "Sublime Text":     {"deb": {"name": "sublimehq", "key": "https://download.sublimetext.com/sublimehq-pub.gpg",
+                                 "repo": "https://download.sublimetext.com/ apt/stable/", "pkg": "sublime-text"}},
+    "Git":              {"pkg": "git"},
+    "Docker":           {"script": "curl -fsSL https://get.docker.com | sudo sh", "script_root": True},
+    "Node.js (LTS)":    {"script": "curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - "
+                                    "&& sudo apt-get install -y nodejs", "script_root": True},
+    "DBeaver":          {"flatpak": "io.dbeaver.DBeaverCommunity"},
+    "Bruno":            {"flatpak": "com.usebruno.Bruno"},
+    "Postman":          {"snap": "postman", "flatpak": "com.getpostman.Postman"},
+    "Kitty Terminal":   {"pkg": "kitty"},
+    "Lazygit":          {"pkg": "lazygit"},
+    "Neovim":           {"pkg": "neovim", "flatpak": "io.neovim.nvim"},
+    "GitHub CLI (gh)":  {"deb": {"name": "githubcli", "dearmor": False,
+                                 "key": "https://cli.github.com/packages/githubcli-archive-keyring.gpg",
+                                 "repo": "https://cli.github.com/packages stable main", "pkg": "gh"}},
+    "Insomnia":         {"flatpak": "rest.insomnia.Insomnia"},
+    "Meld":             {"pkg": "meld", "flatpak": "org.gnome.meld"},
+    "Zellij":           {"script": "bash <(curl -L https://zellij.dev/launch)"},
+    "Tabby Terminal":   {"flatpak": "org.tabby.Tabby"},
+    "Podman":           {"pkg": "podman"},
+    "Modern CLI Pack":  {"pkg": "ripgrep fd-find bat eza fzf zoxide"},
+    "Alacritty":        {"pkg": "alacritty", "flatpak": "org.alacritty.Alacritty"},
+    "Beekeeper Studio": {"flatpak": "io.beekeeperstudio.Studio"},
+    "Zeal":             {"pkg": "zeal", "flatpak": "org.zealdocs.Zeal"},
+    "GitKraken":        {"flatpak": "com.axosoft.GitKraken"},
+    "Zed":              {"script": "curl -f https://zed.dev/install.sh | sh"},
+    "Helix":            {"snap": "helix", "classic": True},
+    "Warp":             {"deb": {"name": "warpdotdev", "dearmor": False,
+                                 "key": "https://releases.warp.dev/linux/keys/warp.asc",
+                                 "repo": "https://releases.warp.dev/linux/deb stable main", "pkg": "warp-terminal"}},
+    "Ghostty":          {"snap": "ghostty", "classic": True},
+    "Distrobox":        {"pkg": "distrobox"},
+    "Fish Shell":       {"pkg": "fish"},
+    "tmux":             {"pkg": "tmux"},
+    "Starship":         {"script": "curl -sS https://starship.rs/install.sh | sh -s -- -y", "script_root": True},
+    "JetBrains Toolbox": {"flatpak": "com.jetbrains.Toolbox"},
+    "Android Studio":   {"snap": "android-studio", "classic": True},
+    # ── System Tools ──
+    "Timeshift":        {"pkg": "timeshift"},
+    "Stacer":           {"pkg": "stacer"},
+    "GParted":          {"pkg": "gparted"},
+    "BleachBit":        {"pkg": "bleachbit"},
+    "Synaptic":         {"pkg": "synaptic"},
+    "Flatpak + Flathub": {"script": "sudo apt-get install -y flatpak && sudo flatpak remote-add "
+                                     "--if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo",
+                          "script_root": True},
+    "GNOME Tweaks":     {"pkg": "gnome-tweaks"},
+    "Cockpit":          {"pkg": "cockpit"},
+    "Fastfetch":        {"pkg": "fastfetch"},
+    "Flatseal":         {"flatpak": "com.github.tchx84.Flatseal"},
+    "Mission Center":   {"flatpak": "io.missioncenter.MissionCenter"},
+    "VirtualBox":       {"pkg": "virtualbox"},
+    "virt-manager":     {"pkg": "virt-manager qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils"},
+    "Extension Manager": {"flatpak": "com.mattjakeman.ExtensionManager"},
+    "TLP":              {"pkg": "tlp tlp-rdw"},
+    "GNOME Boxes":      {"pkg": "gnome-boxes", "flatpak": "org.gnome.Boxes"},
+    "Waydroid":         {"script": "curl -fsSL https://repo.waydro.id | sudo bash "
+                                    "&& sudo apt-get install -y waydroid", "script_root": True},
+    "OpenRGB":          {"flatpak": "org.openrgb.OpenRGB"},
+    "Solaar":           {"pkg": "solaar"},
+    "CoreCtrl":         {"pkg": "corectrl"},
+    "Warehouse":        {"flatpak": "io.github.flattool.Warehouse"},
+    # ── Files & Sync ──
+    "FileZilla":        {"pkg": "filezilla", "flatpak": "org.filezillaproject.Filezilla"},
+    "Rclone":           {"pkg": "rclone"},
+    "Nextcloud Client": {"pkg": "nextcloud-desktop", "flatpak": "com.nextcloud.desktopclient.nextcloud"},
+    "qBittorrent":      {"pkg": "qbittorrent", "flatpak": "org.qbittorrent.qBittorrent"},
+    "KeePassXC":        {"pkg": "keepassxc", "flatpak": "org.keepassxc.KeePassXC"},
+    "Syncthing":        {"pkg": "syncthing"},
+    "LocalSend":        {"flatpak": "org.localsend.localsend_app"},
+    "Cryptomator":      {"flatpak": "org.cryptomator.Cryptomator"},
+    "Bitwarden":        {"flatpak": "com.bitwarden.desktop"},
+    "Déjà Dup Backups": {"pkg": "deja-dup", "flatpak": "org.gnome.DejaDup"},
+    "KDE Connect":      {"pkg": "kdeconnect", "flatpak": "org.kde.kdeconnect"},
+    "Transmission":     {"pkg": "transmission-gtk", "flatpak": "com.transmissionbt.Transmission"},
+    "Deluge":           {"pkg": "deluge", "flatpak": "org.deluge_torrent.deluge"},
+    "Pika Backup":      {"flatpak": "org.gnome.World.PikaBackup"},
+    "Proton Pass":      {"flatpak": "me.proton.pass"},
+    # ── Utilities ──
+    "Flameshot":        {"pkg": "flameshot", "flatpak": "org.flameshot.Flameshot"},
+    "CopyQ":            {"pkg": "copyq", "flatpak": "com.github.hluk.copyq"},
+    "Calibre":          {"pkg": "calibre", "flatpak": "com.calibre_ebook.calibre"},
+    "Steam":            {"flatpak": "com.valvesoftware.Steam"},
+    "btop / htop":      {"pkg": "btop htop"},
+    "neofetch":         {"pkg": "neofetch"},
+    "Dev Essentials Pack": {"pkg": "build-essential curl wget git unzip htop tree"},
+    "Kooha":            {"flatpak": "io.github.seadve.Kooha"},
+    "Czkawka":          {"flatpak": "com.github.qarmin.czkawka"},
+    "OnionShare":       {"pkg": "onionshare", "flatpak": "org.onionshare.OnionShare"},
+    "Ulauncher":        {"flatpak": "io.ulauncher.Ulauncher"},
+    "Espanso":          {"flatpak": "org.espanso.Espanso"},
+    "Variety":          {"pkg": "variety"},
+    "Gear Lever":       {"flatpak": "it.mijorus.gearlever"},
+    "yt-dlp":           {"pkg": "yt-dlp"},
+    "Blanket":          {"flatpak": "com.rafaelmardojai.Blanket"},
+    "Stellarium":       {"pkg": "stellarium", "flatpak": "org.stellarium.Stellarium"},
+    # ── Gaming ──
+    "Lutris":           {"pkg": "lutris", "flatpak": "net.lutris.Lutris"},
+    "Heroic Games Launcher": {"flatpak": "com.heroicgameslauncher.hgl"},
+    "Bottles":          {"flatpak": "com.usebottles.bottles"},
+    "ProtonUp-Qt":      {"flatpak": "net.davidotek.pupgui2"},
+    "RetroArch":        {"pkg": "retroarch", "flatpak": "org.libretro.RetroArch"},
+    "Prism Launcher":   {"flatpak": "org.prismlauncher.PrismLauncher"},
+    "Cartridges":       {"flatpak": "page.kramo.Cartridges"},
+    # ── Security ──
+    "Gufw Firewall":    {"pkg": "gufw"},
+    "ClamAV + ClamTk":  {"pkg": "clamav clamtk"},
+    "Wireshark":        {"pkg": "wireshark"},
+    "VeraCrypt":        {"flatpak": "org.veracrypt.VeraCrypt"},
+    "Proton VPN":       {"deb": {"name": "protonvpn", "dearmor": False,
+                                 "key": "https://repo.protonvpn.com/debian/public_key.asc",
+                                 "repo": "https://repo.protonvpn.com/debian stable main",
+                                 "pkg": "proton-vpn-gnome-desktop"}},
+    "Mullvad VPN":      {"deb": {"name": "mullvad", "dearmor": False,
+                                 "key": "https://repository.mullvad.net/deb/mullvad-keyring.asc",
+                                 "repo": "https://repository.mullvad.net/deb/stable stable main",
+                                 "pkg": "mullvad-vpn"}},
+    "OpenSnitch":       {"pkg": "opensnitch python3-opensnitch-ui"},
+    # ── Free & open-source games ──
+    "SuperTuxKart":     {"pkg": "supertuxkart", "flatpak": "net.supertuxkart.SuperTuxKart"},
+    "0 A.D.":           {"pkg": "0ad", "flatpak": "com.play0ad.zeroad"},
+    "Luanti (Minetest)": {"pkg": "minetest", "flatpak": "org.luanti.luanti"},
+    "Battle for Wesnoth": {"pkg": "wesnoth", "flatpak": "org.wesnoth.Wesnoth"},
+    "Xonotic":          {"flatpak": "org.xonotic.Xonotic"},
+    "OpenTTD":          {"pkg": "openttd", "flatpak": "org.openttd.OpenTTD"},
+    "Warzone 2100":     {"pkg": "warzone2100", "flatpak": "net.wz2100.wz2100"},
+    "Veloren":          {"flatpak": "net.veloren.veloren"},
+    "Mindustry":        {"flatpak": "com.github.Anuken.Mindustry"},
+    "OpenRA":           {"flatpak": "net.openra.OpenRA"},
+    "Shattered Pixel Dungeon": {"flatpak": "com.shatteredpixel.shatteredpixeldungeon"},
+    "SuperTux":         {"pkg": "supertux", "flatpak": "org.supertuxproject.SuperTux"},
+    "Endless Sky":      {"pkg": "endless-sky", "flatpak": "io.github.endless_sky.endless_sky"},
+    "Hedgewars":        {"pkg": "hedgewars", "flatpak": "org.hedgewars.Hedgewars"},
+    "Widelands":        {"pkg": "widelands", "flatpak": "org.widelands.Widelands"},
+    "Freeciv":          {"pkg": "freeciv", "flatpak": "org.freeciv.gtk322"},
+    "Cataclysm: DDA":   {"flatpak": "org.cataclysmdda.CataclysmDDA"},
+}
+
+# Apps that genuinely cannot be a one-command install (registration walls, manual
+# downloads, or per-machine PWA setup). These intentionally use the AI's guided
+# flow — there is no deterministic method to offer. Kept deliberately tiny.
+_CATALOG_GUIDED = {
+    "Zoho Mail",        # per-machine PWA: detect browser, create --app launcher
+    "DaVinci Resolve",  # free-registration download wall + GPU checks
+    "Ventoy",           # download latest release tarball + run its installer
+    "balenaEtcher",     # .deb/AppImage download from GitHub releases
 }
 
 
@@ -8724,16 +8919,47 @@ def _apt_vendor_repo_cmd(d):
     ])
 
 
+def _local_deb_for(pkg):
+    """If the user already downloaded this vendor's .deb (e.g. it's sitting in
+    ~/Downloads), return its path so we install THAT instead of re-fetching from a
+    slow vendor mirror. Matches <pkg>*.deb, newest first."""
+    import glob
+    pats = []
+    for d in ("~/Downloads", "~/downloads", "~"):
+        base = os.path.expanduser(d)
+        pats += glob.glob(os.path.join(base, f"{pkg}*.deb"))
+        pats += glob.glob(os.path.join(base, f"{pkg.replace('-', '_')}*.deb"))
+    pats = [p for p in set(pats) if os.path.isfile(p)]
+    if not pats:
+        return None
+    return max(pats, key=lambda p: os.path.getmtime(p))
+
+
+def _flathub_install_cmd(fid):
+    """Install a Flathub app deterministically — auto-enabling Flatpak + the
+    Flathub remote first if they're missing (so a machine without Flatpak, like a
+    stock Ubuntu, still installs the app with no AI). System-wide so it shows up
+    in the app menu."""
+    parts = []
+    if not shutil.which("flatpak"):
+        parts.append("sudo apt-get install -y flatpak")
+    parts.append("sudo flatpak remote-add --if-not-exists flathub "
+                 "https://dl.flathub.org/repo/flathub.flatpakrepo")
+    parts.append(f"sudo flatpak install -y flathub {fid}")
+    return " && ".join(parts)
+
+
 def _catalog_deterministic_cmd(entry, bctx):
     """Return (command, requires_root) to install a catalog entry WITHOUT the AI,
-    or None if there's no known method (caller falls back to the AI installer).
-    Preference (Debian 'native-first'): in-repo package → the vendor's official
-    apt repo (native .deb) → Flathub via user-level Flatpak. Snap/Flatpak are
-    only reached when no native .deb method exists — a real .deb always wins."""
+    or None if the entry has no deterministic method (a tiny set of genuinely
+    manual apps — see _CATALOG_GUIDED). Order (Debian 'native-first'):
+    in-repo package → vendor .deb repo (reusing an already-downloaded .deb) →
+    snap → Flathub (auto-enabling Flatpak) → official installer script."""
     spec = _CATALOG_INSTALL.get(entry.get("name", ""))
     if not spec:
         return None
     pm = (bctx.get("pkg_mgr") or "").strip()
+    # 1. Native distro package.
     pkg = spec.get("pkg")
     if pkg:
         native = {
@@ -8746,17 +8972,26 @@ def _catalog_deterministic_cmd(entry, bctx):
         }.get(pm)
         if native:
             return (native, True)
-    # Vendor's official apt repo — the native .deb path, preferred over Flatpak on
-    # Debian-family systems (needs curl + gpg to add the signed repo).
+    # 2. Vendor's official apt repo (native .deb) — reuse a downloaded .deb first.
     deb = spec.get("deb")
     if deb and pm == "apt" and shutil.which("curl") and shutil.which("gpg"):
+        local = _local_deb_for(deb["pkg"])
+        if local:
+            return (f"sudo apt-get install -y {shlex.quote(local)}", True)
         return (_apt_vendor_repo_cmd(deb), True)
+    # 3. Snap (Ubuntu's default; classic confinement where the app needs it).
+    snap = spec.get("snap")
+    if snap and shutil.which("snap"):
+        classic = " --classic" if spec.get("classic") else ""
+        return (f"sudo snap install {snap}{classic}", True)
+    # 4. Flathub — auto-enables Flatpak on apt systems, so it works with no AI.
     fid = spec.get("flatpak")
-    if fid and shutil.which("flatpak"):
-        cmd = ("flatpak remote-add --user --if-not-exists flathub "
-               "https://flathub.org/repo/flathub.flatpakrepo && "
-               f"flatpak install --user --noninteractive flathub {fid}")
-        return (cmd, False)
+    if fid and (pm == "apt" or shutil.which("flatpak")):
+        return (_flathub_install_cmd(fid), True)
+    # 5. Official upstream installer script (curl|sh, download .deb, etc).
+    sc = spec.get("script")
+    if sc:
+        return (sc, bool(spec.get("script_root")))
     return None
 
 
