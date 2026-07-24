@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.54.0"
+__version__ = "6.55.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8534,8 +8534,27 @@ _CATALOG_INSTALL = {
     "Kitty Terminal":   {"pkg": "kitty"},
     "Nextcloud Client": {"pkg": "nextcloud-desktop", "flatpak": "com.nextcloud.desktopclient.nextcloud"},
     "Jellyfin Media Player": {"flatpak": "com.github.iwalton3.jellyfin-media-player"},
-    # Vendor apps not in the base repos — Flathub avoids the 3rd-party-repo dance.
-    "Brave Browser":    {"flatpak": "com.brave.Browser"},
+    # Vendor apps with an OFFICIAL apt repo — install the native .deb (no Snap/
+    # Flatpak needed on Debian/Ubuntu; keeps updating via `apt upgrade`). Flatpak
+    # id is kept as the non-apt (other-distro) fallback.
+    "Opera":            {"deb": {"name": "opera", "key": "https://deb.opera.com/archive.key",
+                                 "repo": "https://deb.opera.com/opera-stable/ stable non-free",
+                                 "pkg": "opera-stable"},
+                         "flatpak": "com.opera.Opera"},
+    "Google Chrome":    {"deb": {"name": "google-chrome", "key": "https://dl.google.com/linux/linux_signing_key.pub",
+                                 "repo": "https://dl.google.com/linux/chrome/deb/ stable main",
+                                 "pkg": "google-chrome-stable"}},
+    "Brave Browser":    {"deb": {"name": "brave-browser", "dearmor": False,
+                                 "key": "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg",
+                                 "repo": "https://brave-browser-apt-release.s3.brave.com/ stable main",
+                                 "pkg": "brave-browser"},
+                         "flatpak": "com.brave.Browser"},
+    "Microsoft Edge":   {"deb": {"name": "microsoft-edge", "key": "https://packages.microsoft.com/keys/microsoft.asc",
+                                 "repo": "https://packages.microsoft.com/repos/edge stable main",
+                                 "pkg": "microsoft-edge-stable"}},
+    "Visual Studio Code": {"deb": {"name": "vscode", "key": "https://packages.microsoft.com/keys/microsoft.asc",
+                                   "repo": "https://packages.microsoft.com/repos/code stable main",
+                                   "pkg": "code"}},
     "Signal Desktop":   {"flatpak": "org.signal.Signal"},
     "Discord":          {"flatpak": "com.discordapp.Discord"},
     "Telegram Desktop": {"flatpak": "org.telegram.desktop"},
@@ -8552,11 +8571,38 @@ _CATALOG_INSTALL = {
 }
 
 
+def _apt_vendor_repo_cmd(d):
+    """Build the modern, signed-by apt-repo install for a vendor app that ships an
+    official Debian repository (Opera, Chrome, Brave, …). This is the NATIVE .deb
+    install a Debian/Ubuntu user wants — no Snap/Flatpak needed — and it keeps the
+    app updating through `apt upgrade`. Uses a per-app keyring under
+    /etc/apt/keyrings (not deprecated apt-key). Needs curl + gpg."""
+    name    = d["name"]
+    keyring = f"/etc/apt/keyrings/{name}.gpg"
+    listf   = f"/etc/apt/sources.list.d/{name}.list"
+    arch    = d.get("arch", "amd64")
+    # ASCII-armored keys need dearmor; keys already in binary .gpg form are saved
+    # as-is. `install -m 0755 -d` is idempotent, so re-installs are safe.
+    fetch = (f"curl -fsSL {d['key']} | sudo gpg --dearmor -o {keyring}"
+             if d.get("dearmor", True)
+             else f"sudo curl -fsSL {d['key']} -o {keyring}")
+    return " && ".join([
+        "sudo install -m 0755 -d /etc/apt/keyrings",
+        fetch,
+        f"sudo chmod a+r {keyring}",
+        f"echo 'deb [arch={arch} signed-by={keyring}] {d['repo']}' "
+        f"| sudo tee {listf} > /dev/null",
+        "sudo apt-get update",
+        f"sudo apt-get install -y {d['pkg']}",
+    ])
+
+
 def _catalog_deterministic_cmd(entry, bctx):
     """Return (command, requires_root) to install a catalog entry WITHOUT the AI,
     or None if there's no known method (caller falls back to the AI installer).
-    Prefers the native distro package (Debian 'native-first'); otherwise a Flathub
-    app-id via user-level Flatpak when flatpak is present."""
+    Preference (Debian 'native-first'): in-repo package → the vendor's official
+    apt repo (native .deb) → Flathub via user-level Flatpak. Snap/Flatpak are
+    only reached when no native .deb method exists — a real .deb always wins."""
     spec = _CATALOG_INSTALL.get(entry.get("name", ""))
     if not spec:
         return None
@@ -8573,6 +8619,11 @@ def _catalog_deterministic_cmd(entry, bctx):
         }.get(pm)
         if native:
             return (native, True)
+    # Vendor's official apt repo — the native .deb path, preferred over Flatpak on
+    # Debian-family systems (needs curl + gpg to add the signed repo).
+    deb = spec.get("deb")
+    if deb and pm == "apt" and shutil.which("curl") and shutil.which("gpg"):
+        return (_apt_vendor_repo_cmd(deb), True)
     fid = spec.get("flatpak")
     if fid and shutil.which("flatpak"):
         cmd = ("flatpak remote-add --user --if-not-exists flathub "

@@ -98,7 +98,11 @@ class TestCatalogFundamentals:
         for k in tg._CATALOG_INSTALL:
             assert k in names, f"_CATALOG_INSTALL key not in catalog: {k!r}"
         for k, spec in tg._CATALOG_INSTALL.items():
-            assert spec.get("pkg") or spec.get("flatpak"), f"no install method for {k}"
+            assert spec.get("pkg") or spec.get("flatpak") or spec.get("deb"), \
+                f"no install method for {k}"
+            if spec.get("deb"):   # vendor apt-repo recipe must be complete
+                for field in ("name", "key", "repo", "pkg"):
+                    assert spec["deb"].get(field), f"{k} deb recipe missing {field}"
 
     def test_catalog_install_is_deterministic_without_ai(self):
         # A known in-repo app must produce a direct native command (no AI call).
@@ -107,14 +111,30 @@ class TestCatalogFundamentals:
         # An unknown app has no deterministic method → caller falls back to the AI.
         assert tg._catalog_deterministic_cmd({"name": "Nonexistent App"}, {"pkg_mgr": "apt"}) is None
 
-    def test_catalog_vendor_app_uses_flatpak_when_available(self, monkeypatch):
-        # A vendor app (not in base repos) installs via Flathub when flatpak exists…
+    def test_catalog_flatpak_only_app_uses_flatpak_when_available(self, monkeypatch):
+        # A Flatpak-only app (no native .deb) installs via Flathub when flatpak exists…
         monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/flatpak")
-        cmd, root = tg._catalog_deterministic_cmd({"name": "Brave Browser"}, {"pkg_mgr": "apt"})
-        assert "flatpak install" in cmd and "com.brave.Browser" in cmd and root is False
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Signal Desktop"}, {"pkg_mgr": "apt"})
+        assert "flatpak install" in cmd and "org.signal.Signal" in cmd and root is False
         # …but if flatpak isn't installed, defer to the AI (no partial/native guess).
         monkeypatch.setattr(tg.shutil, "which", lambda name: None)
-        assert tg._catalog_deterministic_cmd({"name": "Brave Browser"}, {"pkg_mgr": "apt"}) is None
+        assert tg._catalog_deterministic_cmd({"name": "Signal Desktop"}, {"pkg_mgr": "apt"}) is None
+
+    def test_catalog_vendor_app_prefers_native_deb_over_snap_flatpak(self, monkeypatch):
+        # The user's point: when a vendor ships an official .deb repo, use it —
+        # never Snap/Flatpak. Opera on apt must add its signed repo and apt-install.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Opera"}, {"pkg_mgr": "apt"})
+        assert root is True
+        assert "deb.opera.com" in cmd and "apt-get install -y opera-stable" in cmd
+        assert "signed-by=/etc/apt/keyrings/opera.gpg" in cmd
+        assert "flatpak" not in cmd and "snap install" not in cmd
+        # Brave's key is already a binary keyring → download as-is, no gpg --dearmor.
+        bcmd, _ = tg._catalog_deterministic_cmd({"name": "Brave Browser"}, {"pkg_mgr": "apt"})
+        assert "gpg --dearmor" not in bcmd and "brave-browser-archive-keyring.gpg" in bcmd
+        # Off Debian (dnf), the apt-repo method doesn't apply → Flatpak fallback.
+        fcmd, froot = tg._catalog_deterministic_cmd({"name": "Opera"}, {"pkg_mgr": "dnf"})
+        assert "flatpak install" in fcmd and "com.opera.Opera" in fcmd and froot is False
 
 
 class TestMenuFundamentals:
