@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.66.0"
+__version__ = "6.67.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -11015,7 +11015,8 @@ def show_menu(compact=False):
         _row("⚙️", "Developers",  [("26","Script"),("27","Schedule"),("28","Docker"),("29","SSH"),("30","Git")])
         _row("🎮", "Gaming",      [("31","Gaming Setup")])
         _row("🧭", "Setups",      [("39","Suggest ⭐"),("32","New-to-Linux"),("33","Dev"),("34","Creator"),("35","Privacy"),("36","Student"),("37","Homelab"),("38","Access"),("40","Dev Envs")])
-        _row("🎁", "Catalogs",    [("77","Apps"),("78","Remove"),("88","Cloud"),("99","AI Tools")])
+        _row("🎁", "Catalogs",    [("77","Apps"),("88","Cloud"),("99","AI Tools")])
+        _row("🗑️", "Uninstall",   [("78","Remove installed apps")])
         print(f"\n  {DIM}{'─' * 65}{R}")
         print(f"  {C('[s]',GOLD,BOLD)} Settings · {C('[i]',LIME,BOLD)} Shell · {C('[u]',BCYAN,BOLD)} Update · {C('[h]',BMAGENTA,BOLD)} History · {C('[q]',BRED,BOLD)} Quit"
               f"   {DIM}· {BOLD}menu{R}{DIM} = this screen anytime  ·  {C('100',BOLD)}{DIM} = full detailed list{R}")
@@ -11085,9 +11086,11 @@ def show_menu(compact=False):
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
     _item("77", "Install Apps",        "🎁 200 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
-    _item("78", "Remove Apps",         "🗑  Uninstall apps you no longer need — safely, no AI")
     _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
     _item("99", "AI Tools",            "🤖 22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI, GPT4All…")
+
+    _cat(BG_RED, "🗑️ ", "UNINSTALL", "Remove software — separate from installing, always asks first")
+    _item("78", "Remove Apps",         "Uninstall installed apps you no longer need — safely, no AI")
 
     print(f"""
   {DIM}{'─' * 65}{R}
