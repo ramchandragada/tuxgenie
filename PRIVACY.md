@@ -16,7 +16,7 @@ and we'll fix it.
   read the whole thing — it's one file, `tuxgenie.py`.
 - **Apart from opt-in error reports (below), nothing about your machine is sent
   anywhere unless you run an AI task** — and then it goes *only* to the AI
-  provider you chose (Claude, Gemini, Groq, or SambaNova), never to us.
+  provider you chose (Claude, Gemini, Groq, SambaNova, or OpenRouter), never to us.
 - **Your API key and sudo password stay on your machine.** The API key is saved
   with owner-only permissions (`chmod 600`); your sudo password is held in
   memory for the session only and is never written to disk or sent anywhere.
@@ -53,12 +53,14 @@ middle and keeps no copy off your machine.
 | **Google Gemini** | **Free tier, no credit card** | On the **free tier**, Google may use your prompts and the AI's responses **to improve their products**, and staff may review them. Great for everyday use; **prefer Claude (or a paid Gemini plan) for confidential machines.** |
 | **Groq** | **Free tier, no credit card** | Very fast (open Llama models). Check [Groq's terms](https://groq.com/terms-of-use/) for how free-tier data is handled; as with any free tier, **prefer Claude for confidential machines.** |
 | **SambaNova** | **Free tier, no credit card** | Fast (open Llama models). Check [SambaNova's terms](https://sambanova.ai/terms-and-conditions) for how free-tier data is handled; as with any free tier, **prefer Claude for confidential machines.** |
+| **OpenRouter** | **Free tier, no credit card** | One key routes to many open models (TuxGenie pins a free Llama model). Check [OpenRouter's privacy](https://openrouter.ai/privacy) for how free-tier data is handled; as with any free tier, **prefer Claude for confidential machines.** |
 
 Provider terms can change — always the current source of truth:
 [Anthropic Privacy](https://www.anthropic.com/legal/privacy) ·
 [Google Gemini API terms](https://ai.google.dev/gemini-api/terms) ·
 [Groq terms](https://groq.com/terms-of-use/) ·
-[SambaNova terms](https://sambanova.ai/terms-and-conditions).
+[SambaNova terms](https://sambanova.ai/terms-and-conditions) ·
+[OpenRouter privacy](https://openrouter.ai/privacy).
 
 ## What stays on your machine
 
@@ -119,7 +121,7 @@ installation — a corrupted or tampered download is refused, never installed.
 
 ## Your controls, in one place
 
-- **Settings → Switch AI provider** — Claude, Gemini, Groq, or SambaNova, anytime.
+- **Settings → Switch AI provider** — Claude, Gemini, Groq, SambaNova, or OpenRouter, anytime.
 - **Settings → Toggle anonymous error reports** — on/off, off by default.
 - **Settings → Toggle cross-session memory** — stop saving anything locally.
 - **Settings → Clear stored memory** — wipe the action log and fingerprint.

@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.63.0"
+__version__ = "6.64.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1036,6 +1036,21 @@ _OAI_PROVIDERS = {
         # never its Qwen/DeepSeek options).
         "max_tokens": 4096,
     },
+    "openrouter": {
+        "label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1",
+        # Pin a specific FREE, non-Chinese model (":free" = $0 tokens). We do NOT
+        # auto-resolve from OpenRouter's /models list — it also lists paid and
+        # Qwen/DeepSeek models, and only ":free" IDs are free. Meta Llama 3.3 70B
+        # fits the Llama/gpt-oss-only policy. If this ":free" id is ever retired,
+        # the user can pick another in Settings.
+        "default_model": "meta-llama/llama-3.3-70b-instruct:free",
+        "cfg_key": "openrouter_api_key", "model_key": "openrouter_model",
+        "keys_url": "https://openrouter.ai/keys",
+        "env": ("OPENROUTER_API_KEY",), "free": True,
+        # Free tier: no credit card, ~20 req/min and ~50 req/day. Keep the output
+        # reservation modest so a single agentic step stays well inside limits.
+        "max_tokens": 4096,
+    },
 }
 
 
@@ -1788,7 +1803,7 @@ def feat_set_api_key(backend):
         cur = "claude"
 
     LABELS = {"claude": "Claude (Anthropic)", "gemini": "Google Gemini",
-              "groq": "Groq", "sambanova": "SambaNova"}
+              "groq": "Groq", "sambanova": "SambaNova", "openrouter": "OpenRouter"}
     HEAD = {
         "claude": ("Claude API Key", "https://console.anthropic.com",
                    "Sign-up is free. Anthropic charges by usage (a few cents/session)."),
@@ -1798,6 +1813,8 @@ def feat_set_api_key(backend):
                    "Groq's free tier needs no credit card — and it's very fast."),
         "sambanova": ("SambaNova API Key", "https://cloud.sambanova.ai/apis",
                       "SambaNova's free tier needs no credit card (fast Llama models)."),
+        "openrouter": ("OpenRouter API Key", "https://openrouter.ai/keys",
+                       "OpenRouter's free models need no credit card (one key, many models)."),
     }
     title, url, note = HEAD[cur]
     hdr(title)
@@ -1819,6 +1836,8 @@ def feat_set_api_key(backend):
         kind = "gemini"
     elif re.match(r'^gsk_[A-Za-z0-9]{20,}$', key):
         kind = "groq"
+    elif re.match(r'^sk-or-[A-Za-z0-9\-]{20,}$', key):
+        kind = "openrouter"
     else:
         kind = None
 
@@ -1829,6 +1848,7 @@ def feat_set_api_key(backend):
             "claude": {"provider": "claude", "backend": "claude", "api_key": key},
             "gemini": {"provider": "gemini", "gemini_api_key": key},
             "groq":   {"provider": "groq", "groq_api_key": key},
+            "openrouter": {"provider": "openrouter", "openrouter_api_key": key},
         }
         save_cfg(cfgmap[kind])
         ok(f"That's a {LABELS[kind]} key — saved and switched to {LABELS[kind]}.")
@@ -1882,7 +1902,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
-    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq · SambaNova — all free · or Claude){R}")
+    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq · SambaNova · OpenRouter — all free · or Claude){R}")
     print(f"  {C('[9]',CYAN)} Toggle auto-switch on limits  {DIM}(fall back between free providers — never Claude){R}")
     print(f"  {C('[10]',CYAN)} Toggle anonymous error reports  {DIM}(scrubbed crashes/AI errors — helps us fix bugs){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
@@ -1977,10 +1997,12 @@ def feat_settings(backend, bctx, slog):
         print(f"      {DIM}Get a free key: {CYAN}https://console.groq.com/keys{R}")
         print(f"  {C('[3]',CYAN)} SambaNova — {GREEN}free tier, no credit card{R} {DIM}(Llama models){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://cloud.sambanova.ai/apis{R}")
-        print(f"  {C('[4]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        print(f"  {C('[4]',CYAN)} OpenRouter — {GREEN}free tier, no credit card{R} {DIM}(one key, many models){R}")
+        print(f"      {DIM}Get a free key: {CYAN}https://openrouter.ai/keys{R}")
+        print(f"  {C('[5]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
         print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
         try:
-            p = input(f"\n  {BOLD}Choose provider [1/2/3/4] (or Enter to cancel):{R} ").strip()
+            p = input(f"\n  {BOLD}Choose provider [1/2/3/4/5] (or Enter to cancel):{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             return
         if p == "1":
@@ -2028,6 +2050,21 @@ def feat_settings(backend, bctx, slog):
             save_cfg({"provider": "sambanova", "sambanova_api_key": k})
             ok("Switched to SambaNova (free tier). Restart TuxGenie for it to take effect.")
         elif p == "4":
+            print(f"  {DIM}Note: OpenRouter's free models are rate-limited (~20/min, ~50/day);")
+            print(f"  {DIM}check OpenRouter's terms for how free-tier data is used. Prefer")
+            print(f"  {DIM}Claude for sensitive systems.{R}")
+            k = load_cfg().get("openrouter_api_key", "").strip()
+            if not k:
+                print(f"  {DIM}Free OpenRouter key: {CYAN}https://openrouter.ai/keys{R}")
+                try:
+                    k = input("  Paste your OpenRouter API key (sk-or-…): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if not k:
+                    warn("No key entered — provider unchanged."); return
+            save_cfg({"provider": "openrouter", "openrouter_api_key": k})
+            ok("Switched to OpenRouter (free tier). Restart TuxGenie for it to take effect.")
+        elif p == "5":
             k = load_cfg().get("api_key", "").strip()
             if not k:
                 print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
@@ -2046,7 +2083,7 @@ def feat_settings(backend, bctx, slog):
         save_cfg({"auto_switch_providers": new_state})
         if new_state:
             ok("Auto-switch ON — if a free provider hits its limit, TuxGenie falls back to your other free provider automatically (never Claude, so it never costs you).")
-            info("Needs a key saved for a second free provider (Gemini, Groq and/or SambaNova).")
+            info("Needs a key saved for a second free provider (Gemini, Groq, SambaNova and/or OpenRouter).")
         else:
             ok("Auto-switch OFF — TuxGenie stays on your chosen provider and shows the limit message instead.")
     elif ch == "10":

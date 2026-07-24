@@ -67,7 +67,8 @@ class TestStartupFundamentals:
         # or OpenAI GPT-OSS only — never Qwen/DeepSeek/…).
         free = {n: p for n, p in tg._OAI_PROVIDERS.items() if p.get("free")}
         assert "groq" in free
-        assert "sambanova" in free   # second free OpenAI-compatible provider
+        assert "sambanova" in free    # second free OpenAI-compatible provider
+        assert "openrouter" in free   # third free OpenAI-compatible provider
         _chinese = ("qwen", "deepseek", "kimi", "glm", "ernie", "minimax", "baichuan")
         for name, prov in free.items():
             assert prov["cfg_key"] and prov["default_model"]

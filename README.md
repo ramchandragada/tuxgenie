@@ -98,6 +98,8 @@ just press Enter):
   Get a free key at [console.groq.com/keys](https://console.groq.com/keys).
 - **SambaNova** — **also free, no credit card** (Llama models).
   Get a free key at [cloud.sambanova.ai/apis](https://cloud.sambanova.ai/apis).
+- **OpenRouter** — **also free, no credit card** (one key, many models).
+  Get a free key at [openrouter.ai/keys](https://openrouter.ai/keys).
 - **Claude (Anthropic)** — best quality. Free trial credit, then ~$0.01/session.
   Get a key at [console.anthropic.com](https://console.anthropic.com).
 
@@ -110,6 +112,8 @@ export GROQ_API_KEY="gsk_..."           # Groq (free tier)
 # or
 export SAMBANOVA_API_KEY="..."          # SambaNova (free tier)
 # or
+export OPENROUTER_API_KEY="sk-or-..."   # OpenRouter (free tier)
+# or
 export ANTHROPIC_API_KEY="sk-ant-..."   # Claude
 
 tuxgenie
@@ -119,7 +123,7 @@ Switch providers anytime from **Settings → Switch AI provider**. Terminal
 commands (apt, systemctl, …) run without any key — always free.
 
 **Auto-switch on limits:** if you add keys for more than one free provider
-(Gemini, Groq, SambaNova), TuxGenie automatically rotates between them when a
+(Gemini, Groq, SambaNova, OpenRouter), TuxGenie automatically rotates between them when a
 free tier hits its rate limit — so a task never stalls. It never auto-switches to
 paid Claude (no surprise charges). Toggle it in
 **Settings → Auto-switch on limits**.
@@ -279,7 +283,8 @@ a corrupted or tampered download is refused, never installed.
 - Python 3.8+
 - Linux
 - An AI key — a **free** one from **Google Gemini** ([get it](https://aistudio.google.com/apikey)),
-  **Groq** ([get it](https://console.groq.com/keys)) or **SambaNova** ([get it](https://cloud.sambanova.ai/apis)),
+  **Groq** ([get it](https://console.groq.com/keys)), **SambaNova** ([get it](https://cloud.sambanova.ai/apis))
+  or **OpenRouter** ([get it](https://openrouter.ai/keys)),
   or **Anthropic Claude** ([get one](https://console.anthropic.com)) for best quality. Terminal commands
   (apt, systemctl, …) run with no key at all.
 
