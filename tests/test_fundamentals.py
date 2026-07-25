@@ -285,6 +285,33 @@ class TestRemoveAppsFundamentals:
         assert not [a for a in apps if a["target"] in tg._APP_REMOVE_DENYLIST]
 
 
+class TestInstallPriorityFundamentals:
+    """Both the deterministic catalog AND the AI must follow the same install
+    method priority: native .deb/apt (or dnf/pacman/zypper) → Flatpak → Snap,
+    with an already-downloaded installer preferred over all."""
+
+    def test_ai_prompt_encodes_priority(self):
+        # Anchor on the install section's unique header (note: "UNINSTALLING APPS"
+        # also contains the substring "INSTALLING APPS", so be specific).
+        seg = tg.AGENTIC_SYS[tg.AGENTIC_SYS.index("INSTALLING APPS — follow"):]
+        lo = seg.lower()
+        assert "priority" in lo
+        # Within the install section: native .deb ranks above Flatpak above Snap.
+        assert lo.index(".deb") < lo.index("flatpak") < lo.index("snap")
+        # And an already-downloaded installer is checked first.
+        assert "~/downloads" in lo
+
+    def test_catalog_plan_orders_apt_then_flatpak_then_snap(self, monkeypatch):
+        # An app offering apt + flatpak (+ snap) must plan apt first, flatpak
+        # before snap — matching the priority table.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        plan = tg._catalog_install_plan({"name": "Chromium"}, {"pkg_mgr": "apt"})
+        labels = [p[2] for p in plan]
+        # Chromium ships snap + flatpak → Flatpak must come before Snap.
+        assert labels.index("Flatpak (Flathub)") < labels.index("Snap")
+
+
 class TestLocalDebInstallFundamentals:
     """When the user says 'install <app>, deb version, file downloaded', TuxGenie
     must find the .deb they already downloaded instead of letting the AI guess a

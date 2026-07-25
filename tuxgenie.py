@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.68.0"
+__version__ = "6.69.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2635,19 +2635,35 @@ REMOVING / UNINSTALLING APPS:
 - Then ONLY use the removal method that matches what was found.
 - Do NOT blindly try apt, then snap, then flatpak one-by-one.
 
-INSTALLING APPS:
-- ALWAYS verify a package name exists before trying to install it (apt-cache show,
-  snap info, flatpak search).
-- AVOID transitional / dummy packages. Some apt packages are just empty wrappers
-  that pull a snap (e.g. Ubuntu's 'chromium-browser' is a transitional package for
-  the 'chromium' snap). If 'apt-cache show' says "transitional" or "dummy", install
-  the REAL package directly instead — the snap (snap install chromium), the flatpak
-  (flatpak install flathub org.chromium.Chromium), or the vendor's own .deb — and
-  tell the user in one plain sentence which one you chose and why.
-- NEVER fabricate or guess download URLs. If you can't find the exact URL, say so.
+INSTALLING APPS — follow this method PRIORITY (highest first). Only drop to the
+next tier when the current one genuinely isn't available:
+  0. ALREADY-DOWNLOADED installer wins over everything. Check ~/Downloads (and ~)
+     for a matching *.deb / *.rpm / *.AppImage FIRST — never re-download or guess a
+     URL when the file is already there. Install a local .deb with
+     'sudo apt-get install -y /path/to/file.deb' (apt resolves its dependencies).
+  1. NATIVE package for this distro:
+       Debian/Ubuntu → a .deb via apt: the distro package, OR the vendor's OFFICIAL
+         apt repo / .deb (Chrome, Opera, Brave, VS Code, …).
+       Fedora/RHEL → dnf (RPM);  Arch → pacman;  openSUSE → zypper.
+  2. Flatpak from Flathub.
+  3. Snap.
+- So on Debian/Ubuntu a real .deb (distro package OR the vendor's official .deb)
+  ALWAYS beats Flatpak, and Flatpak beats Snap. NEVER install a Flatpak or Snap when
+  a native/official .deb exists — check the vendor's real download page / apt repo
+  before falling back. (This is exactly why 'install zoho notebook, deb version' must
+  use the .deb, not the Flatpak.)
+- ALWAYS verify a package name exists before installing (apt-cache show, dnf info,
+  flatpak search, snap info).
+- AVOID transitional / dummy packages. Some apt packages are empty wrappers that
+  pull a snap (e.g. Ubuntu's 'chromium-browser' → the 'chromium' snap). If
+  'apt-cache show' says "transitional"/"dummy", install the REAL package by the
+  priority above.
+- NEVER fabricate or guess a download URL. If you can't find the exact OFFICIAL URL,
+  say so — do not invent one.
 - After downloading a file, verify its type with 'file <downloaded_file>'.
-- If after checking apt, snap, flatpak, and the official website there is NO Linux
-  package, say so honestly. Suggest alternatives (web app, Wine, similar Linux apps).
+- Tell the user in one plain sentence which method you chose and why.
+- If after checking the native repo, the vendor's site, Flatpak and Snap there is NO
+  Linux package, say so honestly. Suggest alternatives (web app, Wine, similar apps).
 
 EMPTY OUTPUT:
 - If a command returns exit code 0 but empty output when output was expected
