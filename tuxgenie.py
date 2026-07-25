@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.31.0"
+__version__ = "6.32.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2209,9 +2209,11 @@ CRITICAL — Preventing failures:
 - ALWAYS verify a package/app name exists before trying to install it:
   e.g. 'apt-cache show <pkg>' or 'snap info <pkg>' as a first step.
 - If a previous round FAILED, you MUST try a COMPLETELY DIFFERENT approach.
-  Do NOT repeat the same method with minor tweaks. If apt failed, try snap.
-  If snap failed, try flatpak. If flatpak failed, try downloading from the
-  official website. Exhaust all methods.
+  Do NOT repeat the same method with minor tweaks. Preference order for a
+  universal fallback is Flatpak BEFORE Snap: if the native manager (apt/dnf/
+  pacman/zypper) failed, try Flatpak (from Flathub). If Flatpak failed, try
+  Snap. If Snap failed, try downloading from the official website. Exhaust all
+  methods.
 - Each step that depends on a previous step must check that the previous step
   actually worked. For example, do NOT run 'sudo dpkg -i file.deb' without
   first checking 'test -s file.deb' (file exists and is not empty).
@@ -2363,8 +2365,9 @@ INSTALLING APPS:
 - AVOID transitional / dummy packages. Some apt packages are just empty wrappers
   that pull a snap (e.g. Ubuntu's 'chromium-browser' is a transitional package for
   the 'chromium' snap). If 'apt-cache show' says "transitional" or "dummy", install
-  the REAL package directly instead — the snap (snap install chromium), the flatpak
-  (flatpak install flathub org.chromium.Chromium), or the vendor's own .deb — and
+  the REAL package directly instead — preferring the flatpak
+  (flatpak install flathub org.chromium.Chromium) or the vendor's own .deb over
+  the snap (snap install chromium) — and
   tell the user in one plain sentence which one you chose and why.
 - NEVER fabricate or guess download URLs. If you can't find the exact URL, say so.
 - After downloading a file, verify its type with 'file <downloaded_file>'.
@@ -8163,10 +8166,12 @@ def _distro_adapt_prompt(install_prompt: str, bctx: dict) -> str:
         f"IMPORTANT — the user is on {osname} using the '{pm}' package manager, "
         f"NOT Debian/apt. If the instructions below mention apt, apt-get, dpkg or "
         f"a .deb, do NOT run those. Instead install the SAME application the right "
-        f"way for {pm}: prefer a Flatpak from Flathub if a Flatpak app-id is given "
-        f"(first ensure flatpak is installed and the flathub remote is added), "
-        f"otherwise use the correct '{pm}' package name, or the vendor's official "
-        f"repo for {pm}. Verify the app is actually available before claiming success.\n\n"
+        f"way for {pm}, in this priority order: (1) prefer a Flatpak from Flathub "
+        f"if a Flatpak app-id is given (first ensure flatpak is installed and the "
+        f"flathub remote is added); (2) otherwise use the correct '{pm}' package "
+        f"name or the vendor's official repo for {pm}; (3) use Snap only as a last "
+        f"resort if neither is available. Verify the app is actually available "
+        f"before claiming success.\n\n"
         f"App to install:\n"
     )
     return note + install_prompt
