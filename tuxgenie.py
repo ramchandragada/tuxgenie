@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.69.0"
+__version__ = "6.70.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8880,6 +8880,7 @@ APP_CATALOG = [
     {"id": 195,"name": "yt-dlp",              "cat": "Utilities",      "prompt": "Install yt-dlp, the powerful command-line video/audio downloader (a youtube-dl successor supporting hundreds of sites), preferably with pipx (pipx install yt-dlp) so it stays up to date, or apt (yt-dlp). Remind the user to only download content they are allowed to.", "desc": "Command-line video/audio downloader"},
     {"id": 196,"name": "Blanket",             "cat": "Utilities",      "prompt": "Install Blanket, which plays background ambient sounds (rain, waves, cafe, white noise) to help you focus, relax or sleep, via flatpak from Flathub: com.rafaelmardojai.Blanket.", "desc": "Ambient background sounds for focus"},
     {"id": 197,"name": "Jami",                "cat": "Communication", "prompt": "Install Jami, a free, fully peer-to-peer (serverless) messenger with encrypted calls, video and chat — no account or phone number required, via flatpak from Flathub: net.jami.Jami.", "desc": "Private peer-to-peer messaging & calls"},
+    {"id": 201,"name": "Aspera Hub",          "cat": "Communication", "prompt": "Install Aspera Hub, a free Linux workspace that runs WhatsApp, Arattai, Gmail and Zoho apps together in one window. Download the latest amd64 .deb from the official GitHub releases (https://github.com/ramchandragada/AsperaDock/releases/latest) and install it with apt.", "desc": "WhatsApp · Gmail · Zoho in one Linux app (by Aspera)"},
     {"id": 198,"name": "LibreSprite",         "cat": "Graphics",       "prompt": "Install LibreSprite, the free/open-source pixel-art and sprite-animation editor (a community fork of Aseprite), via flatpak from Flathub: com.github.libresprite.LibreSprite.", "desc": "Pixel-art & sprite animation editor"},
     {"id": 199,"name": "Stellarium",          "cat": "Utilities",      "prompt": "Install Stellarium, the free planetarium that shows a realistic 3D sky on your screen — spot planets, stars and constellations in real time, via flatpak from Flathub: org.stellarium.Stellarium (or apt: stellarium). Great for stargazing, students and families.", "desc": "Free planetarium — explore the night sky"},
     {"id": 200,"name": "Starship",            "cat": "Developer",      "prompt": "Install Starship, the fast, minimal, cross-shell prompt that shows git status, language versions and more. Run the official installer: curl -sS https://starship.rs/install.sh | sh. Then tell the user to add the init line to their shell config (e.g. eval \"$(starship init bash)\" in ~/.bashrc, or the fish/zsh equivalent) — but do NOT edit their shell config without asking first.", "desc": "Fast, minimal cross-shell prompt"},
@@ -8998,6 +8999,14 @@ _CATALOG_INSTALL = {
     "WhatsApp (ZapZap)": {"flatpak": "com.rtosta.zapzap"},
     "Session":          {"flatpak": "network.loki.Session"},
     "Jami":             {"flatpak": "net.jami.Jami"},
+    # Aspera Hub (our own app) ships an official amd64 .deb on GitHub releases —
+    # fetch the newest and install it (worst case the script fails → AI fallback).
+    "Aspera Hub":       {"script": "set -e; url=$(curl -fsSL "
+                                    "https://api.github.com/repos/ramchandragada/AsperaDock/releases/latest "
+                                    "| grep -oE 'https://[^\"[:space:]]+_amd64\\.deb' | head -1); "
+                                    "[ -n \"$url\" ]; curl -fL -o /tmp/aspera-hub.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/aspera-hub.deb",
+                         "script_root": True},
     # ── Office & Notes ──
     "LibreOffice":      {"pkg": "libreoffice", "flatpak": "org.libreoffice.LibreOffice"},
     "OnlyOffice":       {"flatpak": "org.onlyoffice.desktopeditors"},

@@ -215,6 +215,14 @@ class TestCatalogFundamentals:
         cmd, root = tg._catalog_deterministic_cmd({"name": "balenaEtcher"}, {"pkg_mgr": "apt"})
         assert "balena-io/etcher" in cmd and root is True
 
+    def test_aspera_hub_installs_without_ai(self, monkeypatch):
+        # Our own Aspera Hub is a one-tap catalog install: fetch its official
+        # GitHub-releases .deb deterministically (no AI).
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        assert "Aspera Hub" in {e["name"] for e in tg.APP_CATALOG}
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Aspera Hub"}, {"pkg_mgr": "apt"})
+        assert "AsperaDock/releases/latest" in cmd and "_amd64" in cmd and root is True
+
     def test_ventoy_installs_without_ai(self, monkeypatch):
         # Ventoy is a portable tarball tool — it now installs deterministically by
         # extracting the latest GitHub release, instead of routing to the AI.
