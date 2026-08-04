@@ -1012,3 +1012,9 @@ class TestPhaseDBeginnerGui:
         assert "tuxgenie --gui" in src
         assert "python3-tk" in src
         assert 'rc" != "2"' in src or "[ \"$rc\" != \"2\" ]" in src
+
+    def test_gui_visual_helpers(self):
+        # Colour math + tile accents power the modern animated window.
+        assert tg._gui_hex_lerp("#000000", "#ffffff", 0.5) == "#7f7f7f"
+        assert tg._gui_tile_accent("apps").startswith("#")
+        assert tg._gui_tile_accent("full") != tg._gui_tile_accent("apps")

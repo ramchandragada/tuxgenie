@@ -29,6 +29,7 @@ www.tuxgenie.com
 """
 
 import os, sys, json, re, stat, tarfile, datetime, textwrap, time, shlex, argparse
+import math
 import subprocess, urllib.request, urllib.error, threading, shutil, traceback
 try:
     import termios, tty as _tty
@@ -36,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.81.0"
+__version__ = "6.82.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -13261,8 +13262,66 @@ def _gui_run_action(kind: str, payload: str = "") -> bool:
     return _gui_spawn_in_terminal(_gui_build_cli_argv(kind, payload))
 
 
+def _gui_hex_to_rgb(h: str):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _gui_rgb_to_hex(rgb) -> str:
+    return "#{:02x}{:02x}{:02x}".format(
+        max(0, min(255, int(rgb[0]))),
+        max(0, min(255, int(rgb[1]))),
+        max(0, min(255, int(rgb[2]))),
+    )
+
+
+def _gui_hex_lerp(a: str, b: str, t: float) -> str:
+    """Interpolate two #RRGGBB colours; t in [0, 1]."""
+    t = max(0.0, min(1.0, t))
+    ra, ga, ba = _gui_hex_to_rgb(a)
+    rb, gb, bb = _gui_hex_to_rgb(b)
+    return _gui_rgb_to_hex((ra + (rb - ra) * t, ga + (gb - ga) * t, ba + (bb - ba) * t))
+
+
+def _gui_pick_font_family(tkfont) -> str:
+    """Prefer expressive Linux UI fonts over the bland Tk default."""
+    available = set(tkfont.families())
+    for name in (
+        "Ubuntu", "Cantarell", "Noto Sans", "Source Sans 3", "Source Sans Pro",
+        "IBM Plex Sans", "DejaVu Sans", "FreeSans",
+    ):
+        if name in available:
+            return name
+    return "TkDefaultFont"
+
+
+def _gui_paint_vgradient(canvas, x0, y0, x1, y1, c0: str, c1: str, steps: int = 48):
+    """Fill a vertical gradient band on a Canvas (no external deps)."""
+    h = max(1, int(y1 - y0))
+    steps = max(8, min(steps, h))
+    for i in range(steps):
+        t0 = i / steps
+        t1 = (i + 1) / steps
+        color = _gui_hex_lerp(c0, c1, (t0 + t1) / 2)
+        canvas.create_rectangle(
+            x0, y0 + h * t0, x1, y0 + h * t1 + 1,
+            outline=color, fill=color,
+        )
+
+
+def _gui_tile_accent(action_id: str) -> str:
+    """Per-tile accent so the grid feels alive (not one flat teal wall)."""
+    return {
+        "fix": "#0d8a9a", "health": "#148f6a", "network": "#0b7ea8",
+        "sound": "#1a8a7a", "drivers": "#0f6f8c", "perf": "#c45c12",
+        "apps": "#d4620f", "remove": "#b54a2a", "ai": "#0e7c86",
+        "backup": "#1b7a4a", "updates": "#0d6e8c", "selfupd": "#c35508",
+        "settings": "#3d5a80", "full": "#1a2744",
+    }.get(action_id, "#008091")
+
+
 def gui_main(argv=None) -> int:
-    """Phase D beginner GUI entry. Returns process exit code.
+    """Phase D beginner GUI — modern animated launcher.
     Exit 2 when Tkinter is unavailable (launcher should fall back to terminal UI).
     """
     if not _gui_tk_available():
@@ -13279,21 +13338,28 @@ def gui_main(argv=None) -> int:
     import tkinter as tk
     from tkinter import font as tkfont
 
-    # Brand colours — teal + ink (avoid purple/cream AI-default palettes).
-    BG = "#eef3f7"
-    PANEL = "#ffffff"
-    INK = "#14192e"
-    MUTED = "#5a6478"
-    TEAL = "#008091"
-    TEAL_DARK = "#006570"
-    ORANGE = "#c35508"
-    BORDER = "#d0dae6"
+    # Brand system — deep ocean teal + ember orange (not purple / not cream-serif).
+    C = {
+        "bg0": "#071820",
+        "bg1": "#0c2e38",
+        "hero0": "#063642",
+        "hero1": "#0a7a8a",
+        "hero2": "#12a3b0",
+        "mist": "#e6eef2",
+        "panel": "#f7fafb",
+        "ink": "#101828",
+        "muted": "#5b6b76",
+        "ember": "#e85d04",
+        "ember2": "#ff7a1a",
+        "line": "#c5d4dc",
+        "white": "#ffffff",
+    }
 
     root = tk.Tk()
     root.title(f"TuxGenie {__version__}")
-    root.configure(bg=BG)
-    root.minsize(520, 640)
-    root.geometry("660x720")
+    root.configure(bg=C["mist"])
+    root.minsize(640, 720)
+    root.geometry("720x820")
 
     for icon_path in (
         "/usr/share/icons/hicolor/128x128/apps/tuxgenie.png",
@@ -13309,7 +13375,147 @@ def gui_main(argv=None) -> int:
                 pass
             break
 
-    status = tk.StringVar(root, value="Ready — type what you need, or tap a button.")
+    family = _gui_pick_font_family(tkfont)
+    f_brand = tkfont.Font(family=family, size=34, weight="bold")
+    f_tag = tkfont.Font(family=family, size=12)
+    f_ask = tkfont.Font(family=family, size=13)
+    f_btn = tkfont.Font(family=family, size=11, weight="bold")
+    f_tip = tkfont.Font(family=family, size=9)
+    f_sec = tkfont.Font(family=family, size=10, weight="bold")
+    f_tile = tkfont.Font(family=family, size=11, weight="bold")
+
+    status = tk.StringVar(root, value="Ready — ask anything, or pick a quick action.")
+    anim = {"t": 0.0, "pulse": 0.0, "alive": True, "sweep": 0.0}
+
+    # ── Hero canvas (full-bleed brand plane) ─────────────────────────────────
+    HERO_H = 200
+    hero = tk.Canvas(root, height=HERO_H, highlightthickness=0, bd=0, bg=C["hero0"])
+    hero.pack(fill="x")
+
+    def paint_hero(_event=None):
+        hero.delete("all")
+        w = max(hero.winfo_width(), 640)
+        h = HERO_H
+        _gui_paint_vgradient(hero, 0, 0, w, h, C["hero0"], C["hero2"], steps=56)
+        # Soft diagonal light band
+        for i in range(18):
+            t = i / 18
+            col = _gui_hex_lerp(C["hero1"], C["hero2"], t)
+            hero.create_polygon(
+                w * (0.35 + 0.02 * t), 0,
+                w * (0.55 + 0.02 * t), 0,
+                w * (0.30 + 0.02 * t), h,
+                w * (0.10 + 0.02 * t), h,
+                fill=col, outline="",
+            )
+        # Floating orbs (parallax with anim)
+        ox = 18 * math.sin(anim["t"] * 0.9)
+        oy = 10 * math.cos(anim["t"] * 1.1)
+        hero.create_oval(w - 140 + ox, -40 + oy, w + 40 + ox, 140 + oy,
+                         fill=C["hero1"], outline="")
+        hero.create_oval(-60 - ox, h - 90 + oy, 120 - ox, h + 60 + oy,
+                         fill=_gui_hex_lerp(C["hero0"], C["hero1"], 0.5), outline="")
+        # Brand — hero-level, not a tiny eyebrow
+        hero.create_text(28, 54, anchor="w", text="TuxGenie",
+                         fill=C["white"], font=f_brand)
+        hero.create_text(
+            28, 100, anchor="w",
+            text="Linux made easy — ask in plain English",
+            fill="#d7f6f8", font=f_tag,
+        )
+        # Animated ember underline sweep under the brand
+        sweep = (math.sin(anim["sweep"]) + 1) / 2
+        x0, x1 = 28, 28 + 160 + int(80 * sweep)
+        hero.create_rectangle(x0, 118, x1, 122, fill=C["ember"], outline="")
+        hero.create_text(
+            28, 156, anchor="w",
+            text=f"v{__version__}  ·  free forever  ·  www.tuxgenie.com",
+            fill="#9fd8de", font=f_tip,
+        )
+
+    hero.bind("<Configure>", paint_hero)
+
+    # ── Body ────────────────────────────────────────────────────────────────
+    body = tk.Frame(root, bg=C["mist"])
+    body.pack(fill="both", expand=True)
+
+    # Ask panel — single composition focus under the hero
+    ask_wrap = tk.Frame(body, bg=C["mist"], padx=22, pady=16)
+    ask_wrap.pack(fill="x")
+    ask_shell = tk.Frame(ask_wrap, bg=C["panel"], highlightthickness=0)
+    ask_shell.pack(fill="x")
+    # Left ember rail
+    tk.Frame(ask_shell, bg=C["ember"], width=5).pack(side="left", fill="y")
+    ask_inner = tk.Frame(ask_shell, bg=C["panel"], padx=16, pady=14)
+    ask_inner.pack(side="left", fill="both", expand=True)
+
+    tk.Label(
+        ask_inner, text="What do you need?", font=f_btn,
+        fg=C["ink"], bg=C["panel"],
+    ).pack(anchor="w")
+    row = tk.Frame(ask_inner, bg=C["panel"])
+    row.pack(fill="x", pady=(10, 0))
+
+    entry_bg = tk.Frame(row, bg=C["line"], padx=1, pady=1)
+    entry_bg.pack(side="left", fill="x", expand=True, padx=(0, 10))
+    entry = tk.Entry(
+        entry_bg, font=f_ask, fg=C["ink"], bg=C["white"],
+        relief="flat", insertbackground=C["ember"],
+    )
+    entry.pack(fill="x", ipady=10, padx=10)
+    # Placeholder-like hint via status; keep entry clean
+
+    ask_btn = tk.Button(
+        row, text="Ask  →", font=f_btn, fg=C["white"], bg=C["ember"],
+        activebackground=C["ember2"], activeforeground=C["white"],
+        relief="flat", padx=18, pady=8, cursor="hand2", bd=0,
+        highlightthickness=0,
+    )
+    ask_btn.pack(side="right")
+
+    tk.Label(
+        ask_inner,
+        text='Try:  “my wifi is not working”   ·   “install chrome”   ·   “why is it slow?”',
+        font=f_tip, fg=C["muted"], bg=C["panel"],
+    ).pack(anchor="w", pady=(10, 0))
+
+    # Section label
+    sec = tk.Frame(body, bg=C["mist"], padx=22)
+    sec.pack(fill="x")
+    tk.Label(sec, text="QUICK ACTIONS", font=f_sec, fg=C["muted"],
+             bg=C["mist"]).pack(anchor="w")
+    tk.Frame(sec, bg=C["line"], height=1).pack(fill="x", pady=(6, 8))
+
+    # Scrollable tile grid
+    scroll_host = tk.Frame(body, bg=C["mist"])
+    scroll_host.pack(fill="both", expand=True, padx=14, pady=(0, 4))
+    tile_canvas = tk.Canvas(scroll_host, bg=C["mist"], highlightthickness=0, bd=0)
+    scrollbar = tk.Scrollbar(scroll_host, orient="vertical", command=tile_canvas.yview)
+    tile_canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side="right", fill="y")
+    tile_canvas.pack(side="left", fill="both", expand=True)
+    grid = tk.Frame(tile_canvas, bg=C["mist"])
+    grid_win = tile_canvas.create_window((0, 0), window=grid, anchor="nw")
+
+    def _on_grid_configure(_e=None):
+        tile_canvas.configure(scrollregion=tile_canvas.bbox("all"))
+
+    def _on_canvas_configure(e):
+        tile_canvas.itemconfigure(grid_win, width=e.width)
+
+    grid.bind("<Configure>", _on_grid_configure)
+    tile_canvas.bind("<Configure>", _on_canvas_configure)
+
+    def _wheel(e):
+        # Linux uses e.delta=0 with Button-4/5; Windows/mac use delta.
+        if getattr(e, "num", None) == 5 or getattr(e, "delta", 0) < 0:
+            tile_canvas.yview_scroll(1, "units")
+        else:
+            tile_canvas.yview_scroll(-1, "units")
+
+    tile_canvas.bind_all("<MouseWheel>", _wheel)
+    tile_canvas.bind_all("<Button-4>", _wheel)
+    tile_canvas.bind_all("<Button-5>", _wheel)
 
     def set_status(msg: str):
         status.set(msg)
@@ -13319,96 +13525,140 @@ def gui_main(argv=None) -> int:
         text = entry.get().strip()
         if not text:
             set_status("Type something first — e.g. “my wifi is not working”.")
+            _flash_ask()
             return
-        set_status(f"Opening assistant for: {text[:60]}")
+        set_status(f"Opening: {text[:70]}")
         if _gui_run_action("issue", text):
-            set_status("Opened in a terminal window.")
+            set_status("Opened in a terminal — approve steps there.")
         else:
-            set_status("Could not open a terminal. Run: tuxgenie \"your request\"")
+            set_status('Could not open a terminal. Try: tuxgenie "your request"')
 
     def on_action(kind: str, payload: str, label: str):
-        set_status(f"Starting: {label}…")
+        set_status(f"Starting {label}…")
         if _gui_run_action(kind, payload):
             set_status(f"Opened: {label}")
         else:
-            set_status(f"Could not start {label}. Try: tuxgenie")
+            set_status(f"Could not start {label}. Try the Full assistant.")
 
-    header = tk.Frame(root, bg=TEAL, padx=20, pady=16)
-    header.pack(fill="x")
-    title_font = tkfont.Font(family="DejaVu Sans", size=22, weight="bold")
-    sub_font = tkfont.Font(family="DejaVu Sans", size=11)
-    btn_font = tkfont.Font(family="DejaVu Sans", size=10, weight="bold")
-    tip_font = tkfont.Font(family="DejaVu Sans", size=9)
-
-    tk.Label(header, text="TuxGenie", font=title_font, fg="#ffffff", bg=TEAL).pack(anchor="w")
-    tk.Label(
-        header,
-        text="Linux made easy — ask in plain English",
-        font=sub_font, fg="#d7f3f6", bg=TEAL,
-    ).pack(anchor="w", pady=(4, 0))
-
-    body = tk.Frame(root, bg=BG, padx=20, pady=16)
-    body.pack(fill="both", expand=True)
-
-    ask_frame = tk.Frame(body, bg=PANEL, highlightbackground=BORDER,
-                         highlightthickness=1, padx=12, pady=12)
-    ask_frame.pack(fill="x")
-    tk.Label(ask_frame, text="What do you need?", font=btn_font,
-             fg=INK, bg=PANEL).pack(anchor="w")
-    row = tk.Frame(ask_frame, bg=PANEL)
-    row.pack(fill="x", pady=(8, 0))
-    entry = tk.Entry(row, font=sub_font, fg=INK, bg="#f8fafc",
-                     relief="flat", highlightthickness=1,
-                     highlightbackground=BORDER, highlightcolor=TEAL)
-    entry.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 8))
+    ask_btn.configure(command=on_ask)
     entry.bind("<Return>", on_ask)
-    tk.Button(
-        row, text="Ask", font=btn_font, fg="#ffffff", bg=ORANGE,
-        activebackground="#a34606", activeforeground="#ffffff",
-        relief="flat", padx=16, pady=6, cursor="hand2",
-        command=on_ask,
-    ).pack(side="right")
-    tk.Label(
-        ask_frame,
-        text='Examples: “my wifi is not working” · “install chrome” · “why is it slow?”',
-        font=tip_font, fg=MUTED, bg=PANEL,
-    ).pack(anchor="w", pady=(8, 0))
 
-    tk.Label(body, text="Quick actions", font=btn_font, fg=INK, bg=BG).pack(
-        anchor="w", pady=(16, 8))
-    grid = tk.Frame(body, bg=BG)
-    grid.pack(fill="both", expand=True)
-    for i, (_aid, label, tip, kind, payload) in enumerate(_BEGINNER_GUI_ACTIONS):
+    def _flash_ask(step=0):
+        colors = (C["ember"], C["ember2"], C["ember"], C["ember2"], C["ember"])
+        if step < len(colors):
+            ask_btn.configure(bg=colors[step])
+            root.after(70, lambda: _flash_ask(step + 1))
+
+    # Build animated tiles
+    tiles = []
+    for i, (aid, label, tip, kind, payload) in enumerate(_BEGINNER_GUI_ACTIONS):
         r, c = divmod(i, 2)
-        cell = tk.Frame(grid, bg=PANEL, highlightbackground=BORDER,
-                        highlightthickness=1, padx=10, pady=10)
-        cell.grid(row=r, column=c, sticky="nsew", padx=4, pady=4)
+        accent = _gui_tile_accent(aid)
+        cell = tk.Frame(grid, bg=C["panel"], padx=0, pady=0,
+                        highlightthickness=0)
+        cell.grid(row=r, column=c, sticky="nsew", padx=6, pady=6)
         grid.grid_columnconfigure(c, weight=1)
-        grid.grid_rowconfigure(r, weight=1)
-        tk.Button(
-            cell, text=label, font=btn_font, fg="#ffffff", bg=TEAL,
-            activebackground=TEAL_DARK, activeforeground="#ffffff",
-            relief="flat", anchor="w", cursor="hand2",
-            command=lambda k=kind, p=payload, lab=label: on_action(k, p, lab),
-        ).pack(fill="x")
-        tk.Label(cell, text=tip, font=tip_font, fg=MUTED, bg=PANEL,
-                 wraplength=260, justify="left").pack(anchor="w", pady=(6, 0))
 
-    footer = tk.Frame(root, bg=BG, padx=20, pady=10)
+        rail = tk.Frame(cell, bg=accent, width=4)
+        rail.pack(side="left", fill="y")
+        inner = tk.Frame(cell, bg=C["panel"], padx=12, pady=12)
+        inner.pack(side="left", fill="both", expand=True)
+
+        title = tk.Label(inner, text=label, font=f_tile, fg=C["ink"],
+                         bg=C["panel"], anchor="w")
+        title.pack(fill="x")
+        desc = tk.Label(inner, text=tip, font=f_tip, fg=C["muted"],
+                        bg=C["panel"], anchor="w", wraplength=280, justify="left")
+        desc.pack(fill="x", pady=(4, 8))
+        go = tk.Button(
+            inner, text="Open  →", font=f_tip, fg=C["white"], bg=accent,
+            activebackground=_gui_hex_lerp(accent, "#000000", 0.15),
+            activeforeground=C["white"], relief="flat", bd=0, padx=10, pady=4,
+            cursor="hand2",
+            command=lambda k=kind, p=payload, lab=label: on_action(k, p, lab),
+        )
+        go.pack(anchor="w")
+
+        # Whole tile clickable
+        def _bind_click(widget, k=kind, p=payload, lab=label):
+            widget.bind("<Button-1>", lambda _e: on_action(k, p, lab))
+
+        for wdg in (cell, inner, title, desc, rail):
+            _bind_click(wdg)
+            wdg.configure(cursor="hand2")
+
+        base_bg = C["panel"]
+        hover_bg = _gui_hex_lerp(accent, C["white"], 0.88)
+
+        def _enter(_e=None, fr=cell, inn=inner, t=title, d=desc, hb=hover_bg):
+            for w in (fr, inn, t, d):
+                w.configure(bg=hb)
+
+        def _leave(_e=None, fr=cell, inn=inner, t=title, d=desc, bb=base_bg):
+            for w in (fr, inn, t, d):
+                w.configure(bg=bb)
+
+        for wdg in (cell, inner, title, desc):
+            wdg.bind("<Enter>", _enter)
+            wdg.bind("<Leave>", _leave)
+
+        # Entrance: start slightly compressed via delayed pack feel — fade-in sim
+        cell.grid_remove()
+        tiles.append((i, cell, r, c))
+
+    def _reveal(idx=0):
+        if idx >= len(tiles):
+            return
+        _i, cell, r, c = tiles[idx]
+        cell.grid(row=r, column=c, sticky="nsew", padx=6, pady=6)
+        root.after(28, lambda: _reveal(idx + 1))
+
+    root.after(120, _reveal)
+
+    # Footer
+    footer = tk.Frame(root, bg=C["bg1"], padx=18, pady=10)
     footer.pack(fill="x")
-    tk.Label(footer, textvariable=status, font=tip_font, fg=MUTED, bg=BG,
-             anchor="w").pack(fill="x")
+    tk.Label(footer, textvariable=status, font=f_tip, fg="#b7d4da",
+             bg=C["bg1"], anchor="w").pack(fill="x")
     tk.Label(
         footer,
-        text=f"v{__version__}  ·  www.tuxgenie.com  ·  Full power stays in the terminal",
-        font=tip_font, fg=MUTED, bg=BG, anchor="w",
-    ).pack(fill="x", pady=(4, 0))
+        text="Full assistant opens the complete terminal menu  ·  every action is approved before it runs",
+        font=f_tip, fg="#7aa3ab", bg=C["bg1"], anchor="w",
+    ).pack(fill="x", pady=(2, 0))
 
+    # ── Motion loop: hero sweep + ask button breath ─────────────────────────
+    def _tick():
+        if not anim["alive"]:
+            return
+        anim["t"] += 0.04
+        anim["sweep"] += 0.06
+        anim["pulse"] = (math.sin(anim["t"] * 2.2) + 1) / 2
+        try:
+            paint_hero()
+            # Breathing CTA
+            ask_btn.configure(bg=_gui_hex_lerp(C["ember"], C["ember2"], anim["pulse"] * 0.55))
+        except tk.TclError:
+            return
+        root.after(40, _tick)
+
+    def _on_close():
+        anim["alive"] = False
+        try:
+            tile_canvas.unbind_all("<MouseWheel>")
+            tile_canvas.unbind_all("<Button-4>")
+            tile_canvas.unbind_all("<Button-5>")
+        except Exception:
+            pass
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", _on_close)
     entry.focus_set()
+    root.after(16, paint_hero)
+    root.after(40, _tick)
     try:
         root.mainloop()
     except KeyboardInterrupt:
-        pass
+        anim["alive"] = False
     return 0
 
 
