@@ -662,3 +662,179 @@ class TestSlowPcFundamentals:
         assert row[1] == "perf"
         assert row[4] is tg.feat_performance
         assert "slow" in row[3].lower() or "speed" in row[3].lower()
+
+
+class TestCrisisPlaybookFundamentals:
+    """Phase B promise: day-1 crises (Wi-Fi, NVIDIA, audio, bad update,
+    dual-boot) use deterministic scan → safe plan → optional AI — not AI first."""
+
+    def test_wifi_phrase_matching(self):
+        yes = [
+            "my wifi is not working",
+            "wifi won't connect",
+            "no internet",
+            "can't connect to wifi",
+            "Wi-Fi is down",
+        ]
+        no = ["install firefox", "ls -la", "my pc is slow", "update this pc"]
+        for s in yes:
+            assert tg._looks_like_wifi_crisis(s), s
+        for s in no:
+            assert not tg._looks_like_wifi_crisis(s), s
+
+    def test_nvidia_phrase_matching(self):
+        yes = ["install nvidia drivers", "nvidia driver not working", "screen tearing", "nouveau"]
+        no = ["install chrome", "my wifi is not working"]
+        for s in yes:
+            assert tg._looks_like_nvidia_crisis(s), s
+        for s in no:
+            assert not tg._looks_like_nvidia_crisis(s), s
+
+    def test_audio_phrase_matching(self):
+        yes = ["no sound", "my microphone is not working", "can't hear", "audio not working"]
+        no = ["install spotify", "my wifi is not working"]
+        for s in yes:
+            assert tg._looks_like_audio_crisis(s), s
+        for s in no:
+            assert not tg._looks_like_audio_crisis(s), s
+
+    def test_bad_update_phrase_matching(self):
+        yes = [
+            "broken after update",
+            "system won't boot after upgrade",
+            "bad kernel",
+            "grub rescue",
+        ]
+        no = ["update this pc", "install updates"]
+        for s in yes:
+            assert tg._looks_like_bad_update_crisis(s), s
+        for s in no:
+            assert not tg._looks_like_bad_update_crisis(s), s
+
+    def test_dualboot_phrase_matching(self):
+        yes = [
+            "dual boot",
+            "windows missing",
+            "can't boot windows",
+            "wrong time after windows",
+            "os-prober",
+        ]
+        no = ["install windows app", "my pc is slow"]
+        for s in yes:
+            assert tg._looks_like_dualboot_crisis(s), s
+        for s in no:
+            assert not tg._looks_like_dualboot_crisis(s), s
+
+    def test_wifi_plan_unblocks_and_restarts_nm(self):
+        results = {
+            "rfkill": "0: phy0: Wireless LAN\n Soft blocked: yes\n Hard blocked: no",
+            "nmcli_radio": "WIFI      disabled",
+            "nm_active": "inactive",
+            "ip_link": "wlp3s0           DOWN",
+            "ping_ip": "100% packet loss",
+            "ping_dns": "100% packet loss",
+            "dmesg_wifi": "",
+        }
+        plan = tg._crisis_wifi_build_plan(results, {"pkg_mgr": "apt"})
+        cmds = " ".join(row[1] for row in plan)
+        assert "rfkill unblock" in cmds
+        assert "nmcli radio wifi on" in cmds
+        assert "NetworkManager" in cmds
+        for _d, cmd, _r, _w in plan:
+            assert not tg.is_dangerous(cmd), cmd
+
+    def test_audio_plan_unmutes_and_restarts(self):
+        results = {
+            "mute": "Mute: yes\nVolume: 0%",
+            "pactl_sink": "",
+            "pipewire": "inactive",
+            "groups": "user sudo",
+        }
+        plan = tg._crisis_audio_build_plan(results, {"pkg_mgr": "apt", "user": "alice"})
+        titles = " ".join(row[0].lower() for row in plan)
+        assert "unmute" in titles
+        assert "pipewire" in titles or "audio" in titles
+        for _d, cmd, _r, _w in plan:
+            assert not tg.is_dangerous(cmd), cmd
+
+    def test_nvidia_plan_apt_autoinstall(self):
+        results = {
+            "gpu": "01:00.0 VGA compatible controller: NVIDIA Corporation",
+            "driver_k": "Kernel driver in use: nouveau",
+            "nvidia_smi": "nvidia-smi: command not found",
+            "modules": "nouveau",
+            "ubuntu_drv": "driver   : nvidia-driver-535 - distro non-free recommended",
+            "secure": "SecureBoot disabled",
+        }
+        plan = tg._crisis_nvidia_build_plan(results, {"pkg_mgr": "apt"})
+        assert plan
+        assert any("ubuntu-drivers" in row[1] for row in plan)
+        for _d, cmd, _r, _w in plan:
+            assert not tg.is_dangerous(cmd), cmd
+
+    def test_nvidia_plan_empty_when_drivers_ok(self):
+        results = {
+            "gpu": "NVIDIA Corporation",
+            "driver_k": "nvidia",
+            "nvidia_smi": "NVIDIA-SMI 535.54.03",
+            "modules": "nvidia",
+            "ubuntu_drv": "",
+            "secure": "",
+        }
+        assert tg._crisis_nvidia_build_plan(results, {"pkg_mgr": "apt"}) == []
+
+    def test_bad_update_plan_fixes_packages(self):
+        results = {
+            "failed": "● broken.service loaded failed failed Example",
+            "firmware": "",
+            "kernels": "6.5.0-14-generic\n6.8.0-31-generic",
+            "uname": "6.8.0-31-generic",
+        }
+        plan = tg._crisis_bad_update_build_plan(results, {"pkg_mgr": "apt"})
+        cmds = " ".join(row[1] for row in plan)
+        assert "dpkg --configure" in cmds or "apt-get -f" in cmds
+        assert any("kernel" in row[0].lower() or "GRUB" in row[1] for row in plan)
+        for _d, cmd, _r, _w in plan:
+            assert not tg.is_dangerous(cmd), cmd
+
+    def test_dualboot_plan_enables_os_prober(self):
+        results = {
+            "os_prober": "os-prober missing or no other OS",
+            "grub_cfg": "GRUB_DISABLE_OS_PROBER=true",
+            "efi_ents": "Windows Boot Manager",
+            "rtc": "RTC in local TZ: no",
+        }
+        plan = tg._crisis_dualboot_build_plan(results, {"pkg_mgr": "apt"})
+        cmds = " ".join(row[1] for row in plan)
+        assert "os-prober" in cmds
+        assert "GRUB_DISABLE_OS_PROBER=false" in cmds
+        assert "update-grub" in cmds
+        for _d, cmd, _r, _w in plan:
+            assert not tg.is_dangerous(cmd), cmd
+
+    def test_passthrough_routes_crisis_phrases(self, monkeypatch):
+        seen = []
+
+        def _fake(kind, backend, bctx, slog):
+            seen.append(kind)
+
+        monkeypatch.setattr(tg, "_run_crisis_playbook", _fake)
+        cases = [
+            ("my wifi is not working", "wifi"),
+            ("no sound", "audio"),
+            ("install nvidia drivers", "nvidia"),
+            ("broken after update", "bad_update"),
+            ("windows missing", "dualboot"),
+        ]
+        for phrase, kind in cases:
+            seen.clear()
+            assert tg.try_passthrough(phrase, [], backend=None, bctx={"pkg_mgr": "apt"}) is True
+            assert seen == [kind], (phrase, seen)
+
+    def test_menu_crisis_entries_wired(self):
+        assert next(r for r in tg.MENU_ITEMS if r[0] == "3")[4] is tg.feat_network
+        assert next(r for r in tg.MENU_ITEMS if r[0] == "4")[4] is tg.feat_sound
+        assert next(r for r in tg.MENU_ITEMS if r[0] == "9")[4] is tg.feat_drivers
+        boot = next(r for r in tg.MENU_ITEMS if r[0] == "20")
+        assert boot[4] is tg.feat_boot
+        assert "dual" in boot[3].lower() or "update" in boot[3].lower()

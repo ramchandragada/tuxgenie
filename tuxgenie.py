@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.77.0"
+__version__ = "6.78.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4427,6 +4427,23 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
             return False
         return True
 
+    # Phase B crisis playbooks — Wi-Fi, NVIDIA, audio, bad update, dual-boot.
+    _ctx = bctx or base_ctx()
+    for _matcher, _kind, _label in (
+        (_looks_like_wifi_crisis, "wifi", "Wi-Fi"),
+        (_looks_like_nvidia_crisis, "nvidia", "NVIDIA"),
+        (_looks_like_audio_crisis, "audio", "audio"),
+        (_looks_like_bad_update_crisis, "bad_update", "update/boot rescue"),
+        (_looks_like_dualboot_crisis, "dualboot", "dual-boot"),
+    ):
+        if _matcher(cmd):
+            try:
+                _run_crisis_playbook(_kind, backend, _ctx, session_log)
+            except Exception as e:
+                warn(f"{_label} playbook hit a snag ({e}) — asking the AI instead.")
+                return False
+            return True
+
     # Natural-language system update — run the right command for this distro
     # without burning AI tokens. "update this pc", "upgrade my system", etc.
     sys_update_cmd = _system_update_cmd_for_phrase(cmd)
@@ -6163,25 +6180,8 @@ Do NOT try apt-cache search or apt install for these without adding their repo f
 
 # ── FEATURE 4: Network Doctor ─────────────────────────────────────────────────
 def feat_network(backend, bctx, slog):
-    hdr("Network Doctor — Diagnose connectivity")
-    with Spinner("Running network diagnostics…"):
-        ctx = {**bctx, **network_ctx()}
-    ok("Diagnostics collected")
-    try:
-        problem = input(f"\n{BOLD}Describe the network problem (or press Enter for full scan):{R} ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not problem:
-        problem = "Diagnose my network and report any issues or misconfigurations."
-
-    sys_p = BASE_SYS + """
-Additional instructions for NETWORK DOCTOR mode:
-- Diagnose connectivity layer by layer: interface → link → gateway → DNS → internet.
-- Check firewall rules, DNS resolution, routing table.
-- For each issue found, provide a clear fix.
-- Explain WHY each step helps — this is educational.
-""" + _sys_ctx_block(ctx)
-    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
+    """Wi-Fi / internet — Phase B crisis playbook first, optional AI after."""
+    _run_crisis_playbook("wifi", backend, bctx, slog)
 
 # ── FEATURE 5: Security Audit ─────────────────────────────────────────────────
 def feat_security(backend, bctx, slog):
@@ -6220,6 +6220,11 @@ Additional instructions for DISK DETECTIVE mode:
 
 # ── FEATURE 7: Driver Check ───────────────────────────────────────────────────
 def feat_drivers(backend, bctx, slog):
+    """GPU/drivers — NVIDIA crisis playbook when applicable, else AI driver check."""
+    probe = _crisis_nvidia_collect()
+    if re.search(r"nvidia", (probe.get("gpu") or "") + (probe.get("driver_k") or ""), re.I):
+        _run_crisis_playbook("nvidia", backend, bctx, slog)
+        return
     hdr("Driver Check — Detect missing drivers")
     with Spinner("Scanning hardware…"):
         ctx = {**bctx, **driver_ctx()}
@@ -6610,7 +6615,24 @@ Additional instructions for PERMISSION DOCTOR mode:
 
 # ── FEATURE 14: Boot Analyser ─────────────────────────────────────────────────
 def feat_boot(backend, bctx, slog):
-    hdr("Boot Analyser — Speed up slow boot")
+    """Boot menu — Phase B: rescue after update, dual-boot, or AI speed-up."""
+    hdr("Boot & Back — Rescue, dual-boot, or speed up")
+    print(f"""
+  {BOLD}What do you need?{R}
+    {CYAN}{BOLD}1{R}  Broken after an update / bad kernel   {DIM}(safe rescue playbook){R}
+    {CYAN}{BOLD}2{R}  Dual-boot / Windows missing / wrong clock
+    {CYAN}{BOLD}3{R}  Speed up boot                         {DIM}(AI analysis){R}
+""")
+    try:
+        choice = input(f"  {BOLD}Choose{R} [{C('1',GREEN,BOLD)}/{C('2',CYAN,BOLD)}/{C('3',DIM)}]: ").strip() or "1"
+    except (EOFError, KeyboardInterrupt):
+        return
+    if choice == "2":
+        _run_crisis_playbook("dualboot", backend, bctx, slog)
+        return
+    if choice != "3":
+        _run_crisis_playbook("bad_update", backend, bctx, slog)
+        return
     with Spinner("Analysing boot sequence…"):
         ctx = {**bctx, **boot_ctx()}
     ok("Boot data collected")
@@ -7599,43 +7621,8 @@ def feat_suggest_setup(backend, bctx, slog):
 
 # ── FEATURE 22: Sound Fix ────────────────────────────────────────────────────
 def feat_sound(backend, bctx, slog):
-    hdr("Sound Fix — Fix audio problems")
-    with Spinner("Checking audio system…"):
-        ctx = {**bctx, **_parallel_ctx({
-            "audio_hw":       "lspci | grep -i audio 2>/dev/null",
-            "usb_audio":      "lsusb | grep -i audio 2>/dev/null",
-            "alsa_devices":   "aplay -l 2>/dev/null",
-            "alsa_controls":  "amixer scontrols 2>/dev/null | head -20",
-            "pulse_info":     "pactl info 2>/dev/null",
-            "pulse_sinks":    "pactl list sinks short 2>/dev/null",
-            "pulse_sources":  "pactl list sources short 2>/dev/null",
-            "pipewire_ver":   "pipewire --version 2>/dev/null",
-            "pw_status":      "systemctl --user status pipewire 2>/dev/null | head -6",
-            "pa_status":      "systemctl --user status pulseaudio 2>/dev/null | head -6",
-            "default_sink":   "pactl get-default-sink 2>/dev/null",
-            "default_source": "pactl get-default-source 2>/dev/null",
-            "dmesg_audio":    "dmesg | grep -iE 'audio|sound|snd_|hdmi' | tail -10 2>/dev/null",
-            "loaded_modules": "lsmod | grep snd | head -15",
-        })}
-    try:
-        problem = input(f"\n{BOLD}What's the audio problem? (or press Enter for general fix):{R}\n"
-                        f"{C('(e.g. no sound, mic not working, HDMI audio, crackling noise)',DIM)}\n> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not problem:
-        problem = "Audio is not working. Diagnose and fix the issue."
-    sys_p = BASE_SYS + """
-Additional instructions for SOUND FIX mode:
-- Most common causes: wrong output device selected, audio service not running, channels muted, missing driver.
-- Check if PipeWire or PulseAudio is in use and troubleshoot accordingly.
-- For 'no sound': verify correct output device is selected, check mute state, check service status.
-- For 'mic not working': check input sources, check if muted in amixer/pavucontrol.
-- For HDMI audio: check if HDMI sink appears in pactl and explain how to switch to it.
-- Prefer restarting just the audio service over rebooting.
-- Translate jargon: say "sound card" not "ALSA device", "audio service" not "PulseAudio daemon", "output device" not "sink".
-- Commands like pactl set-default-sink and amixer sset are safe and reversible.
-""" + _sys_ctx_block(ctx)
-    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
+    """Sound / audio — Phase B crisis playbook first, optional AI after."""
+    _run_crisis_playbook("audio", backend, bctx, slog)
 
 # ── FEATURE 23: Display Fix ───────────────────────────────────────────────────
 def feat_display(backend, bctx, slog):
@@ -8821,6 +8808,635 @@ def show_history():
         print(f"  {BLUE}{BOLD}{num_s}{R}  {DIM}{ts}{R}  {BOLD}{task}{R}{feat_s}")
     print()
 
+# ── Shared safe-plan apply (Slow-PC + Phase B crisis playbooks) ───────────────
+
+def _apply_approved_plan(plan, slog, source="playbook"):
+    """Interactive y/s/a/q approval loop for [(desc, cmd, risk, reason), ...].
+    Returns number of commands that exited 0."""
+    if not plan:
+        return 0
+    applied = 0
+    i = 0
+    while i < len(plan):
+        desc, cmd, risk, reason = plan[i]
+        print(f"  {BOLD}[{i + 1}/{len(plan)}]{R}  {desc}")
+        print(f"  {DIM}Why:{R} {reason}")
+        print(f"  {DIM}$ {cmd}{R}")
+        try:
+            ans = input(f"  {BOLD}Apply this fix?{R} "
+                        f"[{C('y',GREEN,BOLD)}=yes  {C('s',YELLOW,BOLD)}=skip  "
+                        f"{C('a',CYAN,BOLD)}=yes to all remaining  "
+                        f"{C('q',RED,BOLD)}=stop]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if ans in ("q", "quit", "stop"):
+            break
+        if ans in ("s", "skip", "n", "no"):
+            print(f"  {DIM}↳ Skipped.{R}\n")
+            i += 1
+            continue
+        apply_rest = ans in ("a", "all")
+        if ans not in ("y", "yes", "") and not apply_rest:
+            print(f"  {DIM}↳ Skipped.{R}\n")
+            i += 1
+            continue
+
+        batch = plan[i:] if apply_rest else [plan[i]]
+        sudo_pw = None
+        needs_sudo = any(re.search(r"\bsudo\b", c) for _, c, _, _ in batch)
+        if needs_sudo:
+            try:
+                sudo_pw = get_or_cache_sudo_password()
+                run_cmd_live("sudo -v", sudo_password=sudo_pw, timeout=30)
+            except KeyboardInterrupt:
+                break
+        for desc2, cmd2, _risk2, _reason2 in batch:
+            print(f"  {CYAN}▶ Applying: {desc2}{R}")
+            pw = sudo_pw if cmd2.lstrip().startswith("sudo") else None
+            rc, _, _ = run_cmd_live(cmd2, sudo_password=pw, timeout=300)
+            _restore_terminal()
+            if rc == 0:
+                ok(desc2)
+                applied += 1
+                slog.append({"command": cmd2, "rc": rc, "source": source})
+                _action_log_append(cmd2, rc, source)
+            else:
+                warn(f"{desc2} — didn't complete (exit {rc}).")
+        if apply_rest:
+            break
+        i += 1
+        print()
+    return applied
+
+
+# ── Phase B — Crisis playbooks (deterministic first, AI optional) ─────────────
+# Day-1 / day-30 panics: Wi-Fi, NVIDIA, audio, broken-after-update, dual-boot.
+# Same shape as Slow-PC: local scan → safe plan → approve → optional AI.
+
+_WIFI_CRISIS_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"(?:my\s+)?(?:wifi|wi-?fi|wlan|wireless|internet|network)\s+"
+    r"(?:is\s+)?(?:not\s+)?(?:working|connecting|connected|available|broken|down|dead)"
+    r"|no\s+(?:wifi|wi-?fi|internet|network)"
+    r"|can'?t\s+connect\s+(?:to\s+)?(?:(?:the\s+)?(?:wifi|wi-?fi|internet|network))?"
+    r"|wifi\s+(?:won'?t|doesn'?t)\s+connect"
+    r"|(?:wifi|internet)\s+(?:adapter|card)\s+(?:not\s+)?(?:found|detected|working)"
+    r")\s*[.!?]?\s*$"
+)
+
+_NVIDIA_CRISIS_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"(?:my\s+)?(?:nvidia|graphics?|gpu|video\s+card)\s+"
+    r"(?:driver|drivers)?\s*(?:is\s+|are\s+)?(?:not\s+)?(?:working|broken|missing|installed)?"
+    r"|install\s+nvidia(?:\s+drivers?)?"
+    r"|nvidia\s+(?:driver|drivers|gpu)"
+    r"|screen\s+tearing"
+    r"|nouveau"
+    r"|proprietary\s+(?:gpu\s+)?drivers?"
+    r")\s*[.!?]?\s*$"
+)
+
+_AUDIO_CRISIS_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"(?:my\s+)?(?:sound|audio|speaker|speakers|microphone|mic|headphones?)\s+"
+    r"(?:is\s+|are\s+)?(?:not\s+)?(?:working|playing|muted|broken|detected|coming\s+out)?"
+    r"|no\s+(?:sound|audio)"
+    r"|can'?t\s+hear"
+    r"|microphone\s+(?:not\s+)?(?:working|detected)"
+    r"|pipewire|pulseaudio"
+    r")\s*[.!?]?\s*$"
+)
+
+_BAD_UPDATE_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"(?:broken|broke|broke[ns]?)\s+after\s+(?:(?:an?\s+)?(?:update|upgrade|kernel\s+update))"
+    r"|(?:system|pc|computer|linux)\s+(?:broke|broken|won'?t\s+boot|doesn'?t\s+boot)\s+after\s+(?:update|upgrade)"
+    r"|after\s+(?:the\s+)?(?:last\s+)?(?:update|upgrade).{0,40}(?:broke|broken|slow|wifi|boot|kernel)"
+    r"|(?:bad|broken)\s+kernel"
+    r"|boot\s+(?:loop|failed|failure|won'?t\s+start)"
+    r"|grub\s+(?:rescue|error|broken|missing)"
+    r")\s*[.!?]?\s*$"
+)
+
+_DUALBOOT_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"dual[\s-]?boot"
+    r"|windows\s+(?:is\s+)?(?:missing|gone|not\s+(?:showing|in\s+grub|booting))"
+    r"|can'?t\s+(?:boot|see)\s+windows"
+    r"|grub\s+(?:doesn'?t|won'?t)\s+(?:show|detect)\s+windows"
+    r"|(?:wrong|incorrect)\s+time\s+after\s+(?:dual[\s-]?boot|windows|reboot)"
+    r"|clock\s+(?:wrong|skew|off)\s+after\s+windows"
+    r"|os-?prober"
+    r")\s*[.!?]?\s*$"
+)
+
+
+def _looks_like_wifi_crisis(text: str) -> bool:
+    return bool(_WIFI_CRISIS_RE.match((text or "").strip()))
+
+
+def _looks_like_nvidia_crisis(text: str) -> bool:
+    return bool(_NVIDIA_CRISIS_RE.match((text or "").strip()))
+
+
+def _looks_like_audio_crisis(text: str) -> bool:
+    return bool(_AUDIO_CRISIS_RE.match((text or "").strip()))
+
+
+def _looks_like_bad_update_crisis(text: str) -> bool:
+    return bool(_BAD_UPDATE_RE.match((text or "").strip()))
+
+
+def _looks_like_dualboot_crisis(text: str) -> bool:
+    return bool(_DUALBOOT_RE.match((text or "").strip()))
+
+
+def _crisis_collect(probes: list) -> dict:
+    """Parallel local probes — no AI. probes: [(key, shell_cmd), ...]"""
+    results = {}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(run_cmd_live, cmd, None, 8): key for key, cmd in probes}
+        for fut in as_completed(futures):
+            key = futures[fut]
+            try:
+                _, stdout, stderr = fut.result()
+                results[key] = (stdout.strip() or stderr.strip() or "(no output)")
+            except Exception:
+                results[key] = "(error)"
+    return results
+
+
+def _crisis_wifi_collect() -> dict:
+    return _crisis_collect([
+        ("nmcli_dev",   "nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status 2>/dev/null || true"),
+        ("nmcli_radio", "nmcli radio 2>/dev/null || true"),
+        ("rfkill",      "rfkill list 2>/dev/null || true"),
+        ("ip_link",     "ip -brief link show 2>/dev/null || true"),
+        ("ping_ip",     "ping -c2 -W2 8.8.8.8 2>&1 || true"),
+        ("ping_dns",    "ping -c2 -W2 google.com 2>&1 || true"),
+        ("resolv",      "grep -E '^nameserver' /etc/resolv.conf 2>/dev/null || true"),
+        ("nm_active",   "systemctl is-active NetworkManager 2>/dev/null || true"),
+        ("wifi_hw",     "lspci 2>/dev/null | grep -iE 'network|wireless|wifi'; lsusb 2>/dev/null | grep -iE 'wireless|wifi|802.11' || true"),
+        ("dmesg_wifi",  "dmesg 2>/dev/null | grep -iE 'firmware|wifi|wlan|iwlwifi|ath|brcm|rtl' | tail -15 || true"),
+    ])
+
+
+def _crisis_wifi_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    rfkill = (results.get("rfkill") or "").lower()
+    if "soft blocked: yes" in rfkill:
+        plan.append((
+            "Unblock Wi-Fi (rfkill soft-block)",
+            "sudo rfkill unblock wifi; sudo rfkill unblock all",
+            "safe",
+            "Wi-Fi is soft-blocked (often airplane mode / Fn key). Unblocking re-enables the radio.",
+        ))
+    radio = (results.get("nmcli_radio") or "").lower()
+    if "wifi" in radio and "disabled" in radio:
+        plan.append((
+            "Turn Wi-Fi radio on (NetworkManager)",
+            "nmcli radio wifi on",
+            "safe",
+            "NetworkManager reports Wi-Fi radio disabled.",
+        ))
+    nm = (results.get("nm_active") or "").strip()
+    if nm and nm != "active":
+        plan.append((
+            "Start NetworkManager",
+            "sudo systemctl enable --now NetworkManager",
+            "moderate",
+            f"NetworkManager is '{nm}', not active — most desktops need it for Wi-Fi.",
+        ))
+    # Bring down interfaces that are DOWN
+    for line in (results.get("ip_link") or "").splitlines():
+        low = line.lower()
+        if "wlan" in low or "wlp" in low or "wifi" in low:
+            if "down" in low.split():
+                iface = line.split()[0]
+                if re.match(r"^[\w.-]+$", iface):
+                    plan.append((
+                        f"Bring interface {iface} up",
+                        f"sudo ip link set {iface} up",
+                        "safe",
+                        f"Interface {iface} is DOWN.",
+                    ))
+            break
+    ping_ip = results.get("ping_ip") or ""
+    ping_dns = results.get("ping_dns") or ""
+    ip_ok = "0% packet loss" in ping_ip or "bytes from" in ping_ip
+    dns_ok = "0% packet loss" in ping_dns or "bytes from" in ping_dns
+    if ip_ok and not dns_ok:
+        plan.append((
+            "Restart DNS resolver",
+            "sudo systemctl restart systemd-resolved 2>/dev/null || "
+            "sudo systemctl restart NetworkManager",
+            "safe",
+            "You can reach the internet by IP but DNS names fail — classic resolver glitch.",
+        ))
+    if not ip_ok:
+        plan.append((
+            "Restart NetworkManager (refresh connections)",
+            "sudo systemctl restart NetworkManager",
+            "moderate",
+            "No ping to 8.8.8.8. Restarting NetworkManager reloads Wi-Fi connections safely.",
+        ))
+        plan.append((
+            "Rescan Wi-Fi networks",
+            "nmcli device wifi rescan 2>/dev/null; nmcli device wifi list 2>/dev/null | head -15 || true",
+            "safe",
+            "Forces a fresh scan so networks reappear in the list.",
+        ))
+    fw = (results.get("dmesg_wifi") or "").lower()
+    if "firmware" in fw and ("fail" in fw or "error" in fw or "not found" in fw):
+        pm = (bctx.get("pkg_mgr") or "apt").strip()
+        reinstall = {
+            "apt":    "sudo apt-get install -y --reinstall linux-firmware",
+            "dnf":    "sudo dnf reinstall -y linux-firmware || sudo dnf install -y linux-firmware",
+            "pacman": "sudo pacman -S --noconfirm linux-firmware",
+            "zypper": "sudo zypper --non-interactive install -f linux-firmware || true",
+        }.get(pm)
+        if reinstall:
+            plan.append((
+                "Reinstall wireless firmware package",
+                reinstall,
+                "moderate",
+                "Kernel logs show firmware load failures for Wi-Fi — reinstalling linux-firmware often fixes it.",
+            ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _crisis_nvidia_collect() -> dict:
+    return _crisis_collect([
+        ("gpu",       "lspci -nn 2>/dev/null | grep -iE 'VGA|3D|Display' || true"),
+        ("nvidia_smi","nvidia-smi 2>&1 | head -20 || true"),
+        ("modules",   "lsmod 2>/dev/null | grep -iE 'nvidia|nouveau' || true"),
+        ("driver_k",  "lspci -k 2>/dev/null | grep -A3 -iE 'VGA|3D|NVIDIA' || true"),
+        ("ubuntu_drv","ubuntu-drivers devices 2>/dev/null | head -20 || true"),
+        ("glx",       "glxinfo 2>/dev/null | grep -iE 'renderer|vendor' | head -5 || true"),
+        ("secure",    "mokutil --sb-state 2>/dev/null || true"),
+    ])
+
+
+def _crisis_nvidia_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    gpu = (results.get("gpu") or "") + (results.get("driver_k") or "")
+    if not re.search(r"nvidia", gpu, re.I):
+        return []  # not an NVIDIA machine — skip deterministic NVIDIA pack
+    smi = results.get("nvidia_smi") or ""
+    mods = (results.get("modules") or "").lower()
+    pm = (bctx.get("pkg_mgr") or "apt").strip()
+    nvidia_ok = "NVIDIA-SMI" in smi and "failed" not in smi.lower() and "not found" not in smi.lower()
+    if nvidia_ok:
+        return []  # drivers already working
+    if "nouveau" in mods and "nvidia" not in mods:
+        plan.append((
+            "Note: open-source Nouveau is loaded (NVIDIA proprietary not active)",
+            "true",  # no-op marker — we'll use a real cmd below
+            "safe",
+            "Nouveau is fine for basic display but weak for games/CUDA. Next steps install proprietary drivers.",
+        ))
+        # Remove the no-op — replace with real install
+        plan = []
+    if pm == "apt":
+        if "driver" in (results.get("ubuntu_drv") or "").lower():
+            plan.append((
+                "Install Ubuntu's recommended NVIDIA driver",
+                "sudo ubuntu-drivers autoinstall",
+                "moderate",
+                "Ubuntu detected a recommended proprietary NVIDIA driver. A reboot is required after.",
+            ))
+        else:
+            plan.append((
+                "Install NVIDIA driver stack (Ubuntu packages)",
+                "sudo apt-get update -q && sudo apt-get install -y nvidia-driver-535 || "
+                "sudo apt-get install -y nvidia-driver-550 || sudo ubuntu-drivers autoinstall",
+                "moderate",
+                "Installs a common proprietary NVIDIA driver. Reboot after it finishes.",
+            ))
+    elif pm == "dnf":
+        plan.append((
+            "Install NVIDIA drivers via akmod (Fedora)",
+            "sudo dnf install -y akmod-nvidia xorg-x11-drv-nvidia-cuda || "
+            "sudo dnf install -y akmod-nvidia",
+            "moderate",
+            "Fedora NVIDIA drivers (RPM Fusion may be required). Reboot after install.",
+        ))
+    elif pm == "pacman":
+        plan.append((
+            "Install NVIDIA drivers (Arch)",
+            "sudo pacman -S --noconfirm nvidia nvidia-utils || "
+            "sudo pacman -S --noconfirm nvidia-dkms nvidia-utils",
+            "moderate",
+            "Installs Arch NVIDIA packages. Reboot after install.",
+        ))
+    # Always offer firmware refresh when NVIDIA present but broken
+    fw = {
+        "apt": "sudo apt-get install -y --reinstall linux-firmware",
+        "dnf": "sudo dnf reinstall -y linux-firmware || true",
+        "pacman": "sudo pacman -S --noconfirm linux-firmware",
+    }.get(pm)
+    if fw and not plan:
+        plan.append(("Reinstall linux-firmware", fw, "moderate",
+                     "No clear driver package path; refreshing firmware is a safe first step."))
+    if not plan:
+        sb = (results.get("secure") or "").strip() or "Secure Boot state unknown"
+        plan.append((
+            "Show Secure Boot / next steps for NVIDIA",
+            "mokutil --sb-state 2>/dev/null || true; "
+            "echo 'Install your distro NVIDIA packages, then reboot. "
+            "If Secure Boot is enabled, enroll the MOK key when prompted.'",
+            "safe",
+            f"NVIDIA GPU detected but no auto-install path for this package manager. "
+            f"Secure Boot: {sb[:80]}",
+        ))
+    return [row for row in plan if not is_dangerous(row[1]) and row[1].strip() != "true"]
+
+
+def _crisis_audio_collect() -> dict:
+    return _crisis_collect([
+        ("pipewire",  "systemctl --user is-active pipewire pipewire-pulse wireplumber 2>/dev/null || true"),
+        ("pulse",     "systemctl --user is-active pulseaudio 2>/dev/null || true"),
+        ("pactl_sink","pactl list short sinks 2>/dev/null || true"),
+        ("pactl_src", "pactl list short sources 2>/dev/null || true"),
+        ("pactl_info","pactl info 2>/dev/null | head -20 || true"),
+        ("cards",     "cat /proc/asound/cards 2>/dev/null || true"),
+        ("mute",      "pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null; "
+                      "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null || true"),
+        ("groups",    "groups 2>/dev/null || true"),
+    ])
+
+
+def _crisis_audio_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    mute = (results.get("mute") or "").lower()
+    if "yes" in mute or "muted: yes" in mute:
+        plan.append((
+            "Unmute default audio output",
+            "pactl set-sink-mute @DEFAULT_SINK@ 0; "
+            "pactl set-sink-volume @DEFAULT_SINK@ 70%",
+            "safe",
+            "The default sink is muted or very quiet.",
+        ))
+    sinks = results.get("pactl_sink") or ""
+    if not sinks.strip() or sinks.strip() == "(no output)":
+        plan.append((
+            "Restart PipeWire audio stack (user session)",
+            "systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || "
+            "systemctl --user restart pulseaudio 2>/dev/null || pulseaudio -k 2>/dev/null || true",
+            "safe",
+            "No audio sinks visible — restarting PipeWire/Pulse usually restores them.",
+        ))
+    else:
+        # Soft restart still helps many glitches
+        pw = (results.get("pipewire") or "")
+        if "inactive" in pw or "failed" in pw:
+            plan.append((
+                "Start PipeWire services",
+                "systemctl --user enable --now pipewire pipewire-pulse wireplumber 2>/dev/null || true",
+                "safe",
+                "PipeWire is not fully active for your user session.",
+            ))
+        plan.append((
+            "Reload audio (PipeWire / PulseAudio)",
+            "systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || "
+            "pulseaudio -k 2>/dev/null || true",
+            "safe",
+            "Clears stuck audio streams and reconnects Bluetooth/headsets.",
+        ))
+    groups = results.get("groups") or ""
+    if "audio" not in groups.split() and "pipewire" not in groups:
+        user = (bctx or {}).get("user") or os.environ.get("USER", "")
+        if user and re.match(r"^[\w.-]+$", user):
+            plan.append((
+                f"Add user '{user}' to the audio group",
+                f"sudo usermod -aG audio {user}",
+                "moderate",
+                "Your user is not in the audio group — log out/in after applying.",
+            ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _crisis_bad_update_collect() -> dict:
+    return _crisis_collect([
+        ("uname",     "uname -r"),
+        ("kernels",   "ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's|.*/vmlinuz-||' | sort -V || true"),
+        ("failed",    "systemctl --failed --no-pager 2>/dev/null | head -15 || true"),
+        ("dpkg_broke","dpkg -l 2>/dev/null | grep -E '^..[^i]' | head -15 || true"),
+        ("last_apt",  "grep -hE 'Upgrade:|Install:|Error:' /var/log/apt/history.log 2>/dev/null | tail -20 || true"),
+        ("grub",      "grep -E '^GRUB_DEFAULT|^GRUB_TIMEOUT' /etc/default/grub 2>/dev/null || true"),
+        ("firmware",  "dmesg 2>/dev/null | grep -iE 'firmware.*(fail|error|not found)' | tail -10 || true"),
+        ("boot_fail", "journalctl -b -p err --no-pager 2>/dev/null | head -25 || true"),
+    ])
+
+
+def _crisis_bad_update_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    pm = (bctx.get("pkg_mgr") or "apt").strip()
+    if pm == "apt":
+        plan.append((
+            "Fix interrupted / broken package installs",
+            "sudo dpkg --configure -a; sudo apt-get -f install -y",
+            "moderate",
+            "Clears half-installed packages that often break the system after a failed upgrade.",
+        ))
+    elif pm == "dnf":
+        plan.append((
+            "Repair package database (dnf)",
+            "sudo dnf check; sudo dnf distro-sync -y --setopt=deltarpm=false || true",
+            "moderate",
+            "Reconciles packages after a messy Fedora/RHEL update.",
+        ))
+    failed = results.get("failed") or ""
+    if "0 loaded units listed" not in failed.lower() and ".service" in failed:
+        plan.append((
+            "Clear failed systemd unit flags",
+            "sudo systemctl reset-failed",
+            "safe",
+            "Failed units clutter boot status after a bad update.",
+        ))
+    if results.get("firmware") and "fail" in (results.get("firmware") or "").lower():
+        fw = {
+            "apt": "sudo apt-get install -y --reinstall linux-firmware",
+            "dnf": "sudo dnf reinstall -y linux-firmware || true",
+            "pacman": "sudo pacman -S --noconfirm linux-firmware",
+        }.get(pm)
+        if fw:
+            plan.append(("Reinstall linux-firmware", fw, "moderate",
+                         "Kernel logs show firmware failures after the update."))
+    kernels = [k.strip() for k in (results.get("kernels") or "").splitlines() if k.strip()]
+    current = (results.get("uname") or "").strip()
+    if len(kernels) >= 2 and current:
+        older = [k for k in kernels if k != current]
+        if older:
+            prev = older[-1]
+            plan.append((
+                f"Show how to boot previous kernel ({prev})",
+                f"echo 'At the GRUB menu: Advanced options → select kernel {prev}. "
+                f"Current kernel is {current}.'",
+                "safe",
+                "If this boot is broken, the previous kernel in GRUB is the safest recovery — "
+                "no packages removed.",
+            ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _crisis_dualboot_collect() -> dict:
+    return _crisis_collect([
+        ("os_release", "cat /etc/os-release 2>/dev/null | head -8 || true"),
+        ("efi",        "ls /sys/firmware/efi 2>/dev/null && echo UEFI || echo BIOS"),
+        ("os_prober",  "command -v os-prober >/dev/null && os-prober 2>/dev/null || echo 'os-prober missing or no other OS'"),
+        ("grub_cfg",   "grep -E 'GRUB_DISABLE_OS_PROBER|GRUB_DEFAULT|windows|Windows' /etc/default/grub 2>/dev/null || true"),
+        ("efi_ents",   "efibootmgr -v 2>/dev/null | head -20 || true"),
+        ("rtc",        "timedatectl 2>/dev/null | head -15 || true"),
+        ("nvme",       "lsblk -f 2>/dev/null | head -30 || true"),
+    ])
+
+
+def _crisis_dualboot_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    pm = (bctx.get("pkg_mgr") or "apt").strip()
+    grub = results.get("grub_cfg") or ""
+    prober = results.get("os_prober") or ""
+    if "os-prober missing" in prober or not prober.strip():
+        install_p = {
+            "apt": "sudo apt-get install -y os-prober",
+            "dnf": "sudo dnf install -y os-prober",
+            "pacman": "sudo pacman -S --noconfirm os-prober",
+            "zypper": "sudo zypper --non-interactive install os-prober",
+        }.get(pm)
+        if install_p:
+            plan.append(("Install os-prober (detect Windows)", install_p, "safe",
+                         "Needed so GRUB can see a Windows install."))
+    if "GRUB_DISABLE_OS_PROBER=true" in grub:
+        plan.append((
+            "Enable os-prober in GRUB config",
+            "sudo sed -i 's/^GRUB_DISABLE_OS_PROBER=true/GRUB_DISABLE_OS_PROBER=false/' /etc/default/grub",
+            "moderate",
+            "Ubuntu often disables os-prober; enabling it lets Windows reappear in the boot menu.",
+        ))
+    # Update grub after prober changes
+    if pm == "apt":
+        plan.append((
+            "Refresh GRUB boot menu",
+            "sudo update-grub",
+            "moderate",
+            "Regenerates grub.cfg so newly detected Windows entries show up.",
+        ))
+    elif pm in ("dnf", "yum"):
+        plan.append((
+            "Refresh GRUB boot menu",
+            "sudo grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || "
+            "sudo grub2-mkconfig -o /boot/efi/EFI/fedora/grub.cfg",
+            "moderate",
+            "Regenerates the Fedora/RHEL GRUB config.",
+        ))
+    elif pm == "pacman":
+        plan.append((
+            "Refresh GRUB boot menu",
+            "sudo grub-mkconfig -o /boot/grub/grub.cfg",
+            "moderate",
+            "Regenerates Arch GRUB config.",
+        ))
+    rtc = (results.get("rtc") or "").lower()
+    if "rtc in local tz: yes" not in rtc and ("dual" in (results.get("os_prober") or "").lower()
+            or "windows" in (results.get("os_prober") or "").lower()
+            or "windows" in (results.get("efi_ents") or "").lower()):
+        plan.append((
+            "Fix dual-boot clock skew (use local RTC)",
+            "sudo timedatectl set-local-rtc 1 --adjust-system-clock",
+            "moderate",
+            "Windows expects local time in the hardware clock; this stops Linux/Windows "
+            "from shifting the clock on every reboot. (Set back to 0 if you leave Windows.)",
+        ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _run_crisis_playbook(kind, backend, bctx, slog):
+    """Scan → safe plan → approve → optional AI deep-dive for one crisis kind."""
+    catalog = {
+        "wifi": (
+            "Network Doctor — Wi-Fi / Internet crisis",
+            _crisis_wifi_collect,
+            _crisis_wifi_build_plan,
+            "Focus on Wi-Fi/network connectivity. Layer by layer: radio → link → "
+            "NetworkManager → gateway → DNS → internet. Prefer reversible fixes.",
+        ),
+        "nvidia": (
+            "Driver Check — NVIDIA / GPU crisis",
+            _crisis_nvidia_collect,
+            _crisis_nvidia_build_plan,
+            "Focus on NVIDIA/GPU drivers. Prefer distro-recommended packages. "
+            "Warn that a reboot is required after driver install.",
+        ),
+        "audio": (
+            "Sound Doctor — Audio crisis",
+            _crisis_audio_collect,
+            _crisis_audio_build_plan,
+            "Focus on PipeWire/PulseAudio/ALSA. Check mute, sinks, user groups, "
+            "and Flatpak portal issues if relevant.",
+        ),
+        "bad_update": (
+            "Boot / Update Rescue — broken after update",
+            _crisis_bad_update_collect,
+            _crisis_bad_update_build_plan,
+            "Focus on recovery after a bad update/kernel: fix packages, firmware, "
+            "failed units, and how to boot the previous kernel from GRUB. "
+            "Do NOT remove the running kernel.",
+        ),
+        "dualboot": (
+            "Dual-Boot Helper — Windows / GRUB / clock",
+            _crisis_dualboot_collect,
+            _crisis_dualboot_build_plan,
+            "Focus on dual-boot: os-prober, GRUB Windows entry, EFI, and RTC clock skew.",
+        ),
+    }
+    title, collect, build, ai_focus = catalog[kind]
+    hdr(title)
+    print(f"\n  {CYAN}{BOLD}Step 1/2  Scanning…{R}  {DIM}(~5 seconds, no AI){R}\n")
+    results = collect()
+    ok("Crisis scan complete")
+    # Compact baseline
+    for key in list(results.keys())[:6]:
+        val = (results.get(key) or "").strip()
+        if val and val not in ("(no output)", "(error)"):
+            line = val.splitlines()[0][:100]
+            print(f"  {DIM}{key}:{R} {line}")
+
+    plan = build(results, bctx or {})
+    applied = 0
+    if not plan:
+        info("No safe automatic fixes looked necessary from this scan.")
+    else:
+        print(f"\n  {CYAN}{BOLD}Step 2/2  Safe fixes ready{R}  "
+              f"{DIM}({len(plan)} — each shown before it runs){R}\n")
+        applied = _apply_approved_plan(plan, slog, source=f"crisis-{kind}")
+
+    if applied:
+        print(f"\n  {GREEN}{BOLD}✓ Applied {applied} fix(es).{R}  "
+              f"{DIM}Reboot if drivers/GRUB/firmware were changed.{R}")
+
+    try:
+        deeper = input(f"\n  {BOLD}Want a deeper AI analysis for what's left?{R} "
+                       f"[{C('y',GREEN,BOLD)}=yes  {C('n',DIM)}=no, I'm done]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        deeper = "n"
+    if deeper not in ("y", "yes"):
+        info("Done. You can re-run this from the menu anytime.")
+        return
+
+    print(f"\n  {CYAN}{BOLD}AI analysing remaining issues…{R}")
+    data_block = "\n\n".join(f"[{k}]\n{v}" for k, v in results.items())
+    prompt = (
+        f"{ai_focus}\n\nLive diagnostic scan:\n\n{data_block}\n\n"
+        f"{applied} safe automatic fix(es) were already applied. "
+        "Focus on remaining issues. Prefer safe, reversible steps. "
+        "Explain each fix in plain English."
+    )
+    fix_engine(backend, BASE_SYS + _sys_ctx_block(bctx or {}),
+               [{"role": "user", "content": prompt}], slog)
+
+
 # ── Slow-PC / Performance Boost helpers (Phase 4) ─────────────────────────────
 # Natural-language "my PC is slow" must NOT burn AI tokens first. Scan locally,
 # apply safe reversible fixes with approval, then optionally offer AI deep-dive.
@@ -9031,60 +9647,7 @@ def feat_performance(backend, bctx, slog):
     else:
         print(f"\n  {CYAN}{BOLD}Step 2/2  Safe speed fixes ready{R}  "
               f"{DIM}({len(plan)} — each shown before it runs){R}\n")
-        i = 0
-        while i < len(plan):
-            desc, cmd, risk, reason = plan[i]
-            print(f"  {BOLD}[{i + 1}/{len(plan)}]{R}  {desc}")
-            print(f"  {DIM}Why:{R} {reason}")
-            print(f"  {DIM}$ {cmd}{R}")
-            try:
-                ans = input(f"  {BOLD}Apply this fix?{R} "
-                            f"[{C('y',GREEN,BOLD)}=yes  {C('s',YELLOW,BOLD)}=skip  "
-                            f"{C('a',CYAN,BOLD)}=yes to all remaining  "
-                            f"{C('q',RED,BOLD)}=stop]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                print()
-                break
-            if ans in ("q", "quit", "stop"):
-                break
-            if ans in ("s", "skip", "n", "no"):
-                print(f"  {DIM}↳ Skipped.{R}\n")
-                i += 1
-                continue
-            apply_rest = ans in ("a", "all")
-            if ans not in ("y", "yes", "") and not apply_rest:
-                print(f"  {DIM}↳ Skipped.{R}\n")
-                i += 1
-                continue
-
-            batch = plan[i:] if apply_rest else [plan[i]]
-            sudo_pw = None
-            needs_sudo = any(re.search(r"\bsudo\b", c) for _, c, _, _ in batch)
-            if needs_sudo:
-                try:
-                    sudo_pw = get_or_cache_sudo_password()
-                    # Warm the sudo ticket so piped forms like `echo | sudo tee …`
-                    # (which cannot use sudo -S via stdin) still run non-interactively.
-                    run_cmd_live("sudo -v", sudo_password=sudo_pw, timeout=30)
-                except KeyboardInterrupt:
-                    break
-            for desc2, cmd2, _risk2, _reason2 in batch:
-                print(f"  {CYAN}▶ Applying: {desc2}{R}")
-                # Leading-sudo commands get -S; warmed ticket covers piped sudo.
-                pw = sudo_pw if cmd2.lstrip().startswith("sudo") else None
-                rc, _, _ = run_cmd_live(cmd2, sudo_password=pw, timeout=300)
-                _restore_terminal()
-                if rc == 0:
-                    ok(desc2)
-                    applied += 1
-                    slog.append({"command": cmd2, "rc": rc, "source": "slow-pc"})
-                    _action_log_append(cmd2, rc, "slow-pc")
-                else:
-                    warn(f"{desc2} — didn't complete (exit {rc}).")
-            if apply_rest:
-                break
-            i += 1
-            print()
+        applied = _apply_approved_plan(plan, slog, source="slow-pc")
 
     if applied:
         print(f"\n  {GREEN}{BOLD}✓ Applied {applied} speed fix(es).{R}  "
@@ -11590,13 +12153,13 @@ MENU_ITEMS = [
     ("1",  "fix",       "Fix a Problem",      "Describe what's wrong in plain English",         feat_fix),
     ("2",  "health",    "Health Check",       "System CPU/RAM/disk/service health scan",        feat_health),
     # ── FIX SOMETHING ────────────────────────────────────────────
-    ("3",  "network",   "Internet / WiFi",    "Diagnose & fix connectivity",                    feat_network),
-    ("4",  "sound",     "Sound / Audio",      "No audio, mic not working, HDMI sound",          feat_sound),
+    ("3",  "network",   "Internet / WiFi",    "Wi-Fi down — scan + safe fixes (optional AI)",   feat_network),
+    ("4",  "sound",     "Sound / Audio",      "No sound — unmute/restart audio (optional AI)",  feat_sound),
     ("5",  "display",   "Display",            "Wrong resolution, monitor not detected",         feat_display),
     ("6",  "bluetooth", "Bluetooth",          "Pairing fails, device not found",                feat_bluetooth),
     ("7",  "printer",   "Printer Setup",      "Install printer, fix printing problems",         feat_printer),
     ("8",  "webcam",    "Webcam Fix",         "Camera not detected, black screen",              feat_webcam),
-    ("9",  "drivers",   "Missing Drivers",    "Detect & install missing drivers",               feat_drivers),
+    ("9",  "drivers",   "Missing Drivers",    "NVIDIA/GPU & missing drivers (safe playbook)",   feat_drivers),
     ("10", "perms",     "Permissions",        "Diagnose & fix permission denied errors",        feat_perms),
     # ── INSTALL & UPDATE ─────────────────────────────────────────
     ("11", "packages",  "Install Software",   "Find & install software by description",         feat_packages),
@@ -11610,7 +12173,7 @@ MENU_ITEMS = [
     # ── SPEED & MAINTENANCE ──────────────────────────────────────
     ("18", "perf",      "Performance Boost",  "My PC is slow — scan + safe speed fixes (optional AI)", feat_performance),
     ("19", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
-    ("20", "boot",      "Speed Up Boot",      "Find why boot is slow & speed it up",            feat_boot),
+    ("20", "boot",      "Boot & Back",        "Broken after update, dual-boot, or speed boot",  feat_boot),
     ("21", "battery",   "Battery & Power",    "Improve battery life, fix overheating",          feat_battery),
     ("22", "services",  "Manage Services",    "Optimise startup & running services",            feat_services),
     # ── INSPECT ──────────────────────────────────────────────────
@@ -11704,13 +12267,13 @@ def show_menu(compact=False):
     _item("2",  "Health Check",        "Is everything running OK?")
 
     _cat(BG_FOREST, "🔧", "FIX SOMETHING", "Common things that go wrong")
-    _item("3",  "Internet / WiFi",     "Can't connect? Slow internet?")
-    _item("4",  "Sound / Audio",       "No sound, mic not working, HDMI audio?")
+    _item("3",  "Internet / WiFi",     "Wi-Fi down? Scan + safe fixes first")
+    _item("4",  "Sound / Audio",       "No sound? Unmute / restart audio safely")
     _item("5",  "Display",             "Wrong resolution, monitor not detected?")
     _item("6",  "Bluetooth",           "Device won't pair or keeps disconnecting?")
     _item("7",  "Printer Setup",       "Install printer or fix printing problems")
     _item("8",  "Webcam Fix",          "Camera not working in Zoom / Teams / Meet?")
-    _item("9",  "Missing Drivers",     "WiFi, GPU, or printer not working?")
+    _item("9",  "Missing Drivers",     "NVIDIA/GPU drivers or other missing hardware")
     _item("10", "Permissions",         "'Permission denied' errors")
 
     _cat(BG_ORANGE, "📦", "INSTALL & UPDATE", "Get software and stay up to date")
@@ -11727,7 +12290,7 @@ def show_menu(compact=False):
     _cat(BG_DARK, "⚡", "SPEED & MAINTENANCE", "Keep your computer fast")
     _item("18", "Performance Boost",   "My PC is slow — scan + safe speed fixes")
     _item("19", "Disk Cleanup",        "Running out of storage?")
-    _item("20", "Speed Up Boot",       "Computer starts slowly? Fix it")
+    _item("20", "Boot & Back",         "Broken after update, dual-boot, or slow boot")
     _item("21", "Battery & Power",     "Battery draining fast? Laptop overheating?")
     _item("22", "Manage Services",     "Speed up startup, fix service failures")
 
