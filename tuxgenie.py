@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.70.0"
+__version__ = "6.71.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1474,7 +1474,7 @@ def _migrate_old_key():
     """Pull an API key from the old ai-terminal install if one exists."""
     try:
         old = json.loads(open(os.path.expanduser("~/.config/ai-terminal/config.json")).read())
-        k = old.get("api_key","").strip()
+        k = (old.get("api_key") or "").strip()
         if k:
             ok("API key migrated from ai-terminal — no need to re-enter!")
             return k
@@ -1486,7 +1486,8 @@ def _load_api_key(cfg):
     """Get API key from env, config, or migration."""
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if key: return key
-    key = cfg.get("api_key", "").strip()
+    # Config may store explicit JSON null — never call .strip() on None.
+    key = (cfg.get("api_key") or "").strip()
     if key: return key
     return _migrate_old_key()
 
@@ -1564,7 +1565,7 @@ def _provider_key(pname: str, cfg=None) -> str:
     if pname == "gemini":
         return (os.environ.get("GEMINI_API_KEY", "").strip()
                 or os.environ.get("GOOGLE_API_KEY", "").strip()
-                or cfg.get("gemini_api_key", "").strip())
+                or (cfg.get("gemini_api_key") or "").strip())
     if pname == "claude":
         return _load_api_key(cfg)
     prov = _OAI_PROVIDERS.get(pname)
@@ -1573,7 +1574,7 @@ def _provider_key(pname: str, cfg=None) -> str:
     k = ""
     for ev in prov.get("env", ()):
         k = k or os.environ.get(ev, "").strip()
-    return k or cfg.get(prov["cfg_key"], "").strip()
+    return k or (cfg.get(prov["cfg_key"]) or "").strip()
 
 
 def _free_failover_available(exclude_provider: str) -> bool:
@@ -2009,7 +2010,7 @@ def feat_settings(backend, bctx, slog):
             print(f"  {DIM}Note: on Google's {BOLD}free{R}{DIM} tier, Google may use your prompts &")
             print(f"  {DIM}responses to improve their products. Prefer Claude for sensitive")
             print(f"  {DIM}systems. Full details in PRIVACY.md.{R}")
-            k = load_cfg().get("gemini_api_key", "").strip()
+            k = (load_cfg().get("gemini_api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Free Gemini key: {CYAN}https://aistudio.google.com/apikey{R}")
                 try:
@@ -2023,7 +2024,7 @@ def feat_settings(backend, bctx, slog):
         elif p == "2":
             print(f"  {DIM}Note: Groq's free tier is rate-limited; check Groq's terms for how")
             print(f"  {DIM}free-tier data is used. Prefer Claude for sensitive systems.{R}")
-            k = load_cfg().get("groq_api_key", "").strip()
+            k = (load_cfg().get("groq_api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Free Groq key: {CYAN}https://console.groq.com/keys{R}")
                 try:
@@ -2038,7 +2039,7 @@ def feat_settings(backend, bctx, slog):
             print(f"  {DIM}Note: SambaNova's free tier is rate-limited (a daily token cap);")
             print(f"  {DIM}check SambaNova's terms for how free-tier data is used. Prefer")
             print(f"  {DIM}Claude for sensitive systems.{R}")
-            k = load_cfg().get("sambanova_api_key", "").strip()
+            k = (load_cfg().get("sambanova_api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Free SambaNova key: {CYAN}https://cloud.sambanova.ai/apis{R}")
                 try:
@@ -2053,7 +2054,7 @@ def feat_settings(backend, bctx, slog):
             print(f"  {DIM}Note: OpenRouter's free models are rate-limited (~20/min, ~50/day);")
             print(f"  {DIM}check OpenRouter's terms for how free-tier data is used. Prefer")
             print(f"  {DIM}Claude for sensitive systems.{R}")
-            k = load_cfg().get("openrouter_api_key", "").strip()
+            k = (load_cfg().get("openrouter_api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Free OpenRouter key: {CYAN}https://openrouter.ai/keys{R}")
                 try:
@@ -2065,7 +2066,7 @@ def feat_settings(backend, bctx, slog):
             save_cfg({"provider": "openrouter", "openrouter_api_key": k})
             ok("Switched to OpenRouter (free tier). Restart TuxGenie for it to take effect.")
         elif p == "5":
-            k = load_cfg().get("api_key", "").strip()
+            k = (load_cfg().get("api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
                 try:
@@ -2693,15 +2694,21 @@ def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=
     """Execute a single tool call from the agentic engine.
     Uses run_cmd_live for real-time streaming output and proper sudo handling."""
     name = block.name
-    inp  = block.input
+    raw_inp = getattr(block, "input", None)
+    inp = raw_inp if isinstance(raw_inp, dict) else {}
     if approve_state is None:
         approve_state = {}
 
     if name == "run_command":
-        cmd           = inp["command"]
-        description   = inp.get("description", "")
-        risk          = inp.get("risk", "safe")
-        requires_root = inp.get("requires_root", False)
+        # Models (esp. free providers) sometimes omit command or send JSON null.
+        # Never call .strip() on None — return a clear error so the AI can retry.
+        cmd           = (inp.get("command") or "").strip()
+        description   = inp.get("description") or ""
+        risk          = inp.get("risk") or "safe"
+        requires_root = bool(inp.get("requires_root", False))
+        if not cmd:
+            return ("ERROR: run_command was called with an empty or missing command. "
+                    "Call it again with a real shell command in the 'command' field.")
 
         _display_tool_call(cmd, description, risk, requires_root, step_counter[0])
         step_counter[0] += 1
@@ -2719,7 +2726,7 @@ def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=
 
         # Use run_cmd_live for real-time output streaming + proper sudo handling
         actual_cmd = cmd
-        if requires_root and not cmd.strip().startswith("sudo"):
+        if requires_root and not cmd.startswith("sudo"):
             actual_cmd = f"sudo {cmd}"
 
         # Heavy package-manager / release-upgrade commands need a much longer
@@ -2756,7 +2763,10 @@ def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=
         return output[:4000]   # cap what goes back to Claude
 
     elif name == "read_file":
-        path = os.path.realpath(os.path.expanduser(inp["path"]))
+        path_raw = (inp.get("path") or "").strip()
+        if not path_raw:
+            return "ERROR: read_file was called with an empty or missing path."
+        path = os.path.realpath(os.path.expanduser(path_raw))
         # Block paths that contain private credentials or sensitive system data
         _DENIED_PREFIXES = (
             os.path.expanduser("~/.ssh"),
@@ -2998,11 +3008,14 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
 
             print(" " * 40, end="\r", flush=True)
 
-            # Show any text Claude produced (explanations between tool calls)
+            # Show any text the model produced (explanations between tool calls).
+            # Guard text is None — hasattr alone is not enough (issue #9 crash:
+            # AttributeError: 'NoneType' object has no attribute 'strip').
             for block in response.content:
-                if hasattr(block, "text") and block.text.strip():
+                txt = getattr(block, "text", None) or ""
+                if txt.strip():
                     print()
-                    for line in block.text.strip().splitlines():
+                    for line in txt.strip().splitlines():
                         print(f"  {line}")
 
             # Claude finished — no more tool calls
@@ -3218,6 +3231,7 @@ def _argv_is_dangerous(toks) -> bool:
 
 
 def is_dangerous(cmd):
+    cmd = cmd or ""
     # Layer 1: fast regex denylist (redirects to devices, sudo shells, etc.)
     if any(re.search(p, cmd) for p in DANGER_RE):
         return True
@@ -3306,7 +3320,7 @@ def _is_read_only(cmd: str) -> bool:
     """Conservative: True only when we're confident the command cannot change
     system state (no sudo, no redirection/tee, no known write sub-command).
     Anything we can't be sure about returns False so the user is asked."""
-    s = cmd.strip()
+    s = (cmd or "").strip()
     if not s:
         return False
     if re.search(r"\bsudo\b", s):
@@ -4312,7 +4326,7 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
     Returns True if handled, False to fall back to AI (natural language).
     On failure, offers AI explanation if backend is available.
     """
-    cmd = user_input.strip()
+    cmd = (user_input or "").strip()
 
     # Natural-language system update — run the right command for this distro
     # without burning AI tokens. "update this pc", "upgrade my system", etc.
@@ -4535,7 +4549,7 @@ def ask_ai(backend, system, messages, max_tokens=4096):
 
 def clean_json(text):
     """Extract valid JSON from AI response, even if surrounded by extra text."""
-    text = text.strip()
+    text = (text or "").strip()
     # Strip markdown fences
     text = re.sub(r"^```(?:json)?\s*\n?", "", text, flags=re.MULTILINE)
     text = re.sub(r"\n?```\s*$", "", text, flags=re.MULTILINE)
@@ -4947,7 +4961,7 @@ _GUI_LAUNCHERS = (
 )
 
 def is_gui_cmd(cmd):
-    s = cmd.strip()
+    s = (cmd or "").strip()
     return any(s == g or s.startswith(g + " ") for g in _GUI_LAUNCHERS)
 
 def get_sudo_password():
@@ -5417,7 +5431,7 @@ def _synthesize_findings(backend, question: str, step_outputs: list):
                         [{"role": "user", "content": synth_content}], max_tokens=500)
         # Sanitize AI output: replace ❯ (TuxGenie's own prompt char) with →
         # so the model can't accidentally inject our input prompt into displayed text
-        answer = answer.strip().replace('❯', '→')
+        answer = (answer or "").strip().replace('❯', '→')
         if answer:
             print(header)
             for line in answer.splitlines():
@@ -5574,10 +5588,11 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
 
         for i, step in enumerate(steps, 1):
             output_has_errors = False
-            risk    = step.get("risk", "safe").lower()
-            cmd     = step.get("command", "").strip()
-            desc    = step.get("description", "")
-            meaning = step.get("what_this_means", "")
+            # .get(k, default) does NOT replace JSON null — coerce None explicitly.
+            risk    = (step.get("risk") or "safe").lower()
+            cmd     = (step.get("command") or "").strip()
+            desc    = step.get("description") or ""
+            meaning = step.get("what_this_means") or ""
 
             if is_dangerous(cmd):
                 risk = "dangerous"
@@ -5758,8 +5773,8 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
 
         # ── Auto-verification ──
         # Run verify_command to PROVE the task is done, don't just ask the user
-        verify_cmd = plan.get("verify_command", "").strip()
-        sc = plan.get("success_check", "")
+        verify_cmd = (plan.get("verify_command") or "").strip()
+        sc = plan.get("success_check") or ""
         any_step_failed = any(
             not s.get("success", True) for s in step_outputs if not s.get("skipped")
         )
@@ -8340,7 +8355,7 @@ def _mem_record_fix(problem: str, successful_steps: list,
     solved  = data.get("solved", [])
     p_lower = problem.lower().strip()
     # Remove any previous entry for the same problem (keep the latest fix)
-    solved  = [s for s in solved if s.get("problem", "").lower() != p_lower]
+    solved  = [s for s in solved if (s.get("problem") or "").lower() != p_lower]
     entry = {
         "ts":      datetime.datetime.now().strftime("%Y-%m-%d"),
         "problem": _clean_problem_label(problem, 120),
@@ -8496,8 +8511,8 @@ def _mem_search(query: str, n: int = 3) -> list:
         return []
     scored = []
     for entry in solved:
-        e_text  = (entry.get("problem", "") + " " +
-                   " ".join(entry.get("steps", []))).lower()
+        e_text  = ((entry.get("problem") or "") + " " +
+                   " ".join(entry.get("steps") or [])).lower()
         e_words = set(re.findall(r'\b\w{3,}\b', e_text))
         score   = len(q_words & e_words)
         if score > 0:
@@ -10507,7 +10522,11 @@ def _zoho_install_tarball(tar_path):
     print(f"  {DIM}Extracting to {extract_to}…{R}")
     try:
         with tarfile.open(tar_path, "r:*") as tf:
-            tf.extractall(extract_to)
+            # filter='data' is the Python 3.12+ safe default (avoids 3.14 DeprecationWarning).
+            try:
+                tf.extractall(extract_to, filter="data")
+            except TypeError:
+                tf.extractall(extract_to)
     except Exception as e:
         err(f"Could not extract tarball: {e}")
         return False
@@ -11504,7 +11523,7 @@ def main():
                 # Input came from the external tg shell function — pass straight to AI
                 agentic_engine(backend, choice, bctx, session_log)
             elif _last_failed:
-                err_out = (_last_failed.get("stderr") or _last_failed.get("stdout", "")).strip()
+                err_out = (_last_failed.get("stderr") or _last_failed.get("stdout") or "").strip()
                 ctx = (
                     f"The command I just ran failed:\n"
                     f"  Command: {_last_failed['cmd']}\n"

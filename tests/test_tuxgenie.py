@@ -383,16 +383,17 @@ class TestGeminiBackend:
         assert "snap install chromium" in blob and "chromium installed" in blob
 
     def test_tool_use_block_has_no_text_attr(self):
-        # Regression: agentic_engine does `hasattr(b,'text') and b.text.strip()`.
-        # A tool_use block must NOT expose .text (or it crashes on None.strip()).
+        # Regression: producers should not expose .text on tool_use blocks.
+        # Consumers must ALSO tolerate text=None (see TestNullSafetyFundamentals).
         tb = tg._GBlock("text", text="hi")
         ub = tg._GBlock("tool_use", name="run_command", input={"command": "x"}, id="c1")
         assert tb.type == "text" and tb.text == "hi"
         assert ub.type == "tool_use" and not hasattr(ub, "text")
-        # emulate the exact engine loop that crashed
-        for b in (tb, ub):
-            if hasattr(b, "text") and b.text.strip():
-                pass  # must not raise
+        # Safe consumer pattern (matches agentic_engine) — must not raise.
+        for b in (tb, ub, tg._GBlock("text", text=None)):
+            txt = getattr(b, "text", None) or ""
+            if txt.strip():
+                pass
 
     def test_thought_signature_round_trips(self):
         # Gemini 3.x: a functionCall's thoughtSignature must be captured on parse

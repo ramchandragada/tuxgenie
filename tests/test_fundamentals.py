@@ -390,6 +390,69 @@ class TestSafetyFundamentals:
         assert ran == [], "a dangerous recalled step must not execute"
 
 
+class TestNullSafetyFundamentals:
+    """Phase-1 hardening: never crash on JSON null / missing AI fields.
+    GitHub issue #9 was AttributeError: 'NoneType' has no attribute 'strip'
+    when an AI content block had .text = None."""
+
+    def test_agentic_text_display_tolerates_none_text(self):
+        # Exact consumer pattern used by agentic_engine — must not raise.
+        class _B:
+            pass
+        blocks = []
+        b1 = _B(); b1.text = None          # hasattr True, value None (issue #9)
+        b2 = _B(); b2.text = "  hello  "
+        b3 = _B()                          # no .text at all
+        blocks.extend([b1, b2, b3])
+        shown = []
+        for block in blocks:
+            txt = getattr(block, "text", None) or ""
+            if txt.strip():
+                shown.append(txt.strip())
+        assert shown == ["hello"]
+
+    def test_config_null_api_keys_do_not_crash(self):
+        assert tg._load_api_key({"api_key": None}) == ""
+        assert tg._provider_key("gemini", {"gemini_api_key": None}) == ""
+        assert tg._provider_key("groq", {"groq_api_key": None}) == ""
+
+    def test_handle_tool_call_null_command_returns_error(self):
+        block = types.SimpleNamespace(
+            name="run_command",
+            input={"command": None, "description": None, "risk": None},
+        )
+        out = tg._handle_tool_call(block, None, [1])
+        assert out.startswith("ERROR:")
+        assert "command" in out.lower()
+
+    def test_handle_tool_call_missing_command_returns_error(self):
+        block = types.SimpleNamespace(name="run_command", input={})
+        out = tg._handle_tool_call(block, None, [1])
+        assert out.startswith("ERROR:")
+
+    def test_handle_tool_call_non_dict_input(self):
+        block = types.SimpleNamespace(name="run_command", input=None)
+        out = tg._handle_tool_call(block, None, [1])
+        assert out.startswith("ERROR:")
+
+    def test_is_dangerous_none_is_safe(self):
+        assert tg.is_dangerous(None) is False
+        assert tg.is_dangerous("") is False
+
+    def test_clean_json_none(self):
+        assert tg.clean_json(None) == ""
+        assert tg.clean_json("") == ""
+
+    def test_memory_null_problem_fields(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(tg, "MEMORY_FILE", str(tmp_path / "memory.json"))
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        # Should not raise when an old entry has problem: null
+        tg._mem_save({"solved": [{"problem": None, "steps": ["x"], "ts": "2026-01-01"}]})
+        tg._mem_record_fix("wifi broken", ["systemctl restart NetworkManager"])
+        hits = tg._mem_search("wifi")
+        assert hits and "wifi" in (hits[0].get("problem") or "").lower()
+
+
 class TestCrossDistroFundamentals:
     def test_prompt_unchanged_on_debian(self):
         p = "Install Foo via apt: foo."
