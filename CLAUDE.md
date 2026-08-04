@@ -99,6 +99,15 @@ finish the task on Claude — paid, so only after an explicit "yes"
 - **Undo** (menu 17): restore a snapshot, or deterministic reverse of known
   session commands, with optional AI for leftovers.
 
+## Phase D — Beginner GUI
+
+- `tuxgenie --gui` opens a Tk beginner launcher (needs `python3-tk`).
+- Desktop entry (`tuxgenie-gui`) tries `--gui` first; exit 2 falls back to
+  VTE app window / terminal (no rewrite of CLI features).
+- Buttons shell out to `tuxgenie --feature …`, plain-English one-shots, or
+  `--self-update`. "Full assistant" opens `tuxgenie-app` / interactive CLI —
+  never re-enters `tuxgenie-gui` (avoids a GUI loop).
+
 ## Cost Optimisation Principles
 
 - Default model: Haiku (cheapest). Escalate to Sonnet only on failure.

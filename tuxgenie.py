@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.79.0"
+__version__ = "6.80.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -13131,6 +13131,284 @@ def first_run_check():
 _active_feature = "startup"
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SECTION — Phase D beginner GUI (Tk launcher; wraps existing CLI features)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Desktop users get a simple window: type plain English or tap a common fix.
+# Every action opens a terminal running the real TuxGenie CLI — no feature rewrite.
+
+# (id, button label, tip, kind, payload)
+# kind: "issue" → tuxgenie "<text>"; "feature" → --feature NAME; "self-update";
+#       "full" → open full terminal assistant (tuxgenie-gui / interactive).
+_BEGINNER_GUI_ACTIONS = (
+    ("fix",      "Fix a problem",     "Describe what's wrong in plain English", "feature", "fix"),
+    ("health",   "Health check",      "CPU, RAM, disk, services",               "feature", "health"),
+    ("network",  "Wi-Fi / Internet",  "Can't connect? Safe scan + fixes",       "feature", "network"),
+    ("sound",    "Sound / Audio",     "No sound or mic issues",                 "feature", "sound"),
+    ("drivers",  "Drivers / NVIDIA",  "Missing GPU or hardware drivers",        "feature", "drivers"),
+    ("perf",     "My PC is slow",     "Scan + safe speed fixes",                "feature", "perf"),
+    ("backup",   "Backup settings",   "Create or restore a config snapshot",    "feature", "backup"),
+    ("updates",  "System updates",    "Check and install OS updates",           "feature", "updates"),
+    ("selfupd",  "Update TuxGenie",   "Get the latest TuxGenie release",        "self-update", ""),
+    ("settings", "Settings",          "AI provider, keys, preferences",         "feature", "settings"),
+    ("full",     "Full assistant",    "Open the complete terminal menu",        "full", ""),
+)
+
+_GUI_NO_TK_EXIT = 2  # tuxgenie-gui falls back to VTE/terminal when tkinter missing
+
+
+def _gui_tk_available() -> bool:
+    """True when Tkinter can be imported (needs python3-tk on Debian/Ubuntu)."""
+    try:
+        import tkinter  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def _gui_resolve_tuxgenie_argv() -> list:
+    """Argv prefix that runs this TuxGenie install (binary or python + this file)."""
+    which = shutil.which("tuxgenie")
+    if which and os.path.basename(which) == "tuxgenie":
+        return [which]
+    return [sys.executable, os.path.abspath(__file__)]
+
+
+def _gui_build_cli_argv(kind: str, payload: str = "") -> list:
+    """Build full argv for a beginner-GUI action (not including terminal host)."""
+    base = _gui_resolve_tuxgenie_argv()
+    if kind == "feature":
+        return base + ["--feature", payload]
+    if kind == "issue":
+        text = (payload or "").strip()
+        if not text:
+            return base + ["--feature", "fix"]
+        return base + [text]
+    if kind == "self-update":
+        return base + ["--self-update"]
+    if kind == "full":
+        return base[:]
+    return base[:]
+
+
+def _gui_shell_quote_cmd(argv: list) -> str:
+    return " ".join(shlex.quote(a) for a in argv)
+
+
+def _gui_spawn_in_terminal(argv: list) -> bool:
+    """Open a terminal emulator running argv; hold until Enter after exit."""
+    inner = (
+        f'printf "\\033]0;TuxGenie\\007"; {_gui_shell_quote_cmd(argv)}; '
+        f'echo; read -rp "Press Enter to close…" _'
+    )
+    candidates = (
+        ("ptyxis", ["ptyxis", "--", "bash", "-c", inner]),
+        ("gnome-terminal", ["gnome-terminal", "--", "bash", "-c", inner]),
+        ("konsole", ["konsole", "--hold", "-e", "bash", "-c", inner]),
+        ("xfce4-terminal", ["xfce4-terminal", "--hold", f"--command=bash -c {shlex.quote(inner)}"]),
+        ("mate-terminal", ["mate-terminal", "--", "bash", "-c", inner]),
+        ("lxterminal", ["lxterminal", "-e", "bash", "-c", inner]),
+        ("tilix", ["tilix", "-e", "bash", "-c", inner]),
+        ("terminator", ["terminator", "-e", f"bash -c {shlex.quote(inner)}"]),
+        ("alacritty", ["alacritty", "--class", "TuxGenie", "-e", "bash", "-c", inner]),
+        ("kitty", ["kitty", "--class", "TuxGenie", "bash", "-c", inner]),
+        ("xterm", ["xterm", "-class", "TuxGenie", "-e", "bash", "-c", inner]),
+    )
+    for name, cmd in candidates:
+        if not shutil.which(name):
+            continue
+        try:
+            subprocess.Popen(cmd, start_new_session=True)
+            return True
+        except Exception:
+            continue
+    try:
+        subprocess.Popen(argv, start_new_session=True)
+        return True
+    except Exception:
+        return False
+
+
+def _gui_open_full_assistant() -> bool:
+    """Open the full terminal UI — never tuxgenie-gui (that would re-enter --gui)."""
+    # Prefer the VTE app window (own icon); exit 3 means GTK missing → fall through.
+    app = shutil.which("tuxgenie-app")
+    if app:
+        try:
+            # Non-blocking; if VTE missing the process exits 3 quickly — user can
+            # still use the terminal spawn below on a later click if needed.
+            subprocess.Popen([app], start_new_session=True)
+            return True
+        except Exception:
+            pass
+    return _gui_spawn_in_terminal(_gui_build_cli_argv("full"))
+
+
+def _gui_action_by_id(action_id: str):
+    for row in _BEGINNER_GUI_ACTIONS:
+        if row[0] == action_id:
+            return row
+    return None
+
+
+def _gui_run_action(kind: str, payload: str = "") -> bool:
+    """Dispatch a beginner action. Returns True if something was launched."""
+    if kind == "full":
+        return _gui_open_full_assistant()
+    return _gui_spawn_in_terminal(_gui_build_cli_argv(kind, payload))
+
+
+def gui_main(argv=None) -> int:
+    """Phase D beginner GUI entry. Returns process exit code.
+    Exit 2 when Tkinter is unavailable (launcher should fall back to terminal UI).
+    """
+    if not _gui_tk_available():
+        print(
+            "TuxGenie beginner GUI needs Tkinter.\n"
+            "  Debian/Ubuntu:  sudo apt install python3-tk\n"
+            "  Fedora:         sudo dnf install python3-tkinter\n"
+            "  Arch:           sudo pacman -S tk\n"
+            "Or run the full assistant:  tuxgenie\n",
+            file=sys.stderr,
+        )
+        return _GUI_NO_TK_EXIT
+
+    import tkinter as tk
+    from tkinter import font as tkfont
+
+    # Brand colours — teal + ink (avoid purple/cream AI-default palettes).
+    BG = "#eef3f7"
+    PANEL = "#ffffff"
+    INK = "#14192e"
+    MUTED = "#5a6478"
+    TEAL = "#008091"
+    TEAL_DARK = "#006570"
+    ORANGE = "#c35508"
+    BORDER = "#d0dae6"
+
+    root = tk.Tk()
+    root.title(f"TuxGenie {__version__}")
+    root.configure(bg=BG)
+    root.minsize(520, 560)
+    root.geometry("640x640")
+
+    for icon_path in (
+        "/usr/share/icons/hicolor/128x128/apps/tuxgenie.png",
+        "/usr/share/icons/hicolor/64x64/apps/tuxgenie.png",
+        os.path.expanduser("~/.local/share/icons/hicolor/128x128/apps/tuxgenie.png"),
+    ):
+        if os.path.isfile(icon_path):
+            try:
+                img = tk.PhotoImage(file=icon_path)
+                root.iconphoto(True, img)
+                root._tg_icon = img
+            except Exception:
+                pass
+            break
+
+    status = tk.StringVar(root, value="Ready — type what you need, or tap a button.")
+
+    def set_status(msg: str):
+        status.set(msg)
+        root.update_idletasks()
+
+    def on_ask(_event=None):
+        text = entry.get().strip()
+        if not text:
+            set_status("Type something first — e.g. “my wifi is not working”.")
+            return
+        set_status(f"Opening assistant for: {text[:60]}")
+        if _gui_run_action("issue", text):
+            set_status("Opened in a terminal window.")
+        else:
+            set_status("Could not open a terminal. Run: tuxgenie \"your request\"")
+
+    def on_action(kind: str, payload: str, label: str):
+        set_status(f"Starting: {label}…")
+        if _gui_run_action(kind, payload):
+            set_status(f"Opened: {label}")
+        else:
+            set_status(f"Could not start {label}. Try: tuxgenie")
+
+    header = tk.Frame(root, bg=TEAL, padx=20, pady=16)
+    header.pack(fill="x")
+    title_font = tkfont.Font(family="DejaVu Sans", size=22, weight="bold")
+    sub_font = tkfont.Font(family="DejaVu Sans", size=11)
+    btn_font = tkfont.Font(family="DejaVu Sans", size=10, weight="bold")
+    tip_font = tkfont.Font(family="DejaVu Sans", size=9)
+
+    tk.Label(header, text="TuxGenie", font=title_font, fg="#ffffff", bg=TEAL).pack(anchor="w")
+    tk.Label(
+        header,
+        text="Linux made easy — ask in plain English",
+        font=sub_font, fg="#d7f3f6", bg=TEAL,
+    ).pack(anchor="w", pady=(4, 0))
+
+    body = tk.Frame(root, bg=BG, padx=20, pady=16)
+    body.pack(fill="both", expand=True)
+
+    ask_frame = tk.Frame(body, bg=PANEL, highlightbackground=BORDER,
+                         highlightthickness=1, padx=12, pady=12)
+    ask_frame.pack(fill="x")
+    tk.Label(ask_frame, text="What do you need?", font=btn_font,
+             fg=INK, bg=PANEL).pack(anchor="w")
+    row = tk.Frame(ask_frame, bg=PANEL)
+    row.pack(fill="x", pady=(8, 0))
+    entry = tk.Entry(row, font=sub_font, fg=INK, bg="#f8fafc",
+                     relief="flat", highlightthickness=1,
+                     highlightbackground=BORDER, highlightcolor=TEAL)
+    entry.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 8))
+    entry.bind("<Return>", on_ask)
+    tk.Button(
+        row, text="Ask", font=btn_font, fg="#ffffff", bg=ORANGE,
+        activebackground="#a34606", activeforeground="#ffffff",
+        relief="flat", padx=16, pady=6, cursor="hand2",
+        command=on_ask,
+    ).pack(side="right")
+    tk.Label(
+        ask_frame,
+        text='Examples: “my wifi is not working” · “install chrome” · “why is it slow?”',
+        font=tip_font, fg=MUTED, bg=PANEL,
+    ).pack(anchor="w", pady=(8, 0))
+
+    tk.Label(body, text="Quick actions", font=btn_font, fg=INK, bg=BG).pack(
+        anchor="w", pady=(16, 8))
+    grid = tk.Frame(body, bg=BG)
+    grid.pack(fill="both", expand=True)
+    for i, (_aid, label, tip, kind, payload) in enumerate(_BEGINNER_GUI_ACTIONS):
+        r, c = divmod(i, 2)
+        cell = tk.Frame(grid, bg=PANEL, highlightbackground=BORDER,
+                        highlightthickness=1, padx=10, pady=10)
+        cell.grid(row=r, column=c, sticky="nsew", padx=4, pady=4)
+        grid.grid_columnconfigure(c, weight=1)
+        grid.grid_rowconfigure(r, weight=1)
+        tk.Button(
+            cell, text=label, font=btn_font, fg="#ffffff", bg=TEAL,
+            activebackground=TEAL_DARK, activeforeground="#ffffff",
+            relief="flat", anchor="w", cursor="hand2",
+            command=lambda k=kind, p=payload, lab=label: on_action(k, p, lab),
+        ).pack(fill="x")
+        tk.Label(cell, text=tip, font=tip_font, fg=MUTED, bg=PANEL,
+                 wraplength=260, justify="left").pack(anchor="w", pady=(6, 0))
+
+    footer = tk.Frame(root, bg=BG, padx=20, pady=10)
+    footer.pack(fill="x")
+    tk.Label(footer, textvariable=status, font=tip_font, fg=MUTED, bg=BG,
+             anchor="w").pack(fill="x")
+    tk.Label(
+        footer,
+        text=f"v{__version__}  ·  www.tuxgenie.com  ·  Full power stays in the terminal",
+        font=tip_font, fg=MUTED, bg=BG, anchor="w",
+    ).pack(fill="x", pady=(4, 0))
+
+    entry.focus_set()
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        pass
+    return 0
+
+
 def main():
     global _active_feature, _last_failed
     # A consumer CLI shouldn't spew Python warnings (DeprecationWarning, etc.)
@@ -13139,6 +13417,9 @@ def main():
     # to developers.
     import warnings
     warnings.filterwarnings("ignore")
+    # Phase D: beginner GUI — before crash guard / interactive theme.
+    if len(sys.argv) >= 2 and sys.argv[1] in ("--gui", "-g"):
+        sys.exit(gui_main())
     _crash_guard()   # increment crash counter; rolls back if 3 consecutive crashes
     parser = argparse.ArgumentParser(
         prog="tuxgenie",
@@ -13146,8 +13427,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   tuxgenie                          # Interactive menu
+  tuxgenie --gui                    # Beginner desktop window (Phase D)
   tuxgenie "my wifi is not working" # One-shot fix (no menu)
   tuxgenie --feature health         # Run a specific feature directly
+  tuxgenie --self-update            # Check for a newer TuxGenie release
 """,
     )
     parser.add_argument("--version", action="version", version=f"TuxGenie {__version__}")
@@ -13160,6 +13443,14 @@ def main():
         help="Run a specific feature directly (e.g. health, network, disk, git, security)"
     )
     parser.add_argument(
+        "--gui", "-g", action="store_true",
+        help="Open the beginner desktop GUI (requires python3-tk)"
+    )
+    parser.add_argument(
+        "--self-update", action="store_true",
+        help="Check GitHub Releases and update TuxGenie"
+    )
+    parser.add_argument(
         "--digest", action="store_true",
         help="Show the weekly health digest (force-runs even if <7 days since last)"
     )
@@ -13168,6 +13459,12 @@ def main():
         help="Run the background error monitor daemon (used by the systemd user service)"
     )
     args = parser.parse_args()
+    if args.gui:
+        sys.exit(gui_main())
+    if args.self_update:
+        _crash_mark_clean()
+        feat_self_update()
+        return
 
     # ── Pipe mode: journalctl -xe | tuxgenie explain ─────────────────────────
     if not sys.stdin.isatty():

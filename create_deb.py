@@ -282,7 +282,7 @@ Priority: optional
 Architecture: {ARCH}
 Installed-Size: {INSTALLED_KB}
 Depends: python3 (>= 3.8)
-Recommends: python3-pip, python3-gi, gir1.2-vte-2.91, gir1.2-gtk-3.0, xterm | gnome-terminal | konsole | xfce4-terminal | mate-terminal | lxterminal | ptyxis
+Recommends: python3-pip, python3-tk, python3-gi, gir1.2-vte-2.91, gir1.2-gtk-3.0, xterm | gnome-terminal | konsole | xfce4-terminal | mate-terminal | lxterminal | ptyxis
 Conflicts: ai-terminal, tuxgenie (<< {VERSION})
 Replaces: ai-terminal, tuxgenie (<< {VERSION})
 Provides: ai-terminal
@@ -295,11 +295,12 @@ Description: AI-powered Linux assistant (plain-English troubleshooting)
  scheduling, permission fixer, boot repair, Docker management, config backup,
  hardware info, SSH diagnostics, process manager, and session rollback.
  .
- Usage: tuxgenie
+ Usage: tuxgenie   or   tuxgenie --gui  (beginner desktop window)
  .
  Free to run: choose a free AI provider on first launch (Google Gemini or Groq,
- no credit card) or Anthropic Claude for best quality. Common terminal commands
- run with no key at all. The Claude SDK is fetched only if you connect Claude.
+ no credit card), local Ollama, or Anthropic Claude for best quality. Common
+ terminal commands run with no key at all. Desktop menu opens the beginner GUI
+ when python3-tk is installed (recommended).
 """.encode()
 
 POSTINST = b"""\
@@ -328,6 +329,13 @@ case "$1" in
 #!/bin/bash
 # TuxGenie GUI launcher - opens tuxgenie as an app-like, single-instance window.
 # Avoid x-terminal-emulator (can resolve to Warp on 26.04+).
+
+# Phase D: beginner Tk window first (exit 2 = no python3-tk).
+if command -v tuxgenie >/dev/null 2>&1; then
+    tuxgenie --gui
+    rc=$?
+    [ "$rc" != "2" ] && exit "$rc"
+fi
 
 # Prefer the real app window (own icon, groups in the dock). Exit 3 = GTK/VTE
 # unavailable or spawn failed -> fall back to a plain terminal below.
@@ -393,13 +401,13 @@ Version=1.0
 Type=Application
 Name=TuxGenie
 GenericName=AI Linux Assistant
-Comment=AI-powered Linux assistant using Claude - fix any Linux problem in plain English
+Comment=AI-powered Linux assistant - fix any Linux problem in plain English
 Icon=tuxgenie
 TryExec=tuxgenie
 Exec=/usr/bin/tuxgenie-gui
 Terminal=false
 Categories=System;Administration;Utility;
-Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
+Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;gui;beginner;
 StartupNotify=false
 StartupWMClass=com.tuxgenie.TuxGenie
 SingleMainWindow=true
@@ -609,6 +617,14 @@ LAUNCHER_GUI = b"""\
 # Note: we intentionally avoid x-terminal-emulator because on Ubuntu 26.04+
 # it can resolve to Warp Terminal, which doesn't accept the standard -e flag.
 
+# Phase D: prefer the beginner Tk window when python3-tk is installed.
+# Exit 2 = Tkinter unavailable -> fall through to VTE / terminal UI below.
+if command -v tuxgenie >/dev/null 2>&1; then
+    tuxgenie --gui
+    rc=$?
+    [ "$rc" != "2" ] && exit "$rc"
+fi
+
 # Prefer the real app window (own icon, groups in the dock, single-instance via
 # GtkApplication). Exit code 3 = GTK/VTE unavailable or spawn failed -> fall
 # back to a plain terminal below. Any other exit code is the app's own result.
@@ -686,13 +702,13 @@ Version=1.0
 Type=Application
 Name=TuxGenie
 GenericName=AI Linux Assistant
-Comment=AI-powered Linux assistant using Claude - fix any Linux problem in plain English
+Comment=AI-powered Linux assistant - fix any Linux problem in plain English
 Icon=tuxgenie
 TryExec=tuxgenie
 Exec=/usr/bin/tuxgenie-gui
 Terminal=false
 Categories=System;Administration;Utility;
-Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;
+Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;gui;beginner;
 StartupNotify=false
 StartupWMClass=com.tuxgenie.TuxGenie
 SingleMainWindow=true

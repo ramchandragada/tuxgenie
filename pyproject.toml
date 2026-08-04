@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tuxgenie"
-version = "6.79.0"
+version = "6.80.0"
 description = "AI-powered Linux assistant — fix any Linux problem in plain English"
 readme = "README.md"
 license = "MIT"
@@ -15,6 +15,7 @@ keywords = ["linux", "ai", "assistant", "claude", "terminal", "troubleshooter", 
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
+    "Environment :: X11 Applications",
     "Intended Audience :: End Users/Desktop",
     "Intended Audience :: System Administrators",
     "Operating System :: POSIX :: Linux",

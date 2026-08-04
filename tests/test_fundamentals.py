@@ -954,3 +954,60 @@ class TestPhaseCLocalAiAndSnapshots:
         assert next(r for r in tg.MENU_ITEMS if r[0] == "16")[4] is tg.feat_backup
         assert next(r for r in tg.MENU_ITEMS if r[0] == "17")[4] is tg.feat_rollback
         assert "snapshot" in next(r for r in tg.MENU_ITEMS if r[0] == "16")[3].lower()
+
+
+class TestPhaseDBeginnerGui:
+    """Phase D: beginner Tk launcher wraps CLI — no feature rewrite."""
+
+    def test_action_catalog_covers_beginner_paths(self):
+        ids = [a[0] for a in tg._BEGINNER_GUI_ACTIONS]
+        assert "fix" in ids and "network" in ids and "perf" in ids
+        assert "backup" in ids and "full" in ids and "selfupd" in ids
+        kinds = {a[3] for a in tg._BEGINNER_GUI_ACTIONS}
+        assert kinds <= {"feature", "self-update", "full", "issue"}
+
+    def test_feature_payloads_are_real_menu_keywords(self):
+        kws = {kw for _n, kw, _name, _tip, _fn in tg.MENU_ITEMS}
+        for _id, _label, _tip, kind, payload in tg._BEGINNER_GUI_ACTIONS:
+            if kind == "feature":
+                assert payload in kws, payload
+
+    def test_build_cli_argv_shapes(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda n: None)
+        monkeypatch.setattr(tg.sys, "executable", "/usr/bin/python3")
+        monkeypatch.setattr(tg, "__file__", "/opt/tuxgenie.py", raising=False)
+        # Force resolve via python + file
+        monkeypatch.setattr(tg, "_gui_resolve_tuxgenie_argv",
+                            lambda: ["/usr/bin/python3", "/opt/tuxgenie.py"])
+        feat = tg._gui_build_cli_argv("feature", "health")
+        assert feat[-2:] == ["--feature", "health"]
+        issue = tg._gui_build_cli_argv("issue", "my wifi is not working")
+        assert issue[-1] == "my wifi is not working"
+        upd = tg._gui_build_cli_argv("self-update")
+        assert upd[-1] == "--self-update"
+        full = tg._gui_build_cli_argv("full")
+        assert "--feature" not in full and "--gui" not in full
+
+    def test_gui_main_exits_2_without_tk(self, monkeypatch, capsys):
+        monkeypatch.setattr(tg, "_gui_tk_available", lambda: False)
+        assert tg.gui_main() == tg._GUI_NO_TK_EXIT
+        err = capsys.readouterr().err
+        assert "python3-tk" in err or "Tkinter" in err
+
+    def test_run_action_dispatches(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(tg, "_gui_spawn_in_terminal",
+                            lambda argv: seen.append(("term", argv)) or True)
+        monkeypatch.setattr(tg, "_gui_open_full_assistant",
+                            lambda: seen.append(("full",)) or True)
+        assert tg._gui_run_action("feature", "network") is True
+        assert seen[0][0] == "term" and "network" in seen[0][1]
+        assert tg._gui_run_action("full") is True
+        assert seen[-1] == ("full",)
+
+    def test_deb_launcher_prefers_beginner_gui(self):
+        # Packaging must try tuxgenie --gui before VTE/terminal fallback.
+        src = open(os.path.join(ROOT, "create_deb.py")).read()
+        assert "tuxgenie --gui" in src
+        assert "python3-tk" in src
+        assert 'rc" != "2"' in src or "[ \"$rc\" != \"2\" ]" in src
