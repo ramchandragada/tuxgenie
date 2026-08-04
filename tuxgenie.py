@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.72.0"
+__version__ = "6.73.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -961,6 +961,31 @@ class GeminiBackend:
             if e.code in (400, 403) and ("key" in detail.lower() or e.code == 403):
                 raise RuntimeError(f"Gemini API key rejected — check it at https://aistudio.google.com/apikey. {detail}")
             if e.code == 429:
+                # Free-tier limit. If another free provider is configured, raise so
+                # the engine auto-switches immediately. If Gemini is the only free
+                # key, wait out a short cooldown once (same idea as Groq) so a
+                # momentary TPM limit doesn't kill the session.
+                wait = 0.0
+                for pat in (r'retry(?:\s|_)?(?:after|delay)["\s:]*([\d.]+)\s*s?',
+                            r'try again in\s*([\d.]+)\s*s',
+                            r'in\s*([\d.]+)\s*seconds'):
+                    m = re.search(pat, detail, re.I)
+                    if m:
+                        try:
+                            wait = float(m.group(1))
+                        except ValueError:
+                            wait = 0.0
+                        break
+                if (_retry and 0 < wait <= 65
+                        and not _free_failover_available("gemini")):
+                    secs = int(wait) + 2
+                    print(f"\r  {YELLOW}Gemini free-tier limit — waiting {secs}s for the "
+                          f"quota to reset, then continuing…{R}          ", flush=True)
+                    try:
+                        time.sleep(secs)
+                    except KeyboardInterrupt:
+                        raise RuntimeError("Gemini rate-limit wait cancelled.")
+                    return self._gen(contents, system_text, tools_decl, max_tokens, _retry=False)
                 raise RuntimeError(f"Gemini free-tier rate limit reached (HTTP 429) — wait a minute "
                                    f"and retry, or switch provider (Settings → 8). {detail}")
             raise RuntimeError(f"Gemini API error {e.code}: {detail or e}")
@@ -1600,6 +1625,64 @@ def _provider_name(backend) -> str:
     return "claude"
 
 
+def _provider_label(pname: str) -> str:
+    """Human-facing provider name for notices (never 'Sambanova' / raw ids)."""
+    if pname == "gemini":
+        return "Google Gemini"
+    if pname == "claude":
+        return "Claude (Anthropic)"
+    prov = _OAI_PROVIDERS.get(pname)
+    return prov["label"] if prov else (pname or "AI").title()
+
+
+def _free_provider_labels_with_keys(cfg=None, exclude=None) -> list:
+    """Labels of free providers that currently have a key, optionally skipping some.
+    Used for 'add another free key' tips and Settings status."""
+    cfg = cfg if cfg is not None else load_cfg()
+    skip = set(exclude or ())
+    out = []
+    if "gemini" not in skip and _provider_key("gemini", cfg):
+        out.append(_provider_label("gemini"))
+    for pname, prov in _OAI_PROVIDERS.items():
+        if not prov.get("free") or pname in skip:
+            continue
+        if _provider_key(pname, cfg):
+            out.append(prov["label"])
+    return out
+
+
+def _announce_free_failover(from_name: str, to_backend, reason: str,
+                            attempt: int = 0, max_attempts: int = 0) -> None:
+    """Clear, beginner-friendly notice when auto-switching between free AIs."""
+    to_label = to_backend.label() if hasattr(to_backend, "label") else _provider_label(_provider_name(to_backend))
+    progress = f" ({attempt}/{max_attempts})" if attempt and max_attempts else ""
+    warn(f"{_provider_label(from_name)} hit a limit ({reason}) — "
+         f"auto-switching to {to_label} (still free){progress}")
+    print(f"  {DIM}Your task continues. Claude is never used automatically (no surprise cost).{R}")
+
+
+def _explain_free_exhausted(provider_errors: dict, current=None) -> None:
+    """What to show when every free provider is unavailable — actionable next steps."""
+    err("All free AI providers are unavailable right now "
+        "(rate limits or a temporary outage).")
+    for pn, reason in (provider_errors or {}).items():
+        print(f"  {DIM}• {_provider_label(pn)}: {reason}{R}")
+    print(f"  {DIM}What you can do:{R}")
+    print(f"  {DIM}  1. Wait about a minute, then try the same task again.{R}")
+    others = _free_provider_labels_with_keys(exclude={_provider_name(current)} if current else None)
+    connected = _free_provider_labels_with_keys()
+    if len(connected) <= 1:
+        print(f"  {DIM}  2. Add a {BOLD}second free{R}{DIM} AI key (Settings → 8) so TuxGenie can "
+              f"auto-switch next time — Gemini, Groq, SambaNova, or OpenRouter.{R}")
+    elif others:
+        print(f"  {DIM}  2. Your other free key(s) ({', '.join(others)}) were also limited — "
+              f"retry shortly.{R}")
+    else:
+        print(f"  {DIM}  2. Check Settings → 8 — make sure a free key is still saved.{R}")
+    print(f"  {DIM}  3. Optional: connect Claude (Settings → 8) for paid reliability — "
+          f"TuxGenie only uses it after you say yes.{R}")
+
+
 def _is_transient_ai_error(exc) -> bool:
     """True for capacity/outage errors worth failing over on (NOT auth/config)."""
     m = str(exc).lower()
@@ -1710,21 +1793,23 @@ def _offer_claude_fallback(current):
         return None
     if not sys.stdin.isatty():
         return None
-    print(f"\n  {CYAN}{BOLD}The free providers are rate-limited right now.{R}")
-    print(f"  {DIM}You have Claude connected. Claude is paid (~$0.01/session) but has no "
-          f"free-tier limit.{R}")
+    print(f"\n  {CYAN}{BOLD}Free AI providers are rate-limited right now.{R}")
+    print(f"  {DIM}You have Claude connected. Claude is paid (~$0.01/session) and has "
+          f"no free-tier limit — useful to finish this one task.{R}")
+    print(f"  {DIM}TuxGenie will {BOLD}not{R}{DIM} switch unless you say yes.{R}")
     try:
-        ans = input(f"  {BOLD}Switch to Claude to finish this task?{R} "
+        ans = input(f"  {BOLD}Finish this task on Claude?{R} "
                     f"[{C('y',GREEN,BOLD)}=yes  {C('n',YELLOW,BOLD)}=no]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         return None
     if ans not in ("y", "yes"):
+        info("Staying on free providers — try again in a minute, or add another free key (Settings → 8).")
         return None
     try:
         nb = _make_backend(cfg, "claude", ckey)
         nb.expert_mode = getattr(current, "expert_mode", False)
         nb.auto_approve = getattr(current, "auto_approve", False)
-        ok("Switched to Claude for this task.")
+        ok("Switched to Claude for this task only (your free provider stays the default next time).")
         return nb
     except Exception:
         return None
@@ -1890,6 +1975,14 @@ def feat_settings(backend, bctx, slog):
     failover_on = cfg.get("auto_switch_providers", True)
     failover_tag = C(" ON", GREEN) if failover_on else C(" OFF", YELLOW)
     print(f"  {DIM}Auto-switch AI on limits (free → free):{R}{failover_tag}")
+    free_keys = _free_provider_labels_with_keys(cfg)
+    if free_keys:
+        print(f"  {DIM}Free AI keys saved:{R}  {BOLD}{', '.join(free_keys)}{R}"
+              + (f"  {YELLOW}(tip: add a second free key so auto-switch has a backup){R}"
+                 if len(free_keys) == 1 and failover_on else ""))
+    else:
+        print(f"  {DIM}Free AI keys saved:{R}  {YELLOW}none{R}  "
+              f"{DIM}— add Gemini/Groq/SambaNova/OpenRouter in [8]{R}")
     report_state = cfg.get("error_reporting", None)
     report_tag = (C(" ON", GREEN) if report_state is True
                   else C(" OFF", YELLOW) if report_state is False else C(" NOT SET", DIM))
@@ -2084,7 +2177,11 @@ def feat_settings(backend, bctx, slog):
         save_cfg({"auto_switch_providers": new_state})
         if new_state:
             ok("Auto-switch ON — if a free provider hits its limit, TuxGenie falls back to your other free provider automatically (never Claude, so it never costs you).")
-            info("Needs a key saved for a second free provider (Gemini, Groq, SambaNova and/or OpenRouter).")
+            free_keys = _free_provider_labels_with_keys()
+            if len(free_keys) <= 1:
+                info("Tip: save a second free key (Settings → 8 → Gemini/Groq/SambaNova/OpenRouter) so there is something to switch to.")
+            else:
+                info(f"Ready to rotate between: {', '.join(free_keys)}.")
         else:
             ok("Auto-switch OFF — TuxGenie stays on your chosen provider and shows the limit message instead.")
     elif ch == "10":
@@ -2913,10 +3010,10 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                     nb = _failover_backend(backend, exclude=_tried_providers)
                     if nb is not None:
                         _failover_tries += 1
-                        _provider_errors[_provider_name(backend)] = _short_reason(e)
-                        warn(f"{_provider_name(backend).title()} unavailable "
-                             f"({_short_reason(e, 90)}) — switching to "
-                             f"{nb.label()} and continuing… ({_failover_tries}/{_MAX_FAILOVERS})")
+                        _from = _provider_name(backend)
+                        _provider_errors[_from] = _short_reason(e)
+                        _announce_free_failover(_from, nb, _short_reason(e, 90),
+                                                _failover_tries, _MAX_FAILOVERS)
                         backend = nb
                         _tried_providers.add(_provider_name(nb))
                         _is_anthropic = False
@@ -2931,7 +3028,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                         _secs = int(_wait) + 2
                         print(f"  {YELLOW}All free providers are briefly at their per-minute "
                               f"limit — waiting {_secs}s, then retrying…{R}")
-                        print(f"  {DIM}(Press Ctrl-C to stop waiting.){R}")
+                        print(f"  {DIM}(Still free — no Claude spend. Press Ctrl-C to stop waiting.){R}")
                         try:
                             time.sleep(_secs)
                         except KeyboardInterrupt:
@@ -2958,15 +3055,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                         _failover_tries = 0
                         _tried_providers = {"claude"}
                         continue
-                    err("The free AI providers are unavailable right now "
-                        "(rate limits or a temporary outage).")
-                    # Show the REAL reason each provider gave, so a genuine
-                    # rate limit is distinguishable from an auth/model/network
-                    # problem hiding behind the generic word "unavailable".
-                    for _pn, _reason in _provider_errors.items():
-                        print(f"  {DIM}• {_pn.title()}: {_reason}{R}")
-                    print(f"  {DIM}Please wait a minute and try again. For maximum reliability "
-                          f"you can connect Claude (Settings → 8).{R}")
+                    _explain_free_exhausted(_provider_errors, backend)
                     if not _is_user_actionable_error(e):
                         _report_error_from_exc(e, feature=_active_feature or "agentic",
                                                tags={"provider": _provider_name(backend),
@@ -5500,12 +5589,14 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
             # once — tracking those already tried so it can't ping-pong between two.
             raw = None
             _tried = {_provider_name(backend)}
+            _fix_errors = {}
             while raw is None and _is_transient_ai_error(e):
                 nb = _failover_backend(backend, exclude=_tried)
                 if nb is None:
                     break
-                warn(f"{_provider_name(backend).title()} unavailable ({_short_reason(e, 90)}) "
-                     f"— switching to {nb.label()} and retrying…")
+                _from = _provider_name(backend)
+                _fix_errors[_from] = _short_reason(e)
+                _announce_free_failover(_from, nb, _short_reason(e, 90))
                 backend = nb
                 _tried.add(_provider_name(nb))
                 out_tokens = 3072 if "haiku" in backend.model else 4096
@@ -5516,6 +5607,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 except Exception as e2:
                     err(str(e2)[:400]); return
             if raw is None and _is_transient_ai_error(e):
+                _fix_errors[_provider_name(backend)] = _short_reason(e)
                 # Free rotation spent — offer Claude (paid, explicit consent only).
                 cb = _offer_claude_fallback(backend)
                 if cb is not None:
@@ -5526,10 +5618,14 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     except Exception as e2:
                         err(str(e2)[:400]); return
             if raw is None:
-                # Couldn't recover. Backends raise clear, provider-specific messages
-                # (with fix steps) — show the last one verbatim rather than a guess.
-                msg = str(e)
-                (warn if "429" in msg else err)(msg[:400])
+                # Couldn't recover. Prefer the structured free-exhausted explanation
+                # when this was a rate-limit/outage rotation; otherwise show the
+                # last provider message verbatim.
+                if _is_transient_ai_error(e):
+                    _explain_free_exhausted(_fix_errors, backend)
+                else:
+                    msg = str(e)
+                    (warn if "429" in msg else err)(msg[:400])
                 # Report anything that isn't the user's to fix (bad key/offline):
                 # a limit/outage we couldn't fail over from, or an unexpected error.
                 if not _is_user_actionable_error(e):

@@ -1340,6 +1340,43 @@ class TestProviderFailover:
         monkeypatch.setattr("builtins.input", lambda *a, **k: "y")
         assert tg._offer_claude_fallback(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
 
+    def test_provider_labels_are_human_friendly(self):
+        assert tg._provider_label("gemini") == "Google Gemini"
+        assert tg._provider_label("groq") == "Groq"
+        assert tg._provider_label("sambanova") == "SambaNova"
+        assert tg._provider_label("openrouter") == "OpenRouter"
+        assert tg._provider_label("claude") == "Claude (Anthropic)"
+
+    def test_free_provider_labels_with_keys(self):
+        tg.save_cfg({"gemini_api_key": "AIza" + "y" * 35, "groq_api_key": "gsk_" + "x" * 40})
+        labels = tg._free_provider_labels_with_keys()
+        assert "Google Gemini" in labels and "Groq" in labels
+        others = tg._free_provider_labels_with_keys(exclude={"gemini"})
+        assert others == ["Groq"]
+
+    def test_announce_and_explain_free_exhausted_are_safe(self, capsys):
+        # Helpers must never raise and must stay free-first / no silent Claude.
+        nb = tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq")
+        tg._announce_free_failover("gemini", nb, "HTTP 429", 1, 3)
+        out = capsys.readouterr().out
+        assert "auto-switching" in out.lower()
+        assert "Claude is never used automatically" in out
+        tg.save_cfg({"gemini_api_key": "AIza" + "y" * 35})
+        tg._explain_free_exhausted({"gemini": "HTTP 429"},
+                                   tg.GeminiBackend(api_key="AIza" + "y" * 35))
+        out2 = capsys.readouterr().out
+        assert "second free" in out2.lower()
+        assert "yes" in out2.lower()  # Claude only after consent
+
+    def test_offer_claude_decline_stays_on_free(self, monkeypatch, capsys):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        tg.save_cfg({"api_key": "sk-ant-" + "a" * 70})
+        monkeypatch.setattr(tg.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "n")
+        assert tg._offer_claude_fallback(tg.GeminiBackend(api_key="AIza" + "y" * 35)) is None
+        out = capsys.readouterr().out
+        assert "free" in out.lower()
+
     def test_exclude_set_rotates_through_every_provider_once(self):
         # Regression: with only the current provider excluded, failover picks the
         # highest-priority OTHER provider every time, so it can ping-pong forever
