@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.80.0"
+__version__ = "6.81.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -13147,6 +13147,9 @@ _BEGINNER_GUI_ACTIONS = (
     ("sound",    "Sound / Audio",     "No sound or mic issues",                 "feature", "sound"),
     ("drivers",  "Drivers / NVIDIA",  "Missing GPU or hardware drivers",        "feature", "drivers"),
     ("perf",     "My PC is slow",     "Scan + safe speed fixes",                "feature", "perf"),
+    ("apps",     "Install apps",      "200-app catalog — Chrome, Steam, etc.",  "feature", "apps"),
+    ("remove",   "Remove apps",       "Uninstall apps you no longer need",      "feature", "remove"),
+    ("ai",       "AI tools catalog",  "Ollama, Cursor, Claude Code, and more",  "feature", "ai"),
     ("backup",   "Backup settings",   "Create or restore a config snapshot",    "feature", "backup"),
     ("updates",  "System updates",    "Check and install OS updates",           "feature", "updates"),
     ("selfupd",  "Update TuxGenie",   "Get the latest TuxGenie release",        "self-update", ""),
@@ -13289,8 +13292,8 @@ def gui_main(argv=None) -> int:
     root = tk.Tk()
     root.title(f"TuxGenie {__version__}")
     root.configure(bg=BG)
-    root.minsize(520, 560)
-    root.geometry("640x640")
+    root.minsize(520, 640)
+    root.geometry("660x720")
 
     for icon_path in (
         "/usr/share/icons/hicolor/128x128/apps/tuxgenie.png",

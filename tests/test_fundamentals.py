@@ -963,6 +963,7 @@ class TestPhaseDBeginnerGui:
         ids = [a[0] for a in tg._BEGINNER_GUI_ACTIONS]
         assert "fix" in ids and "network" in ids and "perf" in ids
         assert "backup" in ids and "full" in ids and "selfupd" in ids
+        assert "apps" in ids and "remove" in ids and "ai" in ids
         kinds = {a[3] for a in tg._BEGINNER_GUI_ACTIONS}
         assert kinds <= {"feature", "self-update", "full", "issue"}
 
