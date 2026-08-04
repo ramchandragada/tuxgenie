@@ -431,8 +431,11 @@ DESKTOPENTRY
     echo ""
     printf "  \\033[32m\\033[1m TuxGenie v%s installed!\\033[0m  Run: tuxgenie\\n" "$VER"
     echo ""
-    echo "  You need an Anthropic API key to use this tool."
-    echo "  Get your key at: https://console.anthropic.com"
+    echo "  Pick your AI on first run - no credit card needed:"
+    echo "    Google Gemini  https://aistudio.google.com/apikey"
+    echo "    Groq           https://console.groq.com/keys"
+    echo "    Claude         https://console.anthropic.com  (optional, paid)"
+    echo "  Common terminal commands work with no key at all."
     echo ""
     ;;
 esac
