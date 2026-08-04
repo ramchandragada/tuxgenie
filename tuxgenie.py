@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.74.0"
+__version__ = "6.75.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -7797,18 +7797,59 @@ def _save_update_cache(data):
     except Exception:
         pass
 
-def _download_verified(url, dest, expected_digest=None, progress=False):
-    """Stream `url` to `dest`, verifying completeness and (when provided) a
-    GitHub 'sha256:...' asset digest before the file is ever handed to dpkg.
-    Returns (True, "") on success or (False, reason). This is the gate that
-    stops a truncated download or a tampered/redirected payload from being
-    installed as root."""
+def _sha256_file(path: str) -> str:
     import hashlib
     h = hashlib.sha256()
-    total = 0
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest().lower()
+
+
+def _check_download_digest(path: str, expected_digest, done: int, total: int):
+    """Shared completeness + SHA-256 gate for every download backend."""
+    if total > 0 and done != total:
+        return False, f"incomplete download ({done}/{total} bytes)"
+    if done == 0:
+        return False, "empty download"
+    if expected_digest:
+        want = expected_digest.split(":", 1)[-1].strip().lower()
+        got = _sha256_file(path)
+        if want and want != got:
+            return False, f"checksum mismatch (expected {want[:12]}…, got {got[:12]}…)"
+    return True, ""
+
+
+def _download_progress_line(done: int, total: int, last_pct: int) -> int:
+    """Print a one-line progress update; return the last percentage shown."""
+    if total > 0:
+        pct = min(100, int(done * 100 / total))
+        if pct != last_pct:
+            bar = "#" * (pct // 5) + "-" * (20 - pct // 5)
+            print(f"\r  {CYAN}[{bar}]{R} {pct}%  ({done // 1024} KB)", end="", flush=True)
+            return pct
+        return last_pct
+    # No Content-Length — still show bytes so the UI never looks frozen.
+    print(f"\r  {CYAN}Downloading…{R} {done // 1024} KB", end="", flush=True)
+    return last_pct
+
+
+def _download_via_urllib(url, dest, progress=False):
+    """Primary downloader. Returns (ok, reason, done, total)."""
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": f"TuxGenie/{__version__} (+https://github.com/{_GITHUB_REPO})",
+            "Accept": "*/*",
+        },
+    )
     done = 0
+    total = 0
     try:
-        with urllib.request.urlopen(url, timeout=60) as resp, open(dest, "wb") as out:
+        with urllib.request.urlopen(req, timeout=90) as resp, open(dest, "wb") as out:
             total = int(resp.headers.get("Content-Length", 0) or 0)
             last_pct = -1
             while True:
@@ -7816,59 +7857,160 @@ def _download_verified(url, dest, expected_digest=None, progress=False):
                 if not chunk:
                     break
                 out.write(chunk)
-                h.update(chunk)
                 done += len(chunk)
-                if progress and total > 0:
-                    pct = min(100, int(done * 100 / total))
-                    if pct != last_pct:
-                        bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
-                        print(f"\r  {CYAN}{bar}{R} {pct}%", end="", flush=True)
-                        last_pct = pct
-        if progress and total > 0:
+                if progress:
+                    last_pct = _download_progress_line(done, total, last_pct)
+        if progress:
             print()
+        return True, "", done, total
     except Exception as e:
-        return False, f"download error: {e}"
-    # Completeness — a partial download must never reach dpkg.
-    if total > 0 and done != total:
-        return False, f"incomplete download ({done}/{total} bytes)"
-    if done == 0:
-        return False, "empty download"
-    # Authenticity/integrity — must match the release's published SHA-256.
-    if expected_digest:
-        want = expected_digest.split(":", 1)[-1].strip().lower()
-        got  = h.hexdigest().lower()
-        if want and want != got:
-            return False, f"checksum mismatch (expected {want[:12]}…, got {got[:12]}…)"
-    return True, ""
+        if progress:
+            print()
+        return False, f"download error: {e}", done, total
+
+
+def _download_via_curl(url, dest, progress=False):
+    """Fallback when urllib hangs or fails (common on some IPv6 / proxy setups)."""
+    curl = shutil.which("curl")
+    if not curl:
+        return False, "curl not available", 0, 0
+    if progress:
+        print(f"  {DIM}Retrying with curl…{R}", flush=True)
+    # -L follow redirects, -f fail on HTTP errors, --connect-timeout for hangs
+    cmd = [
+        curl, "-fsSL",
+        "--connect-timeout", "20",
+        "--max-time", "180",
+        "-A", f"TuxGenie/{__version__}",
+        "-o", dest,
+        url,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=200)
+    except Exception as e:
+        return False, f"curl error: {e}", 0, 0
+    if r.returncode != 0:
+        err_txt = (r.stderr or r.stdout or "").strip()[:200]
+        return False, f"curl failed (exit {r.returncode})" + (f": {err_txt}" if err_txt else ""), 0, 0
+    try:
+        done = os.path.getsize(dest)
+    except OSError:
+        done = 0
+    return True, "", done, done  # curl already wrote the full file; treat size as total
+
+
+def _download_via_wget(url, dest, progress=False):
+    wget = shutil.which("wget")
+    if not wget:
+        return False, "wget not available", 0, 0
+    if progress:
+        print(f"  {DIM}Retrying with wget…{R}", flush=True)
+    cmd = [
+        wget, "-q",
+        "--timeout=20",
+        "--tries=3",
+        "-O", dest,
+        url,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=200)
+    except Exception as e:
+        return False, f"wget error: {e}", 0, 0
+    if r.returncode != 0:
+        return False, f"wget failed (exit {r.returncode})", 0, 0
+    try:
+        done = os.path.getsize(dest)
+    except OSError:
+        done = 0
+    return True, "", done, done
+
+
+def _download_verified(url, dest, expected_digest=None, progress=False):
+    """Stream `url` to `dest`, verifying completeness and (when provided) a
+    GitHub 'sha256:...' asset digest before the file is ever handed to dpkg.
+
+    Tries urllib → curl → wget so a flaky Python TLS/IPv6 path cannot strand
+    users on an old version. Returns (True, "") or (False, reason)."""
+    errors = []
+    for attempt, downloader in enumerate(
+            (_download_via_urllib, _download_via_curl, _download_via_wget), start=1):
+        try:
+            if os.path.exists(dest):
+                os.unlink(dest)
+        except OSError:
+            pass
+        if progress and attempt == 1:
+            print(f"  {DIM}Fetching from GitHub…{R}", flush=True)
+        ok_dl, reason, done, total = downloader(url, dest, progress=progress)
+        if not ok_dl:
+            errors.append(reason)
+            continue
+        ok_chk, reason = _check_download_digest(dest, expected_digest, done, total)
+        if ok_chk:
+            return True, ""
+        errors.append(reason)
+    # Prefer the most specific last error; include a short trail for support.
+    detail = " | ".join(e for e in errors if e) or "all download methods failed"
+    return False, detail
+
+
+def _tuxgenie_installed_via_deb() -> bool:
+    """True only when the tuxgenie *package* is installed via dpkg.
+    Having `dpkg` on the PATH is not enough — many Ubuntu users install via
+    pip, and updating them with dpkg leaves the old pip binary first on PATH."""
+    if not shutil.which("dpkg-query"):
+        return False
+    try:
+        r = subprocess.run(
+            ["dpkg-query", "-W", "-f=${Status}", "tuxgenie"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return False
+    return r.returncode == 0 and "install ok installed" in (r.stdout or "")
+
+
+def _pip_upgrade_tuxgenie(latest: str) -> bool:
+    """Upgrade via pip and re-exec. Returns False on failure (never raises)."""
+    print(f"\n  {CYAN}▶ Upgrading via pip…{R}", flush=True)
+    pkg = f"tuxgenie=={latest}"
+    # Prefer the same interpreter that is running us (venv / pipx / system).
+    candidates = [
+        [sys.executable, "-m", "pip", "install", "--upgrade", pkg],
+        [sys.executable, "-m", "pip", "install", "--upgrade", pkg, "--break-system-packages"],
+        ["pip3", "install", "--upgrade", pkg, "--break-system-packages"],
+        ["pip3", "install", "--upgrade", pkg],
+    ]
+    rc = 1
+    for cmd in candidates:
+        try:
+            rc = subprocess.run(cmd, capture_output=True, timeout=300).returncode
+        except Exception:
+            rc = 1
+        if rc == 0:
+            break
+    if rc == 0:
+        print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
+        print(f"  {YELLOW}Restarting TuxGenie…{R}\n")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+        return True  # pragma: no cover — execv does not return
+    err("pip upgrade failed.")
+    info("Try manually:  pip3 install --upgrade tuxgenie")
+    info("Or:            curl -fsSL https://tuxgenie.com/install.sh | bash")
+    return False
 
 
 def _do_update_install(deb_url, deb_name, latest, expected_digest=None):
-    """Download and install a .deb update, or pip upgrade on non-deb systems."""
+    """Download and install a .deb update, or pip upgrade when that fits better."""
     # Validate version string before using it anywhere to prevent injection
     if not re.match(r'^\d+\.\d+\.\d+$', latest):
         err(f"Update server returned an invalid version string: {latest!r}")
         return False
 
-    # Non-deb systems (Fedora, Arch, openSUSE, etc.) — upgrade via pip
-    if not shutil.which("dpkg"):
-        print(f"\n  {CYAN}▶ Upgrading via pip (non-deb system)…{R}")
-        pkg = f"tuxgenie=={latest}"
-        # Use list-form (no shell=True) to prevent injection via the version string
-        rc = subprocess.run(
-            ["pip3", "install", pkg, "--break-system-packages"],
-            capture_output=True).returncode
-        if rc != 0:
-            rc = subprocess.run(
-                ["pip3", "install", pkg],
-                capture_output=True).returncode
-        if rc == 0:
-            print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
-            print(f"  {YELLOW}Restarting TuxGenie…{R}\n")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-        else:
-            err("pip upgrade failed.")
-            info("Try manually:  pip3 install --upgrade tuxgenie")
-        return rc == 0
+    # Use pip when there is no dpkg, OR when this install itself is not a .deb
+    # package (pip/pipx on Ubuntu still has dpkg for other software).
+    if not _tuxgenie_installed_via_deb():
+        return _pip_upgrade_tuxgenie(latest)
 
     # Use mkstemp for a unique, non-guessable temp path to prevent TOCTOU attacks
     # where a local attacker could pre-create /tmp/<predictable_name>.deb
@@ -7881,8 +8023,13 @@ def _do_update_install(deb_url, deb_name, latest, expected_digest=None):
         try: os.unlink(tmp_deb)
         except OSError: pass
         err(f"Download failed — not installing: {reason}")
-        info("This can be a flaky connection or a bad mirror. Try again, or "
-             "download manually from www.tuxgenie.com")
+        info("Trying pip upgrade as a fallback…")
+        if _pip_upgrade_tuxgenie(latest):
+            return True
+        info("Manual options:")
+        info("  curl -fsSL https://tuxgenie.com/install.sh | bash")
+        info("  pip3 install --upgrade tuxgenie")
+        info(f"  Or download: https://github.com/{_GITHUB_REPO}/releases/latest")
         return False
     if expected_digest:
         ok(f"Downloaded {deb_name}  {DIM}(SHA-256 verified){R}")
@@ -7898,17 +8045,24 @@ def _do_update_install(deb_url, deb_name, latest, expected_digest=None):
         except OSError: pass
         warn("Installation cancelled."); return False
     rc, _, _ = run_cmd_live(f"sudo dpkg -i {shlex.quote(tmp_deb)}", sudo_password=inst_pw)
-    try: os.unlink(tmp_deb)
-    except OSError: pass
     if rc == 0:
+        try: os.unlink(tmp_deb)
+        except OSError: pass
         print(f"\n  {GREEN}{BOLD}🎉 TuxGenie updated to v{latest}!{R}")
         print(f"  {YELLOW}Restarting TuxGenie…{R}\n")
         # Re-exec ourselves so the new version takes over
         os.execv(sys.executable, [sys.executable] + sys.argv)
-    else:
-        err("Installation failed.")
-        info(f"Try manually:  sudo dpkg -i {tmp_deb}")
-        return False
+        return True
+    err("Installation via dpkg failed.")
+    info(f"Deb left at: {tmp_deb}")
+    info("Trying pip upgrade as a fallback…")
+    if _pip_upgrade_tuxgenie(latest):
+        try: os.unlink(tmp_deb)
+        except OSError: pass
+        return True
+    info(f"Try manually:  sudo dpkg -i {tmp_deb}")
+    info("Or:            curl -fsSL https://tuxgenie.com/install.sh | bash")
+    return False
 
 def startup_update_check():
     """Check for updates on startup. Runs at most once per day.

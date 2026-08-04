@@ -146,7 +146,7 @@ class TestVersionGap:
 # ── Update download verification ─────────────────────────────────────────────
 
 class TestDownloadVerified:
-    def _serve(self, monkeypatch, payload):
+    def _serve(self, monkeypatch, payload, *, fail_urllib=False):
         import io, contextlib
 
         class _Resp(io.BytesIO):
@@ -157,10 +157,14 @@ class TestDownloadVerified:
                 return super().read(n)
 
         @contextlib.contextmanager
-        def fake_urlopen(url, timeout=0):
+        def fake_urlopen(*args, **kwargs):
+            if fail_urllib:
+                raise OSError("simulated network hang/failure")
             yield _Resp(payload)
 
         monkeypatch.setattr(tg.urllib.request, "urlopen", fake_urlopen)
+        # Keep unit tests on the urllib path — don't accidentally hit real curl/wget.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: None)
 
     def test_good_digest_passes(self, monkeypatch, tmp_path):
         import hashlib
@@ -189,6 +193,64 @@ class TestDownloadVerified:
         dest = str(tmp_path / "x.deb")
         ok, reason = tg._download_verified("http://x/y.deb", dest, None)
         assert not ok
+
+    def test_curl_fallback_when_urllib_fails(self, monkeypatch, tmp_path):
+        import contextlib
+        import hashlib
+        payload = b"curl-fetched-deb"
+        digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+        dest = str(tmp_path / "x.deb")
+
+        @contextlib.contextmanager
+        def boom(*a, **k):
+            raise OSError("urllib hung")
+            yield  # pragma: no cover
+
+        monkeypatch.setattr(tg.urllib.request, "urlopen", boom)
+
+        def fake_which(name):
+            return "/usr/bin/curl" if name == "curl" else None
+
+        monkeypatch.setattr(tg.shutil, "which", fake_which)
+
+        def fake_run(cmd, capture_output=True, text=True, timeout=200):
+            # Simulate: curl -o dest url
+            if cmd and str(cmd[0]).endswith("curl"):
+                with open(dest, "wb") as f:
+                    f.write(payload)
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            return types.SimpleNamespace(returncode=1, stdout="", stderr="no")
+
+        monkeypatch.setattr(tg.subprocess, "run", fake_run)
+        ok, reason = tg._download_verified("http://x/y.deb", dest, digest)
+        assert ok, reason
+
+    def test_pip_path_when_not_deb_installed(self, monkeypatch):
+        monkeypatch.setattr(tg, "_tuxgenie_installed_via_deb", lambda: False)
+        called = {}
+
+        def fake_pip(latest):
+            called["v"] = latest
+            return True
+
+        monkeypatch.setattr(tg, "_pip_upgrade_tuxgenie", fake_pip)
+        assert tg._do_update_install("http://x/y.deb", "tuxgenie_9.9.9_all.deb", "9.9.9") is True
+        assert called["v"] == "9.9.9"
+
+    def test_deb_install_detection(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda n: "/usr/bin/dpkg-query" if n == "dpkg-query" else None)
+
+        def fake_run(cmd, capture_output=True, text=True, timeout=10):
+            return types.SimpleNamespace(returncode=0, stdout="install ok installed")
+
+        monkeypatch.setattr(tg.subprocess, "run", fake_run)
+        assert tg._tuxgenie_installed_via_deb() is True
+
+        def missing(cmd, capture_output=True, text=True, timeout=10):
+            return types.SimpleNamespace(returncode=1, stdout="")
+
+        monkeypatch.setattr(tg.subprocess, "run", missing)
+        assert tg._tuxgenie_installed_via_deb() is False
 
 
 # ── Crash guard: healthy-checkpoint semantics ────────────────────────────────
