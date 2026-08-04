@@ -98,13 +98,16 @@ class TestCatalogFundamentals:
         # app is either in _CATALOG_INSTALL (deterministic) or _CATALOG_GUIDED (a
         # tiny, documented set that genuinely can't be automated). This test fails
         # the build if a new catalog app is added without an install method.
-        names = {e["name"] for e in tg.APP_CATALOG}
+        # The install map is shared by APP_CATALOG and AI_CATALOG (menu 77 + 99).
+        catalog_names = {e["name"] for e in tg.APP_CATALOG} | {e["name"] for e in tg.AI_CATALOG}
         covered = set(tg._CATALOG_INSTALL) | set(tg._CATALOG_GUIDED)
-        missing = names - covered
-        assert not missing, f"catalog apps with no install method (would need AI): {sorted(missing)}"
+        missing_apps = {e["name"] for e in tg.APP_CATALOG} - covered
+        missing_ai = {e["name"] for e in tg.AI_CATALOG} - covered
+        assert not missing_apps, f"APP catalog with no install method: {sorted(missing_apps)}"
+        assert not missing_ai, f"AI catalog with no install method: {sorted(missing_ai)}"
         # No stray map/guided keys that aren't real catalog apps (catches typos).
-        assert not (set(tg._CATALOG_INSTALL) - names), sorted(set(tg._CATALOG_INSTALL) - names)
-        assert not (tg._CATALOG_GUIDED - names), sorted(tg._CATALOG_GUIDED - names)
+        assert not (set(tg._CATALOG_INSTALL) - catalog_names), sorted(set(tg._CATALOG_INSTALL) - catalog_names)
+        assert not (tg._CATALOG_GUIDED - catalog_names), sorted(tg._CATALOG_GUIDED - catalog_names)
         # Keep the genuinely-manual set tiny — deterministic is the default.
         assert len(tg._CATALOG_GUIDED) <= 8
 
@@ -122,6 +125,42 @@ class TestCatalogFundamentals:
         assert cmd == ("sudo apt-get install -y vlc", True)
         # An unmapped/guided app has no deterministic method → caller uses the AI.
         assert tg._catalog_deterministic_cmd({"name": "Nonexistent App"}, {"pkg_mgr": "apt"}) is None
+        assert tg._catalog_deterministic_cmd({"name": "DaVinci Resolve"}, {"pkg_mgr": "apt"}) is None
+        assert tg._catalog_deterministic_cmd({"name": "Local AI Starter Pack"}, {"pkg_mgr": "apt"}) is None
+
+    def test_ai_tools_prefer_deterministic_install(self, monkeypatch):
+        # Phase 2: popular AI Tools must install without calling the AI.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        ollama = tg._catalog_deterministic_cmd({"name": "Ollama"}, {"pkg_mgr": "apt"})
+        assert ollama and "ollama.com/install.sh" in ollama[0]
+        gpt4all = tg._catalog_deterministic_cmd({"name": "GPT4All"}, {"pkg_mgr": "apt"})
+        assert gpt4all and "io.gpt4all.gpt4all" in gpt4all[0]
+        cursor = tg._catalog_install_plan({"name": "Cursor"}, {"pkg_mgr": "apt"})
+        assert cursor and any("cursor" in step[0].lower() for step in cursor)
+
+    def test_snap_only_apps_have_cross_distro_fallback(self, monkeypatch):
+        # Helix / Android Studio used to be snap-only (broken on many non-Ubuntu
+        # machines). They must offer Flatpak (and Helix also a native pkg).
+        monkeypatch.setattr(tg.shutil, "which", lambda name: None)  # no snap/flatpak yet
+        hplan = tg._catalog_install_plan({"name": "Helix"}, {"pkg_mgr": "apt"})
+        assert any("com.helix_editor.Helix" in p[0] for p in hplan)
+        assert any("apt-get install -y helix" in p[0] for p in hplan)
+        aplan = tg._catalog_install_plan({"name": "Android Studio"}, {"pkg_mgr": "dnf"})
+        assert any("com.google.AndroidStudio" in p[0] for p in aplan)
+        # On Fedora without Flatpak installed, bootstrap must use dnf — not apt.
+        assert any("dnf install -y flatpak" in p[0] for p in aplan)
+
+    def test_flathub_bootstrap_is_cross_distro(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda name: None)
+        apt_cmd = tg._flathub_install_cmd("org.videolan.VLC", "apt")
+        assert "apt-get install -y flatpak" in apt_cmd and "org.videolan.VLC" in apt_cmd
+        dnf_cmd = tg._flathub_install_cmd("org.videolan.VLC", "dnf")
+        assert "dnf install -y flatpak" in dnf_cmd and "apt-get" not in dnf_cmd
+        # Flatpak already present → skip bootstrap package install.
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/flatpak")
+        ready = tg._flathub_install_cmd("org.videolan.VLC", "apt")
+        assert "apt-get install -y flatpak" not in ready
 
     def test_flatpak_app_auto_enables_flatpak_when_missing(self, monkeypatch):
         # A Flatpak-only app must install with NO AI even on a machine without
@@ -176,12 +215,19 @@ class TestCatalogFundamentals:
 
     def test_catalog_snap_and_script_methods(self, monkeypatch):
         monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
-        # Snap app with classic confinement.
-        cmd, root = tg._catalog_deterministic_cmd({"name": "Android Studio"}, {"pkg_mgr": "apt"})
-        assert cmd == "sudo snap install android-studio --classic" and root is True
-        # Script-installed app (no pkg/flatpak/snap).
-        scmd, _ = tg._catalog_deterministic_cmd({"name": "Zed"}, {"pkg_mgr": "apt"})
-        assert "zed.dev/install.sh" in scmd
+        # Snap-only classic app (Ghostty has no Flathub build yet).
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Ghostty"}, {"pkg_mgr": "apt"})
+        assert cmd == "sudo snap install ghostty --classic" and root is True
+        # Script-only AI tool (Ollama).
+        scmd, _ = tg._catalog_deterministic_cmd({"name": "Ollama"}, {"pkg_mgr": "apt"})
+        assert "ollama.com/install.sh" in scmd
+        # Android Studio prefers Flatpak over Snap when Flatpak is available.
+        as_cmd, _ = tg._catalog_deterministic_cmd({"name": "Android Studio"}, {"pkg_mgr": "apt"})
+        assert "com.google.AndroidStudio" in as_cmd and "snap install" not in as_cmd
+        # Zed: Flatpak before the official script when Flatpak is present.
+        zed_plan = tg._catalog_install_plan({"name": "Zed"}, {"pkg_mgr": "apt"})
+        assert any("dev.zed.Zed" in p[0] for p in zed_plan)
+        assert any("zed.dev/install.sh" in p[0] for p in zed_plan)
 
     def test_catalog_pkg_list_tries_alternatives(self):
         # A package renamed/discontinued upstream (neofetch → neowofetch → fastfetch)

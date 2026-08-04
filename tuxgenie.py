@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.71.0"
+__version__ = "6.72.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -9029,7 +9029,8 @@ _CATALOG_INSTALL = {
     "Thunderbird":      {"pkg": "thunderbird", "flatpak": "org.mozilla.Thunderbird"},
     "Obsidian":         {"flatpak": "md.obsidian.Obsidian"},
     "Joplin":           {"script": "wget -O - "
-                                    "https://raw.githubusercontent.com/laurent22/joplin/dev/Joplin_install_and_update.sh | bash"},
+                                    "https://raw.githubusercontent.com/laurent22/joplin/dev/Joplin_install_and_update.sh | bash",
+                         "flatpak": "net.cozic.joplin_desktop"},
     "Logseq":           {"flatpak": "com.logseq.Logseq"},
     "Zotero":           {"flatpak": "org.zotero.Zotero"},
     "Standard Notes":   {"flatpak": "org.standardnotes.standardnotes"},
@@ -9116,8 +9117,10 @@ _CATALOG_INSTALL = {
     "Beekeeper Studio": {"flatpak": "io.beekeeperstudio.Studio"},
     "Zeal":             {"pkg": "zeal", "flatpak": "org.zealdocs.Zeal"},
     "GitKraken":        {"flatpak": "com.axosoft.GitKraken"},
-    "Zed":              {"script": "curl -f https://zed.dev/install.sh | sh"},
-    "Helix":            {"snap": "helix", "classic": True},
+    "Zed":              {"script": "curl -f https://zed.dev/install.sh | sh",
+                         "flatpak": "dev.zed.Zed"},
+    "Helix":            {"pkg": "helix", "flatpak": "com.helix_editor.Helix",
+                         "snap": "helix", "classic": True},
     "Warp":             {"deb": {"name": "warpdotdev", "dearmor": False,
                                  "key": "https://releases.warp.dev/linux/keys/warp.asc",
                                  "repo": "https://releases.warp.dev/linux/deb stable main", "pkg": "warp-terminal"}},
@@ -9127,15 +9130,25 @@ _CATALOG_INSTALL = {
     "tmux":             {"pkg": "tmux"},
     "Starship":         {"script": "curl -sS https://starship.rs/install.sh | sh -s -- -y", "script_root": True},
     "JetBrains Toolbox": {"flatpak": "com.jetbrains.Toolbox"},
-    "Android Studio":   {"snap": "android-studio", "classic": True},
+    "Android Studio":   {"flatpak": "com.google.AndroidStudio",
+                         "snap": "android-studio", "classic": True},
     # ── System Tools ──
     "Timeshift":        {"pkg": "timeshift"},
     "Stacer":           {"pkg": "stacer"},
     "GParted":          {"pkg": "gparted"},
-    "BleachBit":        {"pkg": "bleachbit"},
+    "BleachBit":        {"pkg": "bleachbit", "flatpak": "org.bleachbit.BleachBit"},
     "Synaptic":         {"pkg": "synaptic"},
-    "Flatpak + Flathub": {"script": "sudo apt-get install -y flatpak && sudo flatpak remote-add "
-                                     "--if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo",
+    # Cross-distro: install Flatpak via the native package manager, then add Flathub.
+    "Flatpak + Flathub": {"script": "set -e; "
+                                    "if command -v flatpak >/dev/null; then :; "
+                                    "elif command -v apt-get >/dev/null; then sudo apt-get install -y flatpak; "
+                                    "elif command -v dnf >/dev/null; then sudo dnf install -y flatpak; "
+                                    "elif command -v zypper >/dev/null; then sudo zypper install -y flatpak; "
+                                    "elif command -v pacman >/dev/null; then sudo pacman -S --noconfirm flatpak; "
+                                    "elif command -v apk >/dev/null; then sudo apk add flatpak; "
+                                    "else echo 'No known package manager to install Flatpak' >&2; exit 1; fi; "
+                                    "sudo flatpak remote-add --if-not-exists flathub "
+                                    "https://dl.flathub.org/repo/flathub.flatpakrepo",
                           "script_root": True},
     "GNOME Tweaks":     {"pkg": "gnome-tweaks"},
     "Cockpit":          {"pkg": "cockpit"},
@@ -9150,7 +9163,7 @@ _CATALOG_INSTALL = {
     "Waydroid":         {"script": "curl -fsSL https://repo.waydro.id | sudo bash "
                                     "&& sudo apt-get install -y waydroid", "script_root": True},
     "OpenRGB":          {"flatpak": "org.openrgb.OpenRGB"},
-    "Solaar":           {"pkg": "solaar"},
+    "Solaar":           {"pkg": "solaar", "flatpak": "io.github.pwr_solaar.solaar"},
     "CoreCtrl":         {"pkg": "corectrl"},
     "Warehouse":        {"flatpak": "io.github.flattool.Warehouse"},
     # ── Files & Sync ──
@@ -9222,7 +9235,7 @@ _CATALOG_INSTALL = {
     # ── Security ──
     "Gufw Firewall":    {"pkg": "gufw"},
     "ClamAV + ClamTk":  {"pkg": "clamav clamtk"},
-    "Wireshark":        {"pkg": "wireshark"},
+    "Wireshark":        {"pkg": "wireshark", "flatpak": "org.wireshark.Wireshark"},
     "VeraCrypt":        {"flatpak": "org.veracrypt.VeraCrypt"},
     "Proton VPN":       {"deb": {"name": "protonvpn", "dearmor": False,
                                  "key": "https://repo.protonvpn.com/debian/public_key.asc",
@@ -9251,14 +9264,68 @@ _CATALOG_INSTALL = {
     "Widelands":        {"pkg": "widelands", "flatpak": "org.widelands.Widelands"},
     "Freeciv":          {"pkg": "freeciv", "flatpak": "org.freeciv.gtk322"},
     "Cataclysm: DDA":   {"flatpak": "org.cataclysmdda.CataclysmDDA"},
+
+    # ── AI Tools catalog (menu [99]) — same deterministic map so AI Tools never
+    # need the AI for a known install. Names must match AI_CATALOG entries.
+    "Cursor":           {"deb": {"name": "cursor", "key": "https://downloads.cursor.com/keys/anysphere.asc",
+                                 "repo": "https://downloads.cursor.com/aptrepo stable main",
+                                 "pkg": "cursor"},
+                         "script": "set -e; arch=$(uname -m); "
+                                   "case $arch in x86_64|amd64) plat=linux-x64;; aarch64|arm64) plat=linux-arm64;; "
+                                   "*) echo \"Unsupported arch: $arch\" >&2; exit 1;; esac; "
+                                   "json=$(curl -fsSL \"https://www.cursor.com/api/download?platform=${plat}&releaseTrack=stable\"); "
+                                   "if command -v dpkg >/dev/null; then "
+                                   "url=$(printf '%s' \"$json\" | python3 -c \"import sys,json; "
+                                   "d=json.load(sys.stdin); print(d.get('debUrl') or '')\"); "
+                                   "[ -n \"$url\" ]; curl -fL -o /tmp/cursor.pkg \"$url\"; "
+                                   "sudo apt-get install -y /tmp/cursor.pkg; "
+                                   "elif command -v rpm >/dev/null; then "
+                                   "url=$(printf '%s' \"$json\" | python3 -c \"import sys,json; "
+                                   "d=json.load(sys.stdin); print(d.get('rpmUrl') or '')\"); "
+                                   "[ -n \"$url\" ]; curl -fL -o /tmp/cursor.pkg \"$url\"; "
+                                   "sudo rpm -Uvh /tmp/cursor.pkg; "
+                                   "else echo 'Need dpkg or rpm to install Cursor' >&2; exit 1; fi",
+                         "script_root": True},
+    "Windsurf":         {"deb": {"name": "windsurf", "dearmor": False,
+                                 "key": "https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/windsurf.gpg",
+                                 "repo": "https://windsurf-stable.codeiumdata.com/wVxQEIWkwPUEAGf3/apt stable main",
+                                 "pkg": "windsurf"}},
+    "Claude Code":      {"script": "npm install -g @anthropic-ai/claude-code"},
+    "OpenAI Codex CLI": {"script": "npm install -g @openai/codex"},
+    "Gemini CLI":       {"script": "npm install -g @google/gemini-cli"},
+    "GitHub Copilot CLI": {"script": "npm install -g @github/copilot"},
+    "Aider":            {"script": "pipx install aider-chat || "
+                                   "(python3 -m pip install --user pipx && python3 -m pipx ensurepath && "
+                                   "python3 -m pipx install aider-chat)"},
+    "Goose":            {"script": "curl -fsSL "
+                                   "https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash"},
+    "Cline":            {"script": "code --install-extension saoudrizwan.claude-dev"},
+    "Continue.dev":     {"script": "code --install-extension Continue.continue"},
+    "Ollama":           {"script": "curl -fsSL https://ollama.com/install.sh | sh", "script_root": True},
+    "GPT4All":          {"flatpak": "io.gpt4all.gpt4all"},
+    "Jan":              {"flatpak": "ai.jan.Jan"},
+    "LM Studio":        {"flatpak": "ai.lmstudio.lm-studio"},
+    "Open WebUI":       {"script": "docker run -d -p 3000:8080 "
+                                   "--add-host=host.docker.internal:host-gateway "
+                                   "-v open-webui:/app/backend/data --name open-webui --restart always "
+                                   "ghcr.io/open-webui/open-webui:main"},
+    "LocalAI":          {"script": "docker run -d -p 8080:8080 --name local-ai --restart always "
+                                   "localai/localai:latest"},
+    "Whisper":          {"script": "pipx install openai-whisper || "
+                                   "(python3 -m pip install --user pipx && python3 -m pipx ensurepath && "
+                                   "python3 -m pipx install openai-whisper)"},
+    "ChatGPT Desktop":  {"snap": "chatgpt-desktop"},
 }
 
 # Apps that genuinely cannot be a one-command install (registration walls, manual
 # downloads, or per-machine PWA setup). These intentionally use the AI's guided
 # flow — there is no deterministic method to offer. Kept deliberately tiny.
+# Includes AI Tools catalog entries that are multi-step or vendor-gated.
 _CATALOG_GUIDED = {
-    "Zoho Mail",        # per-machine PWA: detect browser, create --app launcher
-    "DaVinci Resolve",  # free-registration download wall + GPU checks
+    "Zoho Mail",               # per-machine PWA: detect browser, create --app launcher
+    "DaVinci Resolve",         # free-registration download wall + GPU checks
+    "Msty",                    # vendor download page; no stable public .deb/Flatpak id yet
+    "Local AI Starter Pack",   # multi-step stack (Ollama + model + Open WebUI)
 }
 
 
@@ -9332,14 +9399,28 @@ def _downloaded_installer_for(spec):
     return None
 
 
-def _flathub_install_cmd(fid):
+def _flathub_install_cmd(fid, pm="apt"):
     """Install a Flathub app deterministically — auto-enabling Flatpak + the
     Flathub remote first if they're missing (so a machine without Flatpak, like a
     stock Ubuntu, still installs the app with no AI). System-wide so it shows up
-    in the app menu."""
+    in the app menu. Uses the detected package manager when Flatpak itself must
+    be installed (not apt-only)."""
     parts = []
     if not shutil.which("flatpak"):
-        parts.append("sudo apt-get install -y flatpak")
+        bootstrap = {
+            "apt":    "sudo apt-get install -y flatpak",
+            "dnf":    "sudo dnf install -y flatpak",
+            "yum":    "sudo yum install -y flatpak",
+            "zypper": "sudo zypper install -y flatpak",
+            "pacman": "sudo pacman -S --noconfirm flatpak",
+            "apk":    "sudo apk add flatpak",
+        }.get(pm)
+        if bootstrap:
+            parts.append(bootstrap)
+        else:
+            # Unknown package manager and no flatpak — cannot proceed deterministically.
+            parts.append("echo 'Flatpak is not installed and no known package manager "
+                         "can install it' >&2; exit 1")
     parts.append("sudo flatpak remote-add --if-not-exists flathub "
                  "https://dl.flathub.org/repo/flathub.flatpakrepo")
     parts.append(f"sudo flatpak install -y flathub {fid}")
@@ -9402,10 +9483,12 @@ def _catalog_install_plan(entry, bctx):
     deb = spec.get("deb")
     if deb and pm == "apt" and shutil.which("curl") and shutil.which("gpg"):
         plan.append((_apt_vendor_repo_cmd(deb), True, "vendor apt repo"))
-    # 3. Flathub — auto-enables Flatpak on apt systems, so it works with no AI.
+    # 3. Flathub — auto-enables Flatpak on known package managers, so it works
+    #    with no AI even when Flatpak is not yet installed.
     fid = spec.get("flatpak")
-    if fid and (pm == "apt" or shutil.which("flatpak")):
-        plan.append((_flathub_install_cmd(fid), True, "Flatpak (Flathub)"))
+    _FLATPAK_BOOTSTRAP_PMS = {"apt", "dnf", "yum", "zypper", "pacman", "apk"}
+    if fid and (shutil.which("flatpak") or pm in _FLATPAK_BOOTSTRAP_PMS):
+        plan.append((_flathub_install_cmd(fid, pm or "apt"), True, "Flatpak (Flathub)"))
     # 4. Snap (classic confinement where the app needs it).
     snap = spec.get("snap")
     if snap and shutil.which("snap"):
