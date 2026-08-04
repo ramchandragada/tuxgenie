@@ -11908,20 +11908,36 @@ def _first_run_setup_steps(pkg_mgr: str, os_name: str = "") -> list:
     if flatpak_cmd:
         steps.append(("Enable Flatpak + Flathub (apps that work everywhere)", flatpak_cmd, "safe"))
 
-    # Firewall — ufw on Debian-family; firewalld on Fedora/RHEL; best-effort elsewhere.
-    if pm == "apt" or shutil.which("ufw"):
-        fw = ("sudo apt-get install -y ufw 2>/dev/null || true; "
-              "sudo ufw allow OpenSSH 2>/dev/null || true; "
-              "sudo ufw --force enable && sudo ufw status")
-        if pm != "apt" and shutil.which("ufw"):
-            fw = ("sudo ufw allow OpenSSH 2>/dev/null || true; "
-                  "sudo ufw --force enable && sudo ufw status")
-        steps.append(("Enable firewall (ufw)", fw, "moderate"))
-    elif pm in ("dnf", "yum") or shutil.which("firewall-cmd"):
+    # Firewall — choose by *target* package manager, not by what happens to be
+    # installed on the machine running the tests/CI (e.g. Ubuntu runners have
+    # ufw, which must not leak into Fedora/Arch playbooks).
+    if pm == "apt":
+        steps.append((
+            "Enable firewall (ufw)",
+            "sudo apt-get install -y ufw 2>/dev/null || true; "
+            "sudo ufw allow OpenSSH 2>/dev/null || true; "
+            "sudo ufw --force enable && sudo ufw status",
+            "moderate",
+        ))
+    elif pm in ("dnf", "yum"):
         steps.append((
             "Enable firewall (firewalld)",
             "sudo systemctl enable --now firewalld 2>/dev/null || true; "
             "sudo firewall-cmd --state 2>/dev/null || true",
+            "moderate",
+        ))
+    elif shutil.which("firewall-cmd"):
+        steps.append((
+            "Enable firewall (firewalld)",
+            "sudo systemctl enable --now firewalld 2>/dev/null || true; "
+            "sudo firewall-cmd --state 2>/dev/null || true",
+            "moderate",
+        ))
+    elif shutil.which("ufw"):
+        steps.append((
+            "Enable firewall (ufw)",
+            "sudo ufw allow OpenSSH 2>/dev/null || true; "
+            "sudo ufw --force enable && sudo ufw status",
             "moderate",
         ))
 
