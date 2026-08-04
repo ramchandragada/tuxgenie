@@ -508,3 +508,106 @@ class TestCrossDistroFundamentals:
         p = "Install Foo via apt: foo."
         out = tg._distro_adapt_prompt(p, {"pkg_mgr": "dnf", "os": "Fedora"})
         assert "dnf" in out and "Flatpak" in out and out.endswith(p)
+
+
+class TestSlowPcFundamentals:
+    """Phase 4 promise: 'my PC is slow' is a deterministic one-tap repair —
+    scan locally, propose safe fixes, optional AI only after consent."""
+
+    def test_phrase_matching(self):
+        yes = [
+            "my pc is slow",
+            "My computer is really slow",
+            "why is my laptop so slow?",
+            "why is it slow",
+            "make my pc faster",
+            "speed up my computer",
+            "performance boost",
+            "system is sluggish",
+            "it's so laggy",
+        ]
+        no = [
+            "install firefox",
+            "ls -la",
+            "slow down the fan curve",
+            "update this pc",
+            "my pc needs more storage",
+        ]
+        for s in yes:
+            assert tg._looks_like_slow_pc(s), s
+        for s in no:
+            assert not tg._looks_like_slow_pc(s), s
+
+    def test_parse_size_to_mb(self):
+        assert tg._parse_size_to_mb("Archived and active journals take up 1.2G.") == 1.2 * 1024
+        assert tg._parse_size_to_mb("512M") == 512
+        assert tg._parse_size_to_mb("no size here") is None
+        assert tg._parse_size_to_mb("") is None
+
+    def test_build_plan_proposes_expected_safe_fixes(self):
+        results = {
+            "swappiness": "vm.swappiness = 60",
+            "memory": "Mem: 15Gi 4.0Gi 8.0Gi\nSwap: 2.0Gi 512Mi 1.5Gi",
+            "journal": "Archived and active journals take up 800.0M on disk.",
+            "pkg_cache": "450M\t/var/cache/apt/archives/",
+            "boot_blame": "  4.500s NetworkManager-wait-online.service\n  1.000s something.else.service",
+            "cpu_gov": "8 powersave",
+            "on_ac": "1",
+            "failed_svc": "  UNIT            LOAD   ACTIVE SUB    DESCRIPTION\n"
+                          "● broken.service  loaded failed failed Example",
+        }
+        plan = tg._slow_pc_build_plan(results, {"pkg_mgr": "apt"})
+        titles = [row[0] for row in plan]
+        assert any("swappiness" in t.lower() for t in titles)
+        assert any("log" in t.lower() for t in titles)
+        assert any("cache" in t.lower() for t in titles)
+        assert any("NetworkManager-wait-online" in t for t in titles)
+        assert any("governor" in t.lower() for t in titles)
+        assert any("failed" in t.lower() for t in titles)
+        for _desc, cmd, _risk, _why in plan:
+            assert not tg.is_dangerous(cmd), cmd
+            assert re.search(r"\bsudo\b", cmd), cmd
+
+    def test_build_plan_skips_when_already_tuned(self):
+        results = {
+            "swappiness": "vm.swappiness = 10",
+            "memory": "Mem: 15Gi\nSwap: 2.0Gi 0B 2.0Gi",
+            "journal": "take up 50.0M on disk.",
+            "pkg_cache": "10M\t/var/cache/apt/archives/",
+            "boot_blame": "  0.200s something.else.service",
+            "cpu_gov": "8 performance",
+            "on_ac": "1",
+            "failed_svc": "0 loaded units listed.",
+        }
+        assert tg._slow_pc_build_plan(results, {"pkg_mgr": "apt"}) == []
+
+    def test_build_plan_uses_dnf_on_fedora(self):
+        results = {
+            "swappiness": "vm.swappiness = 10",
+            "memory": "Swap: 0B 0B 0B",
+            "journal": "take up 50.0M on disk.",
+            "pkg_cache": "300M\t/var/cache/dnf/",
+            "boot_blame": "",
+            "cpu_gov": "performance",
+            "on_ac": "desktop",
+            "failed_svc": "",
+        }
+        plan = tg._slow_pc_build_plan(results, {"pkg_mgr": "dnf"})
+        assert len(plan) == 1
+        assert "dnf clean" in plan[0][1]
+
+    def test_passthrough_routes_slow_pc_without_ai(self, monkeypatch):
+        called = {}
+
+        def _fake_perf(backend, bctx, slog):
+            called["ok"] = True
+
+        monkeypatch.setattr(tg, "feat_performance", _fake_perf)
+        assert tg.try_passthrough("my pc is slow", [], backend=None, bctx={"pkg_mgr": "apt"}) is True
+        assert called.get("ok") is True
+
+    def test_menu_18_is_performance_boost(self):
+        row = next(r for r in tg.MENU_ITEMS if r[0] == "18")
+        assert row[1] == "perf"
+        assert row[4] is tg.feat_performance
+        assert "slow" in row[3].lower() or "speed" in row[3].lower()

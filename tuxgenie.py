@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.73.0"
+__version__ = "6.74.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4417,6 +4417,16 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
     """
     cmd = (user_input or "").strip()
 
+    # Natural-language Slow-PC / "why is it slow?" — deterministic scan + safe
+    # fixes first (Phase 4). Falls through only if we somehow can't run it.
+    if _looks_like_slow_pc(cmd):
+        try:
+            feat_performance(backend, bctx or base_ctx(), session_log)
+        except Exception as e:
+            warn(f"Quick speed-up hit a snag ({e}) — asking the AI instead.")
+            return False
+        return True
+
     # Natural-language system update — run the right command for this distro
     # without burning AI tokens. "update this pc", "upgrade my system", etc.
     sys_update_cmd = _system_update_cmd_for_phrase(cmd)
@@ -8657,17 +8667,48 @@ def show_history():
         print(f"  {BLUE}{BOLD}{num_s}{R}  {DIM}{ts}{R}  {BOLD}{task}{R}{feat_s}")
     print()
 
-def feat_performance(backend, bctx, slog):
-    """
-    Agentic Performance Boost — collects all diagnostic data upfront (no AI),
-    feeds it to Claude in one shot, applies all safe fixes, then generates
-    a Warp-style before/after summary.
-    """
-    hdr("Performance Boost — Full System Audit")
-    print(f"\n  {CYAN}{BOLD}Phase 1/3  Scanning your system…{R}  {DIM}(~5 seconds){R}\n")
+# ── Slow-PC / Performance Boost helpers (Phase 4) ─────────────────────────────
+# Natural-language "my PC is slow" must NOT burn AI tokens first. Scan locally,
+# apply safe reversible fixes with approval, then optionally offer AI deep-dive.
 
-    # ── Collect all diagnostics upfront (parallel, no AI needed) ──────────────
-    _probes = [
+_SLOW_PC_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"(?:my\s+)?(?:pc|computer|laptop|system|machine)\s+(?:is\s+)?(?:very\s+|really\s+|so\s+)?(?:slow|sluggish|laggy|lagging)"
+    r"|why\s+(?:is\s+)?(?:(?:my\s+)?(?:pc|computer|laptop|system)|it)\s+(?:so\s+|very\s+)?slow"
+    r"|why\s+is\s+it\s+slow"
+    r"|(?:make\s+(?:my\s+)?(?:pc|computer|laptop|system|it)\s+faster)"
+    r"|(?:speed\s+up\s+(?:my\s+)?(?:pc|computer|laptop|system|this\s+(?:pc|computer|machine))?)"
+    r"|(?:performance\s+(?:boost|fix|issue|problem))"
+    r"|(?:system\s+is\s+(?:slow|sluggish|lagging))"
+    r"|it'?s\s+(?:so\s+|very\s+)?(?:slow|sluggish|laggy)"
+    r")\s*[.!?]?\s*$"
+)
+
+
+def _looks_like_slow_pc(text: str) -> bool:
+    """True when the user is asking to speed up a slow machine in plain English."""
+    return bool(_SLOW_PC_RE.match((text or "").strip()))
+
+
+def _parse_size_to_mb(text: str):
+    """Best-effort parse of sizes like '256.0M', '1.2G', '512K' → megabytes, or None."""
+    if not text:
+        return None
+    m = re.search(r"([\d.]+)\s*([KMGT])i?B?\b", text, re.I)
+    if not m:
+        return None
+    try:
+        n = float(m.group(1))
+    except ValueError:
+        return None
+    unit = m.group(2).upper()
+    mult = {"K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024}.get(unit, 1)
+    return n * mult
+
+
+def _slow_pc_collect() -> dict:
+    """Parallel local diagnostics — no AI. Same probe set the Performance Boost uses."""
+    probes = [
         ("memory",      "free -h"),
         ("meminfo",     "grep -E 'MemTotal|MemFree|MemAvailable|SwapTotal|SwapFree|Buffers:|^Cached:' /proc/meminfo"),
         ("top_mem",     "ps aux --sort=-%mem --no-headers | head -12"),
@@ -8675,22 +8716,18 @@ def feat_performance(backend, bctx, slog):
         ("load",        "uptime"),
         ("swappiness",  "sysctl vm.swappiness"),
         ("cpu_gov",     "cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor 2>/dev/null | sort | uniq -c || echo 'no cpufreq'"),
-        ("on_ac",       "cat /sys/class/power_supply/AC/online 2>/dev/null || echo 'desktop'"),
+        ("on_ac",       "cat /sys/class/power_supply/AC*/online 2>/dev/null | head -1 || echo 'desktop'"),
         ("boot_time",   "systemd-analyze 2>/dev/null | head -2"),
         ("boot_blame",  "systemd-analyze blame 2>/dev/null | head -15"),
         ("disk",        "df -h | grep -v 'tmpfs\\|udev\\|loop'"),
         ("failed_svc",  "systemctl list-units --state=failed --no-pager 2>/dev/null | head -10"),
-        ("enabled_svc", "systemctl list-unit-files --state=enabled --no-pager 2>/dev/null | grep '\\.service' | grep -v '@'"),
-        ("snap",        "snap list 2>/dev/null"),
-        ("apt_cache",   "du -sh /var/cache/apt/archives/ 2>/dev/null"),
+        ("pkg_cache",   "du -sh /var/cache/apt/archives/ 2>/dev/null || du -sh /var/cache/dnf/ 2>/dev/null || du -sh /var/cache/pacman/pkg/ 2>/dev/null || true"),
         ("journal",     "journalctl --disk-usage 2>/dev/null"),
         ("zram",        "swapon --show 2>/dev/null"),
-        ("iowait",      "vmstat 1 2 2>/dev/null | tail -1"),
     ]
-
     results = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {pool.submit(run_cmd_live, cmd, None, 8): key for key, cmd in _probes}
+        futures = {pool.submit(run_cmd_live, cmd, None, 8): key for key, cmd in probes}
         for fut in as_completed(futures):
             key = futures[fut]
             try:
@@ -8698,50 +8735,243 @@ def feat_performance(backend, bctx, slog):
                 results[key] = (stdout.strip() or stderr.strip() or "(no output)")
             except Exception:
                 results[key] = "(error)"
+    return results
 
-    ok("System scan complete")
 
-    # ── Display quick baseline summary ────────────────────────────────────────
-    _mem_line = results.get("memory", "").splitlines()
-    _mem_row  = next((l for l in _mem_line if l.startswith("Mem:")), "")
-    _swap_row = next((l for l in _mem_line if l.startswith("Swap:")), "")
-    _load     = results.get("load", "").split("load average:")[-1].strip()
-    _swap_val = results.get("swappiness", "").split("=")[-1].strip()
-    _boot_line = next((l for l in results.get("boot_time","").splitlines() if "graphical" in l or "reached" in l), "")
-
+def _slow_pc_show_baseline(results: dict) -> None:
+    mem_line = results.get("memory", "").splitlines()
+    mem_row  = next((l for l in mem_line if l.startswith("Mem:")), "")
+    swap_row = next((l for l in mem_line if l.startswith("Swap:")), "")
+    load     = results.get("load", "").split("load average:")[-1].strip() if "load average:" in results.get("load", "") else ""
+    swap_val = results.get("swappiness", "").split("=")[-1].strip()
+    boot_line = next((l for l in results.get("boot_time", "").splitlines()
+                      if "graphical" in l or "reached" in l or "Startup finished" in l), "")
     print(f"\n  {BOLD}Baseline:{R}")
-    if _mem_row:  print(f"  {DIM}RAM  {R}  {_mem_row.split()[1:6]}")
-    if _swap_row: print(f"  {DIM}Swap {R}  {_swap_row.split()[1:5]}")
-    if _load:     print(f"  {DIM}Load {R}  {_load}")
-    if _swap_val: print(f"  {DIM}Swappiness {R}  {_swap_val}")
-    if _boot_line:print(f"  {DIM}Boot {R}  {_boot_line.strip()}")
+    if mem_row:   print(f"  {DIM}RAM  {R}  {' '.join(mem_row.split()[1:6])}")
+    if swap_row:  print(f"  {DIM}Swap {R}  {' '.join(swap_row.split()[1:5])}")
+    if load:      print(f"  {DIM}Load {R}  {load}")
+    if swap_val:  print(f"  {DIM}Swappiness {R}  {swap_val}")
+    if boot_line: print(f"  {DIM}Boot {R}  {boot_line.strip()}")
 
-    # ── Phase 2: Feed everything to Claude ────────────────────────────────────
-    print(f"\n  {CYAN}{BOLD}Phase 2/3  AI analysing bottlenecks…{R}")
+
+def _slow_pc_build_plan(results: dict, bctx: dict) -> list:
+    """Return deterministic safe fixes: [(description, command, risk, reason), ...].
+    Only reversible, well-known speed tweaks — never speculative AI guesses."""
+    plan = []
+    pm = (bctx.get("pkg_mgr") or "apt").strip()
+
+    # Swappiness: default 60 is too aggressive on desktops with enough RAM.
+    try:
+        sw = int(re.search(r"(\d+)", results.get("swappiness", "") or "0").group(1))
+    except Exception:
+        sw = 0
+    swap_row = next((l for l in results.get("memory", "").splitlines() if l.startswith("Swap:")), "")
+    # free -h: Swap: total used free — used token index 2
+    swap_used = False
+    if swap_row:
+        parts = swap_row.split()
+        if len(parts) >= 3 and parts[2] not in ("0", "0B", "0K", "0M"):
+            swap_used = parts[2] != "0B"
+    if sw > 20:
+        plan.append((
+            "Lower swappiness to 10 (use RAM before disk swap)",
+            "echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-tuxgenie-swappiness.conf "
+            ">/dev/null && sudo sysctl -p /etc/sysctl.d/99-tuxgenie-swappiness.conf",
+            "safe",
+            f"Swappiness is {sw} (Linux default). Lowering it makes the PC feel snappier "
+            f"by preferring RAM over slow disk swap." + (" Swap is already in use." if swap_used else ""),
+        ))
+
+    # Journal vacuum if large
+    j_mb = _parse_size_to_mb(results.get("journal", ""))
+    if j_mb is not None and j_mb > 200:
+        plan.append((
+            "Trim old system logs (keep last 7 days)",
+            "sudo journalctl --vacuum-time=7d",
+            "safe",
+            f"System logs are using about {j_mb:.0f} MB. Trimming old logs frees disk space safely.",
+        ))
+
+    # Package cache cleanup — distro-aware
+    c_mb = _parse_size_to_mb(results.get("pkg_cache", ""))
+    if c_mb is not None and c_mb > 200:
+        clean = {
+            "apt":    "sudo apt-get autoremove -y && sudo apt-get clean",
+            "dnf":    "sudo dnf clean all",
+            "yum":    "sudo yum clean all",
+            "zypper": "sudo zypper clean --all",
+            "pacman": "sudo pacman -Sc --noconfirm",
+            "apk":    "sudo apk cache clean",
+        }.get(pm)
+        if clean:
+            plan.append((
+                "Clear old package download cache",
+                clean,
+                "safe",
+                f"Package cache is about {c_mb:.0f} MB. Clearing it frees disk without removing installed apps.",
+            ))
+
+    # NetworkManager-wait-online often adds seconds to boot
+    blame = results.get("boot_blame", "") or ""
+    if re.search(r"NetworkManager-wait-online\.service", blame, re.I):
+        # blame lines look like: "  4.123s NetworkManager-wait-online.service"
+        m = re.search(r"([\d.]+)s\s+NetworkManager-wait-online\.service", blame, re.I)
+        secs = float(m.group(1)) if m else 0
+        if secs >= 2.0 or m is None:
+            plan.append((
+                "Disable NetworkManager-wait-online (speeds up boot)",
+                "sudo systemctl disable --now NetworkManager-wait-online.service",
+                "moderate",
+                "This service often waits several seconds at boot for a network that is already fine. "
+                "Disabling it is a common safe speed-up; networking still works.",
+            ))
+
+    # CPU governor: on AC / desktop, prefer performance when stuck on powersave
+    gov = (results.get("cpu_gov", "") or "").lower()
+    on_ac = (results.get("on_ac", "") or "").strip()
+    plugged = on_ac in ("1", "desktop", "") or "desktop" in on_ac
+    if plugged and "powersave" in gov and "performance" not in gov:
+        plan.append((
+            "Set CPU governor to performance (plugged in / desktop)",
+            "echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor >/dev/null",
+            "moderate",
+            "CPU is in powersave mode while on AC/desktop power. Performance mode uses full speed.",
+        ))
+
+    # Failed services — clear the red "failed" flags (safe; does not remove apps)
+    failed = results.get("failed_svc", "") or ""
+    has_failed_unit = bool(re.search(
+        r"^\s*●?\s*[\w@.-]+\.service\b", failed, re.M | re.I))
+    if has_failed_unit and "0 loaded units listed" not in failed:
+        plan.append((
+            "Clear failed-service flags (cosmetic + re-check)",
+            "sudo systemctl reset-failed",
+            "safe",
+            "Some services are marked failed. Resetting the flags is safe and helps the health view; "
+            "it does not delete your apps.",
+        ))
+
+    # Filter anything the danger gate would block
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def feat_performance(backend, bctx, slog):
+    """
+    Slow-PC / Performance Boost — Phase 4 one-tap repair.
+
+    1) Scan the system with no AI (~5s)
+    2) Apply safe, reversible speed fixes deterministically (with approval)
+    3) Optionally offer a deeper AI analysis for anything left
+    """
+    hdr("Performance Boost — Speed up a slow PC")
+    print(f"\n  {CYAN}{BOLD}Step 1/2  Scanning your system…{R}  {DIM}(~5 seconds, no AI){R}\n")
+
+    results = _slow_pc_collect()
+    ok("System scan complete")
+    _slow_pc_show_baseline(results)
+
+    plan = _slow_pc_build_plan(results, bctx or {})
+    applied = 0
+    if not plan:
+        info("No safe automatic speed tweaks looked necessary from this scan.")
+    else:
+        print(f"\n  {CYAN}{BOLD}Step 2/2  Safe speed fixes ready{R}  "
+              f"{DIM}({len(plan)} — each shown before it runs){R}\n")
+        i = 0
+        while i < len(plan):
+            desc, cmd, risk, reason = plan[i]
+            print(f"  {BOLD}[{i + 1}/{len(plan)}]{R}  {desc}")
+            print(f"  {DIM}Why:{R} {reason}")
+            print(f"  {DIM}$ {cmd}{R}")
+            try:
+                ans = input(f"  {BOLD}Apply this fix?{R} "
+                            f"[{C('y',GREEN,BOLD)}=yes  {C('s',YELLOW,BOLD)}=skip  "
+                            f"{C('a',CYAN,BOLD)}=yes to all remaining  "
+                            f"{C('q',RED,BOLD)}=stop]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if ans in ("q", "quit", "stop"):
+                break
+            if ans in ("s", "skip", "n", "no"):
+                print(f"  {DIM}↳ Skipped.{R}\n")
+                i += 1
+                continue
+            apply_rest = ans in ("a", "all")
+            if ans not in ("y", "yes", "") and not apply_rest:
+                print(f"  {DIM}↳ Skipped.{R}\n")
+                i += 1
+                continue
+
+            batch = plan[i:] if apply_rest else [plan[i]]
+            sudo_pw = None
+            needs_sudo = any(re.search(r"\bsudo\b", c) for _, c, _, _ in batch)
+            if needs_sudo:
+                try:
+                    sudo_pw = get_or_cache_sudo_password()
+                    # Warm the sudo ticket so piped forms like `echo | sudo tee …`
+                    # (which cannot use sudo -S via stdin) still run non-interactively.
+                    run_cmd_live("sudo -v", sudo_password=sudo_pw, timeout=30)
+                except KeyboardInterrupt:
+                    break
+            for desc2, cmd2, _risk2, _reason2 in batch:
+                print(f"  {CYAN}▶ Applying: {desc2}{R}")
+                # Leading-sudo commands get -S; warmed ticket covers piped sudo.
+                pw = sudo_pw if cmd2.lstrip().startswith("sudo") else None
+                rc, _, _ = run_cmd_live(cmd2, sudo_password=pw, timeout=300)
+                _restore_terminal()
+                if rc == 0:
+                    ok(desc2)
+                    applied += 1
+                    slog.append({"command": cmd2, "rc": rc, "source": "slow-pc"})
+                    _action_log_append(cmd2, rc, "slow-pc")
+                else:
+                    warn(f"{desc2} — didn't complete (exit {rc}).")
+            if apply_rest:
+                break
+            i += 1
+            print()
+
+    if applied:
+        print(f"\n  {GREEN}{BOLD}✓ Applied {applied} speed fix(es).{R}  "
+              f"{DIM}Safe/reversible. A reboot can help some take full effect.{R}")
+
+    # Optional deeper AI pass — never forced; keeps free-tier cost down.
+    try:
+        deeper = input(f"\n  {BOLD}Want a deeper AI performance analysis?{R} "
+                       f"[{C('y',GREEN,BOLD)}=yes  {C('n',DIM)}=no, I'm done]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        deeper = "n"
+    if deeper not in ("y", "yes"):
+        info("Done. Type \"my PC is slow\" anytime — or press 18 for Performance Boost.")
+        return
+
+    print(f"\n  {CYAN}{BOLD}AI analysing remaining bottlenecks…{R}")
     data_block = "\n\n".join(f"[{k}]\n{v}" for k, v in results.items())
-
     perf_prompt = f"""Make my Linux system as fast as possible.
 
 Here is a COMPLETE live diagnostic scan collected right now:
 
 {data_block}
 
-Analyse every section above. Identify ALL bottlenecks. Apply every safe, reversible fix.
+{applied} safe automatic fix(es) were already applied by TuxGenie before this AI pass.
+Focus on remaining bottlenecks that still need attention.
 
-FIXES TO APPLY (only those actually needed based on the data):
+Analyse every section above. Identify ALL remaining bottlenecks. Apply every safe, reversible fix still needed.
+
+FIXES TO CONSIDER (only those actually still needed based on the data):
 - vm.swappiness → 10 if currently >20 AND swap is being used (persist via /etc/sysctl.d/)
-- Add zram compressed swap if: swap is heavily used AND no zram exists already (use zram-config or zramctl)
+- Add zram compressed swap if: swap is heavily used AND no zram exists already
 - CPU governor → performance if currently powersave/ondemand AND on_ac=1 (desktop/plugged in)
 - Disable NetworkManager-wait-online.service if it's in boot blame taking >3s
 - Disable other slow boot services (only non-critical ones — NOT ssh, ufw, cron, NetworkManager itself)
-- apt autoremove + apt clean if apt_cache is large or orphaned packages exist
+- Package-manager clean/autoremove if caches are large
 - journalctl --vacuum-time=7d if journal size is >200MB
-- Drop page/dentry/inode caches if memory pressure is high: echo 3 > /proc/sys/vm/drop_caches
 
 DO NOT suggest: upgrading RAM, replacing apps, reinstalling the OS.
 Set needs_synthesis: true so a full before/after summary is generated."""
 
-    fix_engine(backend, BASE_SYS + _sys_ctx_block(bctx),
+    fix_engine(backend, BASE_SYS + _sys_ctx_block(bctx or {}),
                [{"role": "user", "content": perf_prompt}], slog)
 
 
@@ -11224,7 +11454,7 @@ MENU_ITEMS = [
     ("16", "backup",    "Backup Settings",    "Snapshot all system configs to .tar.gz",         feat_backup),
     ("17", "rollback",  "Undo Changes",       "Undo changes made in a previous session",        feat_rollback),
     # ── SPEED & MAINTENANCE ──────────────────────────────────────
-    ("18", "perf",      "Performance Boost",  "Full audit + apply all safe speed fixes",        feat_performance),
+    ("18", "perf",      "Performance Boost",  "My PC is slow — scan + safe speed fixes (optional AI)", feat_performance),
     ("19", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
     ("20", "boot",      "Speed Up Boot",      "Find why boot is slow & speed it up",            feat_boot),
     ("21", "battery",   "Battery & Power",    "Improve battery life, fix overheating",          feat_battery),
@@ -11341,7 +11571,7 @@ def show_menu(compact=False):
     _item("17", "Undo Changes",        "Oops? Roll back what TuxGenie did")
 
     _cat(BG_DARK, "⚡", "SPEED & MAINTENANCE", "Keep your computer fast")
-    _item("18", "Performance Boost",   "🚀 Full audit + apply ALL safe speed fixes")
+    _item("18", "Performance Boost",   "My PC is slow — scan + safe speed fixes")
     _item("19", "Disk Cleanup",        "Running out of storage?")
     _item("20", "Speed Up Boot",       "Computer starts slowly? Fix it")
     _item("21", "Battery & Power",     "Battery draining fast? Laptop overheating?")
