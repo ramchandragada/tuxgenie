@@ -1059,6 +1059,8 @@ class TestOpenAICompatBackend:
         slept = {}
         monkeypatch.setattr(tg.urllib.request, "urlopen", fake_open)
         monkeypatch.setattr(tg.time, "sleep", lambda s: slept.setdefault("s", s))
+        # Solo free provider — no Gemini/Ollama failover available → wait+retry.
+        monkeypatch.setattr(tg, "_free_failover_available", lambda exclude: False)
         data = be._gen("s", [{"role": "user", "content": "hi"}], None, 3072)
         assert calls["n"] == 2          # retried once
         assert slept.get("s") == 4      # 2s hint + 2s buffer
@@ -1159,8 +1161,15 @@ class TestSetupWizardDefault:
         kind, key = self._wizard(["2", "gsk_" + "a" * 40], monkeypatch)
         assert kind == "groq"
 
-    def test_three_is_claude(self, monkeypatch):
-        kind, key = self._wizard(["3", "sk-ant-" + "a" * 70], monkeypatch)
+    def test_three_is_ollama(self, monkeypatch):
+        # Phase C: [3] = Ollama (local). Confirm even when daemon is down.
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: False)
+        kind, key = self._wizard(["3", "y"], monkeypatch)
+        assert kind == "ollama"
+        assert key == tg._OLLAMA_LOCAL_KEY
+
+    def test_four_is_claude(self, monkeypatch):
+        kind, key = self._wizard(["4", "sk-ant-" + "a" * 70], monkeypatch)
         assert kind == "claude"
 
     def test_s_skips(self, monkeypatch):

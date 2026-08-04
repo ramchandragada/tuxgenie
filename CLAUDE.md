@@ -74,17 +74,30 @@ TuxGenie must work for **every** Linux user, not just Debian/Ubuntu:
 At every start the provider is chosen by PRIORITY, not by what was last used:
 1. **Claude** only when the user explicitly connected it (`provider == "claude"`
    with a key) — then it's sticky. `main()` warns that free options exist.
-2. Otherwise **always prefer free Gemini, then the free OpenAI-compatible
-   providers in registry order (Groq, …)** — regardless of the last saved free
-   provider. Gemini is the default whenever its key is present; if only one free
-   key exists, start with that provider.
-3. If the only key present is Claude's, use it (with the same free-switch hint).
+2. **Ollama** sticky when the user explicitly chose local AI (`provider == "ollama"`)
+   AND the local daemon is reachable (Phase C — privacy / offline).
+3. Otherwise **always prefer free Gemini, then free OpenAI-compatible cloud
+   providers in registry order (Groq, SambaNova, OpenRouter), then Ollama if
+   reachable** — regardless of the last saved free cloud provider. Gemini is the
+   default whenever its key is present; if only one free key exists, start with
+   that provider.
+4. If the only key present is Claude's, use it (with the same free-switch hint).
 
-Auto-failover during a session is still free→free only (Gemini → Groq → …) and
-never *silently* uses Claude. But when the whole free rotation is exhausted and a
-Claude key is connected, TuxGenie **offers** to finish the task on Claude — paid,
-so only after an explicit "yes" (`_offer_claude_fallback`). It never spends on
-Claude without consent. `tests/test_fundamentals`/`test_tuxgenie` lock this.
+Auto-failover during a session is still free→free only (Gemini → Groq → … →
+Ollama when running) and never *silently* uses Claude. But when the whole free
+rotation is exhausted and a Claude key is connected, TuxGenie **offers** to
+finish the task on Claude — paid, so only after an explicit "yes"
+(`_offer_claude_fallback`). It never spends on Claude without consent.
+`tests/test_fundamentals`/`test_tuxgenie` lock this.
+
+## Phase C — Local AI + real snapshots
+
+- **Ollama** is a first-class free backend (`_OAI_PROVIDERS["ollama"]`, no API key).
+  Settings → 8, setup wizard, and phrases like "use ollama" / "local ai".
+- **Config snapshots** (menu 16): create / list / restore `.tar.gz` + JSON
+  manifest under `~/.local/share/tuxgenie/backups/`.
+- **Undo** (menu 17): restore a snapshot, or deterministic reverse of known
+  session commands, with optional AI for leftovers.
 
 ## Cost Optimisation Principles
 

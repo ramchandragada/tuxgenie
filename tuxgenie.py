@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.78.0"
+__version__ = "6.79.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1076,7 +1076,70 @@ _OAI_PROVIDERS = {
         # reservation modest so a single agentic step stays well inside limits.
         "max_tokens": 4096,
     },
+    # Phase C — local / offline. Last in registry so cloud free keys still win
+    # when present; used when sticky, when no cloud keys, or as free failover.
+    "ollama": {
+        "label": "Ollama", "base_url": "http://127.0.0.1:11434/v1",
+        "default_model": "llama3.2:3b", "cfg_key": "ollama_api_key",
+        "model_key": "ollama_model", "keys_url": "https://ollama.com/download",
+        "env": ("OLLAMA_API_KEY",), "free": True, "local": True, "needs_key": False,
+        "max_tokens": 4096,
+    },
 }
+
+# Sentinel "key" for keyless local backends (never sent as a real secret).
+_OLLAMA_LOCAL_KEY = "ollama-local"
+
+
+def _ollama_reachable(timeout: float = 1.5) -> bool:
+    """True when the local Ollama daemon answers /api/tags with a models list."""
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/tags",
+            headers={"User-Agent": f"TuxGenie/{__version__}"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if not (200 <= getattr(r, "status", 200) < 300):
+                return False
+            data = json.loads(r.read().decode("utf-8"))
+        # Require the real Ollama shape — not any HTTP 200 (avoids test doubles /
+        # reverse-proxies that answer every path with an unrelated body).
+        return isinstance(data, dict) and isinstance(data.get("models"), list)
+    except Exception:
+        return False
+
+
+def _ollama_installed_models() -> list:
+    """Names of models already pulled into the local Ollama daemon."""
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/tags",
+            headers={"User-Agent": f"TuxGenie/{__version__}"},
+        )
+        with urllib.request.urlopen(req, timeout=2) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        if not isinstance(data, dict):
+            return []
+        return [m.get("name", "") for m in (data.get("models") or []) if m.get("name")]
+    except Exception:
+        return []
+
+
+def _ollama_pick_model(preferred: str = None) -> str:
+    """Pick a usable local model — prefer saved/preferred, then small Llama."""
+    models = _ollama_installed_models()
+    default = (_OAI_PROVIDERS.get("ollama") or {}).get("default_model") or "llama3.2:3b"
+    if not models:
+        return preferred or default
+    if preferred:
+        for m in models:
+            if m == preferred or m.startswith(preferred + ":") or preferred.split(":")[0] == m.split(":")[0]:
+                return m
+    for pref in (default, "llama3.2:3b", "llama3.2", "llama3.1", "llama3", "mistral", "phi3"):
+        for m in models:
+            if m == pref or m.startswith(pref.split(":")[0]):
+                return m
+    return models[0]
 
 
 def _oai_messages_from_anthropic(system_text, messages):
@@ -1329,10 +1392,13 @@ class OpenAICompatBackend:
         # A real User-Agent matters: some providers sit behind a WAF (Cloudflare)
         # that returns 403 to the default 'Python-urllib' agent. Also send an
         # explicit Accept so intermediaries don't guess.
-        return {"Content-Type": "application/json",
-                "Accept": "application/json",
-                "User-Agent": f"TuxGenie/{__version__} (+https://github.com/{_GITHUB_REPO})",
-                "Authorization": f"Bearer {(self.api_key or '').strip()}"}
+        h = {"Content-Type": "application/json",
+             "Accept": "application/json",
+             "User-Agent": f"TuxGenie/{__version__} (+https://github.com/{_GITHUB_REPO})"}
+        # Local Ollama ignores auth; omit Bearer so we never look like a cloud client.
+        if not self._prov.get("local"):
+            h["Authorization"] = f"Bearer {(self.api_key or '').strip()}"
+        return h
 
     def _list_models(self):
         req = urllib.request.Request(f"{self.base_url}/models", headers=self._headers())
@@ -1457,6 +1523,24 @@ class OpenAICompatBackend:
 
     def _prompt_for_key(self):
         p = self._prov
+        # Phase C: local Ollama needs a running daemon + a pulled model, not a key.
+        if p.get("local") or p.get("needs_key") is False:
+            if self.provider == "ollama" and _ollama_reachable():
+                self.api_key = _OLLAMA_LOCAL_KEY
+                self._no_key = False
+                picked = _ollama_pick_model(self.model)
+                if picked and picked != self.model:
+                    self.model = picked
+                    self.base_model = picked
+                    save_cfg({p["model_key"]: picked})
+                ok(f"Ollama is running locally — using {self.model} (no API key needed).")
+                return True
+            print(f"\n  {YELLOW}{BOLD}🖥️  Local AI (Ollama) is not running yet.{R}")
+            print(f"  {DIM}Install it from menu {BOLD}99{R}{DIM} (AI Tools → Ollama), then:{R}")
+            print(f"  {CYAN}  ollama serve{R}   {DIM}# if not already a service{R}")
+            print(f"  {CYAN}  ollama pull llama3.2:3b{R}   {DIM}# small, fast starter model{R}")
+            print(f"  {DIM}Or get a free cloud key instead (Settings → 8 → Gemini/Groq).{R}\n")
+            return False
         print(f"\n  {YELLOW}{BOLD}🔑 AI features need a {p['label']} API key.{R}")
         pre = "It's free — no credit card. " if p.get("free") else ""
         print(f"  {DIM}{pre}Get one at:{R} {CYAN}{p['keys_url']}{R}\n")
@@ -1517,9 +1601,11 @@ def _load_api_key(cfg):
     return _migrate_old_key()
 
 def _setup_wizard(cfg):
-    """First-run wizard. Lets the user choose Claude (best) or Gemini (free),
-    or skip. Returns ('claude'|'gemini', api_key) | ('skip', None)."""
+    """First-run wizard. Lets the user choose Gemini/Groq (free cloud), Ollama
+    (local), Claude (paid), or skip.
+    Returns ('claude'|'gemini'|'groq'|'ollama', key_or_sentinel) | ('skip', None)."""
     _line = f"  {DIM}{'─'*58}{R}"
+    ollama_up = _ollama_reachable()
     print(f"\n{_line}")
     print(f"  {GREEN}{BOLD}🐧 TuxGenie — Quick Setup{R}")
     print(f"{_line}")
@@ -1529,17 +1615,21 @@ def _setup_wizard(cfg):
     print(f"      {DIM}Get a free key at aistudio.google.com/apikey{R}")
     print(f"  {C('[2]',CYAN,BOLD)} {BOLD}Groq{R} — {GREEN}also free, very fast{R} {DIM}(Llama models){R}")
     print(f"      {DIM}Get a free key at console.groq.com/keys{R}")
-    print(f"  {C('[3]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
+    ollama_hint = (f"{GREEN}detected on this PC{R}" if ollama_up
+                   else f"{DIM}install via menu 99 if needed{R}")
+    print(f"  {C('[3]',CYAN,BOLD)} {BOLD}Ollama{R} — {GREEN}local / offline, no API key{R}  {ollama_hint}")
+    print(f"      {DIM}Runs on your machine — private, works without internet{R}")
+    print(f"  {C('[4]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
     print(f"      {DIM}Free trial credit, then ~$0.01/session · console.anthropic.com{R}\n")
     try:
-        choice = input(f"  Choose {BOLD}1{R}, {BOLD}2{R} or {BOLD}3{R}  {DIM}(Enter = 1, the free option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
+        choice = input(f"  Choose {BOLD}1{R}–{BOLD}4{R}  {DIM}(Enter = 1, the free cloud option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
     if choice in ("", "1"):   # Google Gemini — the free default
         print(f"\n  {DIM}Free Gemini key: {CYAN}https://aistudio.google.com/apikey{R}")
         print(f"  {DIM}Heads-up: on Google's {BOLD}free{R}{DIM} tier, Google may use your prompts")
         print(f"  {DIM}& responses to improve their products. Great for everyday use —")
-        print(f"  {DIM}pick Claude for confidential machines. Full details: PRIVACY.md{R}")
+        print(f"  {DIM}pick Claude or Ollama for confidential machines. Full details: PRIVACY.md{R}")
         try:
             key = input("  Paste your Gemini API key: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -1548,13 +1638,29 @@ def _setup_wizard(cfg):
     if choice == "2":
         print(f"\n  {DIM}Free Groq key: {CYAN}https://console.groq.com/keys{R}")
         print(f"  {DIM}Heads-up: check Groq's terms for how free-tier data is used.")
-        print(f"  {DIM}Great for everyday use — pick Claude for confidential machines.{R}")
+        print(f"  {DIM}Great for everyday use — pick Claude or Ollama for confidential machines.{R}")
         try:
             key = input("  Paste your Groq API key: ").strip()
         except (EOFError, KeyboardInterrupt):
             return ("skip", None)
         return ("groq", key) if key else ("skip", None)
     if choice == "3":
+        if not ollama_up:
+            print(f"\n  {YELLOW}Ollama is not running yet.{R}")
+            print(f"  {DIM}After setup, install from menu 99 → Ollama, then:{R}")
+            print(f"  {CYAN}  ollama pull llama3.2:3b{R}")
+            print(f"  {DIM}You can still select Ollama now — TuxGenie will use it when it's up.{R}")
+            try:
+                ans = input(f"  {BOLD}Use Ollama as your AI provider anyway?{R} [Y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return ("skip", None)
+            if ans not in ("", "y", "yes"):
+                return ("skip", None)
+        else:
+            model = _ollama_pick_model()
+            ok(f"Ollama ready — will use local model {model}.")
+        return ("ollama", _OLLAMA_LOCAL_KEY)
+    if choice == "4":
         print(f"\n  {DIM}Claude key: {CYAN}https://console.anthropic.com{R}")
         try:
             key = input("  Paste your Anthropic API key: ").strip()
@@ -1572,8 +1678,12 @@ def _make_backend(cfg, provider, key):
         b = GeminiBackend(api_key=key, model=cfg.get("gemini_model", _GEMINI_MODEL))
     elif provider in _OAI_PROVIDERS:
         prov = _OAI_PROVIDERS[provider]
-        b = OpenAICompatBackend(api_key=key, provider=provider,
-                                model=cfg.get(prov["model_key"], prov["default_model"]))
+        model = cfg.get(prov["model_key"], prov["default_model"])
+        if provider == "ollama":
+            # Prefer a model that is actually pulled on this machine.
+            model = _ollama_pick_model(model)
+            key = key or _OLLAMA_LOCAL_KEY
+        b = OpenAICompatBackend(api_key=key, provider=provider, model=model)
     else:
         b = AnthropicBackend(api_key=key, model=cfg.get("model", _HAIKU_MODEL))
     b.expert_mode  = bool(cfg.get("expert_mode", False))
@@ -1585,7 +1695,11 @@ def _make_backend(cfg, provider, key):
 def _provider_key(pname: str, cfg=None) -> str:
     """Resolve a provider's API key from env or config (env wins), else ''.
     Works for 'gemini', 'claude', and any OpenAI-compatible provider (groq, …)
-    — the single place key lookup happens."""
+    — the single place key lookup happens.
+
+    Local providers (Ollama) return a sentinel when the daemon is reachable so
+    load_backend / free-failover can treat them as available without a cloud key.
+    """
     cfg = cfg if cfg is not None else load_cfg()
     if pname == "gemini":
         return (os.environ.get("GEMINI_API_KEY", "").strip()
@@ -1595,6 +1709,17 @@ def _provider_key(pname: str, cfg=None) -> str:
         return _load_api_key(cfg)
     prov = _OAI_PROVIDERS.get(pname)
     if not prov:
+        return ""
+    if prov.get("local") or prov.get("needs_key") is False:
+        # Optional env/config key still honoured (rare); else sentinel if online.
+        k = ""
+        for ev in prov.get("env", ()):
+            k = k or os.environ.get(ev, "").strip()
+        k = k or (cfg.get(prov["cfg_key"]) or "").strip()
+        if k:
+            return k
+        if pname == "ollama" and _ollama_reachable():
+            return _OLLAMA_LOCAL_KEY
         return ""
     k = ""
     for ev in prov.get("env", ()):
@@ -1826,16 +1951,20 @@ def load_backend():
     # anything saved in config).
     gkey = _provider_key("gemini", cfg)
     ckey = _load_api_key(cfg)
+    okey = _provider_key("ollama", cfg)  # sentinel when local daemon is up
 
     # Startup provider priority (see CLAUDE.md):
     #   1. Claude ONLY when the user has explicitly connected it (a paid, manual
     #      choice) — then it's sticky. main() warns that free options exist.
-    #   2. Otherwise ALWAYS prefer free Gemini, then the free OpenAI-compatible
-    #      providers in registry order (Groq, …) — regardless of the last saved
-    #      free provider. Gemini is the default whenever its key exists.
-    #   3. If the only key present is Claude's, use it (with the same warning).
+    #   2. Ollama sticky when the user explicitly chose local AI AND the daemon
+    #      is reachable (Phase C — privacy / offline).
+    #   3. Otherwise ALWAYS prefer free Gemini, then free OpenAI-compatible
+    #      cloud providers in registry order (Groq, …), then Ollama if reachable.
+    #   4. If the only key present is Claude's, use it (with the same warning).
     if provider == "claude" and ckey:
         return _make_backend(cfg, "claude", ckey)
+    if provider == "ollama" and okey:
+        return _make_backend(cfg, "ollama", okey)
     if gkey:
         if provider != "gemini":
             save_cfg({"provider": "gemini"})
@@ -1857,14 +1986,21 @@ def load_backend():
     if kind == "gemini":
         save_cfg({"provider": "gemini", "gemini_api_key": value})
         return _make_backend(cfg, "gemini", value)
+    if kind == "ollama":
+        save_cfg({"provider": "ollama"})
+        return _make_backend(cfg, "ollama", value or _OLLAMA_LOCAL_KEY)
     if kind in _OAI_PROVIDERS:
         save_cfg({"provider": kind, _OAI_PROVIDERS[kind]["cfg_key"]: value})
         return _make_backend(cfg, kind, value)
     if kind == "claude":
         save_cfg({"provider": "claude", "backend": "claude", "api_key": value})
         return _make_backend(cfg, "claude", value)
-    # Skipped setup — no key yet. Default the placeholder to Gemini (the free
-    # option) so the eventual `k` prompt offers the free path first.
+    # Skipped setup — if Ollama is already running, use it (no cloud key needed).
+    if _ollama_reachable():
+        save_cfg({"provider": "ollama"})
+        return _make_backend(cfg, "ollama", _OLLAMA_LOCAL_KEY)
+    # No key yet. Default the placeholder to Gemini (the free cloud option) so
+    # the eventual `k` prompt offers the free path first.
     save_cfg({"backend": "none"})
     return _make_backend(cfg, "gemini", _NO_KEY)
 
@@ -1982,7 +2118,13 @@ def feat_settings(backend, bctx, slog):
                  if len(free_keys) == 1 and failover_on else ""))
     else:
         print(f"  {DIM}Free AI keys saved:{R}  {YELLOW}none{R}  "
-              f"{DIM}— add Gemini/Groq/SambaNova/OpenRouter in [8]{R}")
+              f"{DIM}— add Gemini/Groq/… in [8], or use Ollama (local){R}")
+    if _ollama_reachable():
+        print(f"  {DIM}Local Ollama:{R}  {GREEN}{BOLD}running{R}  "
+              f"{DIM}(model: {_ollama_pick_model(cfg.get('ollama_model'))}){R}")
+    else:
+        print(f"  {DIM}Local Ollama:{R}  {YELLOW}not detected{R}  "
+              f"{DIM}— install from menu 99, then Settings → 8 → Ollama{R}")
     report_state = cfg.get("error_reporting", None)
     report_tag = (C(" ON", GREEN) if report_state is True
                   else C(" OFF", YELLOW) if report_state is False else C(" NOT SET", DIM))
@@ -1996,7 +2138,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
-    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq · SambaNova · OpenRouter — all free · or Claude){R}")
+    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq · SambaNova · OpenRouter · Ollama local · Claude){R}")
     print(f"  {C('[9]',CYAN)} Toggle auto-switch on limits  {DIM}(fall back between free providers — never Claude){R}")
     print(f"  {C('[10]',CYAN)} Toggle anonymous error reports  {DIM}(scrubbed crashes/AI errors — helps us fix bugs){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
@@ -2093,15 +2235,18 @@ def feat_settings(backend, bctx, slog):
         print(f"      {DIM}Get a free key: {CYAN}https://cloud.sambanova.ai/apis{R}")
         print(f"  {C('[4]',CYAN)} OpenRouter — {GREEN}free tier, no credit card{R} {DIM}(one key, many models){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://openrouter.ai/keys{R}")
-        print(f"  {C('[5]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        ollama_st = f"{GREEN}running{R}" if _ollama_reachable() else f"{YELLOW}not running{R}"
+        print(f"  {C('[5]',CYAN)} Ollama — {GREEN}local / offline, no API key{R}  {DIM}({ollama_st}){R}")
+        print(f"      {DIM}Private AI on this PC · install from menu 99 if needed{R}")
+        print(f"  {C('[6]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
         print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
         try:
-            p = input(f"\n  {BOLD}Choose provider [1/2/3/4/5] (or Enter to cancel):{R} ").strip()
+            p = input(f"\n  {BOLD}Choose provider [1-6] (or Enter to cancel):{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             return
         if p == "1":
             print(f"  {DIM}Note: on Google's {BOLD}free{R}{DIM} tier, Google may use your prompts &")
-            print(f"  {DIM}responses to improve their products. Prefer Claude for sensitive")
+            print(f"  {DIM}responses to improve their products. Prefer Claude/Ollama for sensitive")
             print(f"  {DIM}systems. Full details in PRIVACY.md.{R}")
             k = (load_cfg().get("gemini_api_key") or "").strip()
             if not k:
@@ -2116,7 +2261,7 @@ def feat_settings(backend, bctx, slog):
             ok("Switched to Google Gemini (free tier). Restart TuxGenie for it to take effect.")
         elif p == "2":
             print(f"  {DIM}Note: Groq's free tier is rate-limited; check Groq's terms for how")
-            print(f"  {DIM}free-tier data is used. Prefer Claude for sensitive systems.{R}")
+            print(f"  {DIM}free-tier data is used. Prefer Claude/Ollama for sensitive systems.{R}")
             k = (load_cfg().get("groq_api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Free Groq key: {CYAN}https://console.groq.com/keys{R}")
@@ -2131,7 +2276,7 @@ def feat_settings(backend, bctx, slog):
         elif p == "3":
             print(f"  {DIM}Note: SambaNova's free tier is rate-limited (a daily token cap);")
             print(f"  {DIM}check SambaNova's terms for how free-tier data is used. Prefer")
-            print(f"  {DIM}Claude for sensitive systems.{R}")
+            print(f"  {DIM}Claude/Ollama for sensitive systems.{R}")
             k = (load_cfg().get("sambanova_api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Free SambaNova key: {CYAN}https://cloud.sambanova.ai/apis{R}")
@@ -2146,7 +2291,7 @@ def feat_settings(backend, bctx, slog):
         elif p == "4":
             print(f"  {DIM}Note: OpenRouter's free models are rate-limited (~20/min, ~50/day);")
             print(f"  {DIM}check OpenRouter's terms for how free-tier data is used. Prefer")
-            print(f"  {DIM}Claude for sensitive systems.{R}")
+            print(f"  {DIM}Claude/Ollama for sensitive systems.{R}")
             k = (load_cfg().get("openrouter_api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Free OpenRouter key: {CYAN}https://openrouter.ai/keys{R}")
@@ -2159,6 +2304,24 @@ def feat_settings(backend, bctx, slog):
             save_cfg({"provider": "openrouter", "openrouter_api_key": k})
             ok("Switched to OpenRouter (free tier). Restart TuxGenie for it to take effect.")
         elif p == "5":
+            if not _ollama_reachable():
+                warn("Ollama is not running on this PC yet.")
+                print(f"  {DIM}Install from menu 99 → Ollama, then run:{R}")
+                print(f"  {CYAN}  ollama pull llama3.2:3b{R}")
+                try:
+                    ans = input(f"  {BOLD}Still switch to Ollama (use when it's up)?{R} [Y/n]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if ans not in ("", "y", "yes"):
+                    info("Provider unchanged.")
+                    return
+                model = "llama3.2:3b"
+            else:
+                model = _ollama_pick_model(load_cfg().get("ollama_model"))
+                ok(f"Ollama is running — detected model {model}.")
+            save_cfg({"provider": "ollama", "ollama_model": model})
+            ok("Switched to Ollama (local). Restart TuxGenie for it to take effect.")
+        elif p == "6":
             k = (load_cfg().get("api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
@@ -3133,7 +3296,20 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 for block in response.content:
                     if getattr(block, "type", None) == "tool_use":
                         result = _handle_tool_call(block, sudo_pw, step_counter, backend, approve_state)
-                        session_log.append({"command": block.input.get("command", ""), "source": "agentic"})
+                        # Phase C: record returncode so Undo can filter successes.
+                        # Action log already has rc; mirror it when present.
+                        _cmd = (block.input.get("command") or "").strip()
+                        _rc = None
+                        if _cmd:
+                            for _a in reversed(_action_log_recent(5)):
+                                if (_a.get("cmd") or "").strip() == _cmd[:200]:
+                                    _rc = _a.get("rc")
+                                    break
+                        session_log.append({
+                            "command": _cmd,
+                            "returncode": _rc if _rc is not None else 0,
+                            "source": "agentic",
+                        })
                         tool_results.append({
                             "type":        "tool_result",
                             "tool_use_id": block.id,
@@ -4443,6 +4619,47 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
                 warn(f"{_label} playbook hit a snag ({e}) — asking the AI instead.")
                 return False
             return True
+
+    # Phase C — local AI / snapshot phrases (no AI needed to route).
+    if re.match(
+        r"(?is)^\s*(?:use\s+)?(?:local\s+ai|ollama|offline\s+ai)"
+        r"(?:\s+please)?\s*[.!?]?\s*$",
+        cmd,
+    ):
+        if _ollama_reachable():
+            model = _ollama_pick_model(load_cfg().get("ollama_model"))
+            save_cfg({"provider": "ollama", "ollama_model": model})
+            ok(f"Switched to Ollama (local · {model}). Restart TuxGenie or continue — "
+               f"new AI calls use the local model.")
+        else:
+            warn("Ollama is not running yet.")
+            print(f"  {DIM}Install from menu 99 → Ollama, then: "
+                  f"{CYAN}ollama pull llama3.2:3b{R}")
+            save_cfg({"provider": "ollama"})
+            info("Ollama set as preferred provider — it will activate when the daemon is up.")
+        return True
+    if re.match(
+        r"(?is)^\s*(?:backup\s+(?:my\s+)?(?:config|settings|system)"
+        r"|create\s+(?:a\s+)?(?:config\s+)?snapshot"
+        r"|snapshot\s+(?:my\s+)?(?:config|settings))\s*[.!?]?\s*$",
+        cmd,
+    ):
+        try:
+            feat_backup(backend, _ctx, session_log)
+        except Exception as e:
+            warn(f"Backup hit a snag ({e}).")
+        return True
+    if re.match(
+        r"(?is)^\s*(?:restore\s+(?:my\s+)?(?:backup|snapshot|config)"
+        r"|undo\s+(?:my\s+)?(?:changes|last\s+session)"
+        r"|roll\s*back)\s*[.!?]?\s*$",
+        cmd,
+    ):
+        try:
+            feat_rollback(backend, _ctx, session_log)
+        except Exception as e:
+            warn(f"Rollback hit a snag ({e}).")
+        return True
 
     # Natural-language system update — run the right command for this distro
     # without burning AI tokens. "update this pc", "upgrade my system", etc.
@@ -6677,52 +6894,130 @@ Additional instructions for DOCKER HELPER mode:
 """ + _sys_ctx_block(ctx)
     fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
-# ── FEATURE 16: Config Backup ─────────────────────────────────────────────────
+# ── FEATURE 16: Config Backup / Snapshots (Phase C) ───────────────────────────
 BACKUP_PATHS = [
     "/etc/ssh", "/etc/nginx", "/etc/apache2", "/etc/mysql",
     "/etc/postgresql", "/etc/fstab", "/etc/hosts", "/etc/hostname",
     "/etc/network", "/etc/NetworkManager", "/etc/crontab", "/etc/cron.d",
     "/etc/systemd/system", "/etc/ufw", "/etc/iptables",
+    "/etc/sysctl.d", "/etc/default/grub",
     "~/.bashrc", "~/.zshrc", "~/.profile", "~/.ssh/config",
 ]
+_SNAPSHOT_NAME_RE = re.compile(r"^tuxgenie_backup_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.tar\.gz$")
 
-def feat_backup(backend, bctx, slog):
-    hdr("Config Backup — Snapshot your configs")
 
-    # When running as root via sudo re-exec, save the backup to the original
-    # user's home, not /root/. SUDO_USER is set by sudo to the invoking user.
-    backup_dir = BACKUPS_DIR
+def _user_backup_dir() -> str:
+    """Always the invoking user's snapshot dir (never /root/... under sudo)."""
     if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
         try:
             import pwd
-            sudo_user = os.environ["SUDO_USER"]
-            user_home = pwd.getpwnam(sudo_user).pw_dir
-            backup_dir = os.path.join(user_home, ".config", "tuxgenie", "data", "backups")
-            os.makedirs(backup_dir, exist_ok=True)
+            home = pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir
+            # Prefer the standard XDG data path; also accept the older
+            # ~/.config/tuxgenie/data/backups used by earlier sudo re-execs.
+            for candidate in (
+                os.path.join(home, ".local", "share", "tuxgenie", "backups"),
+                os.path.join(home, ".config", "tuxgenie", "data", "backups"),
+            ):
+                if os.path.isdir(candidate):
+                    return candidate
+            d = os.path.join(home, ".local", "share", "tuxgenie", "backups")
+            os.makedirs(d, exist_ok=True)
+            return d
         except Exception:
-            backup_dir = BACKUPS_DIR  # fall back to root's home if SUDO_USER lookup fails
+            pass
+    os.makedirs(BACKUPS_DIR, exist_ok=True)
+    return BACKUPS_DIR
 
-    # Many BACKUP_PATHS (e.g. /etc/ssh, /etc/sudoers.d) require root to read.
-    # Without sudo we'd silently skip everything and leave the user with an
-    # almost-empty tarball that looks like a successful backup. Re-exec under
-    # sudo so the snapshot is actually useful.
-    if os.geteuid() != 0:
+
+def _legacy_backup_dirs() -> list:
+    """Extra dirs that may hold older snapshots (pre–Phase C path quirk)."""
+    dirs = []
+    home = os.path.expanduser("~")
+    if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+        try:
+            import pwd
+            home = pwd.getpwnam(os.environ["SUDO_USER"]).pw_dir
+        except Exception:
+            pass
+    for d in (
+        os.path.join(home, ".local", "share", "tuxgenie", "backups"),
+        os.path.join(home, ".config", "tuxgenie", "data", "backups"),
+        BACKUPS_DIR,
+    ):
+        if d and os.path.isdir(d) and d not in dirs:
+            dirs.append(d)
+    return dirs
+
+
+def _list_config_snapshots() -> list:
+    """Return [(filename, path, size_bytes, mtime), ...] newest first."""
+    seen = set()
+    rows = []
+    for d in _legacy_backup_dirs():
+        try:
+            for name in os.listdir(d):
+                if not (name.endswith(".tar.gz") and name.startswith("tuxgenie_backup_")):
+                    continue
+                path = os.path.realpath(os.path.join(d, name))
+                if path in seen or not os.path.isfile(path):
+                    continue
+                seen.add(path)
+                try:
+                    st = os.stat(path)
+                    rows.append((name, path, st.st_size, st.st_mtime))
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    rows.sort(key=lambda r: r[3], reverse=True)
+    return rows
+
+
+def _write_snapshot_manifest(archive: str, backed: list, skipped: list, bctx: dict) -> str:
+    """Sidecar JSON next to the tarball — what was snapshotted and when."""
+    meta = {
+        "tuxgenie_version": __version__,
+        "created": datetime.datetime.now().isoformat(timespec="seconds"),
+        "archive": os.path.basename(archive),
+        "os": (bctx or {}).get("os", ""),
+        "pkg_mgr": (bctx or {}).get("pkg_mgr", ""),
+        "paths_backed_up": backed,
+        "paths_skipped": skipped[:40],
+    }
+    manifest = archive + ".json"
+    try:
+        with open(manifest, "w") as f:
+            json.dump(meta, f, indent=2)
+        if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+            try:
+                import pwd
+                pw = pwd.getpwnam(os.environ["SUDO_USER"])
+                os.chown(manifest, pw.pw_uid, pw.pw_gid)
+            except Exception:
+                pass
+    except Exception:
+        return ""
+    return manifest
+
+
+def _create_config_snapshot(bctx=None, use_sudo_reexec=True) -> str:
+    """Create a config snapshot tarball (+ manifest). Returns archive path or ''."""
+    backup_dir = _user_backup_dir()
+
+    # Many BACKUP_PATHS need root. Re-exec under sudo for a complete snapshot.
+    if use_sudo_reexec and os.geteuid() != 0:
         try:
             warn("Most config files in /etc require root to read.")
             ans = input(f"  {BOLD}Re-run backup with sudo for a complete snapshot?{R} [Y/n]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print()
-            return
+            return ""
         if ans in ("", "y", "yes"):
             try:
                 sudo_pw = get_or_cache_sudo_password()
             except KeyboardInterrupt:
-                return
+                return ""
             if sudo_pw:
-                # Hand off to a sudo'd python that runs the same feature directly.
-                # Use sys.executable + actual .py file so this works under both .deb
-                # and pip installs (sys.argv[0] under pip is an entry-point script,
-                # not the Python source file).
                 py_file = os.path.abspath(__file__)
                 cmd = [
                     "sudo", "-S", "-p", "",
@@ -6733,45 +7028,26 @@ def feat_backup(backend, bctx, slog):
                     subprocess.run(cmd, input=sudo_pw + "\n", text=True)
                 except Exception as e:
                     err(f"Sudo re-exec failed: {e}")
-                return
+                return ""  # child process already printed the result
         warn("Continuing without sudo — protected paths will be skipped.")
 
     ts = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-    # List existing backups
-    try:
-        existing = sorted([
-            f for f in os.listdir(backup_dir) if f.endswith(".tar.gz")
-        ], reverse=True)
-    except FileNotFoundError:
-        existing = []
-    if existing:
-        section("Existing backups")
-        for b in existing[:5]:
-            path = os.path.join(backup_dir, b)
-            size = os.path.getsize(path)
-            info(f"{b}  ({size//1024} KB)")
-
-    section("Creating new backup")
+    section("Creating new snapshot")
     archive = os.path.join(backup_dir, f"tuxgenie_backup_{ts}.tar.gz")
-    backed  = []
-    skipped = []
+    backed, skipped = [], []
 
     with tarfile.open(archive, "w:gz") as tar:
         for p in BACKUP_PATHS:
             expanded = os.path.expanduser(p)
             if os.path.exists(expanded):
                 try:
-                    tar.add(expanded, arcname=expanded.lstrip("/"),
-                            recursive=True)
+                    tar.add(expanded, arcname=expanded.lstrip("/"), recursive=True)
                     backed.append(expanded)
                 except Exception as e:
                     skipped.append(f"{expanded} ({e})")
             else:
                 skipped.append(f"{expanded} (not found)")
 
-    # If we're running as root via sudo, chown the archive back to the
-    # original user so they can read/delete it from their normal session.
     if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
         try:
             import pwd
@@ -6780,8 +7056,9 @@ def feat_backup(backend, bctx, slog):
         except Exception:
             pass
 
+    _write_snapshot_manifest(archive, backed, skipped, bctx or {})
     size_kb = os.path.getsize(archive) // 1024
-    ok(f"Backup saved: {archive}  ({size_kb} KB)")
+    ok(f"Snapshot saved: {archive}  ({size_kb} KB)")
     section("Backed up")
     for b in backed:
         print(f"    {C('✓', GREEN)} {b}")
@@ -6789,8 +7066,113 @@ def feat_backup(backend, bctx, slog):
         section("Skipped (not found on this system)")
         for s in skipped[:8]:
             print(f"    {C('·', DIM)} {s}")
+    print(f"\n  {DIM}Restore from menu 16 / 17, or:{R}")
+    print(f"  {CYAN}  sudo tar -xzf {archive} -C /{R}")
+    return archive
 
-    print(f"\n{DIM}  Restore with: sudo tar -xzf {archive} -C /{R}")
+
+def _restore_config_snapshot(archive_path: str) -> bool:
+    """Restore a TuxGenie config snapshot with confirmation + sudo."""
+    path = os.path.realpath(archive_path)
+    name = os.path.basename(path)
+    if not _SNAPSHOT_NAME_RE.match(name):
+        err("Refusing to restore — filename is not a TuxGenie snapshot.")
+        return False
+    allowed = {os.path.realpath(p) for _, p, _, _ in _list_config_snapshots()}
+    if path not in allowed or not os.path.isfile(path):
+        err("Snapshot not found in your TuxGenie backups folder.")
+        return False
+    warn("This overwrites system/user config files from the snapshot.")
+    print(f"  {DIM}Archive:{R} {path}")
+    manifest = path + ".json"
+    if os.path.isfile(manifest):
+        try:
+            meta = json.loads(open(manifest).read())
+            print(f"  {DIM}Created:{R} {meta.get('created', '?')}  "
+                  f"{DIM}paths:{R} {len(meta.get('paths_backed_up') or [])}")
+        except Exception:
+            pass
+    try:
+        ans = input(f"  {BOLD}Restore this snapshot now?{R} "
+                    f"[{C('y', GREEN, BOLD)}=yes  {C('n', DIM)}=cancel]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    if ans not in ("y", "yes"):
+        info("Restore cancelled.")
+        return False
+    # Extract as root into /
+    cmd = f"tar -xzf {shlex.quote(path)} -C /"
+    try:
+        sudo_pw = get_or_cache_sudo_password() if os.geteuid() != 0 else None
+    except KeyboardInterrupt:
+        return False
+    if os.geteuid() != 0:
+        cmd = "sudo " + cmd
+    rc, _, err_out = run_cmd_live(cmd, sudo_password=sudo_pw, timeout=300)
+    _restore_terminal()
+    if rc == 0:
+        ok("Snapshot restored. Log out/in if shell configs (bashrc) were changed.")
+        _action_log_append(cmd, rc, "snapshot-restore")
+        return True
+    err(f"Restore failed (exit {rc}). {(err_out or '')[:200]}")
+    return False
+
+
+def feat_backup(backend, bctx, slog):
+    """Phase C — create / list / restore real config snapshots (not tip-only)."""
+    hdr("Config Snapshots — Backup & restore settings")
+    # Direct create path when invoked via sudo --feature backup (child re-exec)
+    if "--feature" in sys.argv and "backup" in sys.argv:
+        _create_config_snapshot(bctx, use_sudo_reexec=False)
+        return
+
+    snaps = _list_config_snapshots()
+    print(f"""
+  {BOLD}What do you need?{R}
+    {CYAN}{BOLD}1{R}  Create a new config snapshot   {DIM}(recommended before big changes){R}
+    {CYAN}{BOLD}2{R}  Restore a previous snapshot
+    {CYAN}{BOLD}3{R}  List snapshots only
+""")
+    if snaps:
+        print(f"  {DIM}Latest:{R} {snaps[0][0]}  ({snaps[0][2] // 1024} KB)")
+    try:
+        choice = input(f"  {BOLD}Choose{R} [{C('1', GREEN, BOLD)}/{C('2', CYAN, BOLD)}/{C('3', DIM)}]: ").strip() or "1"
+    except (EOFError, KeyboardInterrupt):
+        return
+    if choice == "3":
+        if not snaps:
+            warn("No snapshots yet. Choose 1 to create one.")
+            return
+        section("Your snapshots")
+        for i, (name, path, size, _mt) in enumerate(snaps[:15], 1):
+            print(f"  {CYAN}{i}.{R} {name}  {DIM}({size // 1024} KB){R}")
+            print(f"      {DIM}{path}{R}")
+        return
+    if choice == "2":
+        if not snaps:
+            warn("No snapshots to restore. Create one first (option 1).")
+            return
+        section("Pick a snapshot to restore")
+        for i, (name, _p, size, _mt) in enumerate(snaps[:10], 1):
+            print(f"  {CYAN}[{i}]{R} {name}  {DIM}({size // 1024} KB){R}")
+        try:
+            sel = input(f"\n  {BOLD}Number{R} [1-{min(10, len(snaps))}]: ").strip()
+            idx = int(sel) - 1
+            if idx < 0 or idx >= min(10, len(snaps)):
+                raise ValueError
+        except (ValueError, EOFError, KeyboardInterrupt):
+            warn("Invalid selection.")
+            return
+        _restore_config_snapshot(snaps[idx][1])
+        return
+    # Default: create
+    if snaps:
+        section("Existing snapshots")
+        for name, _p, size, _mt in snaps[:5]:
+            info(f"{name}  ({size // 1024} KB)")
+    _create_config_snapshot(bctx)
+
 
 # ── FEATURE 17: Hardware Info ─────────────────────────────────────────────────
 def feat_hardware(backend, bctx, slog):
@@ -6893,39 +7275,161 @@ Additional instructions for PROCESS INSPECTOR mode:
     fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE 20: Session Rollback ─────────────────────────────────────────────
-def feat_rollback(backend, bctx, current_slog):
-    hdr("Session Rollback — Undo changes")
+def _session_cmds_succeeded(cmds: list) -> list:
+    """Commands that ran successfully — accept returncode or rc; include
+    legacy agentic entries that omitted rc (treated as candidates)."""
+    out = []
+    for c in cmds or []:
+        if c.get("skipped"):
+            continue
+        cmd = (c.get("command") or c.get("cmd") or "").strip()
+        if not cmd:
+            continue
+        rc = c.get("returncode", c.get("rc", None))
+        if rc is None or rc == 0:
+            out.append({"command": cmd, "returncode": 0 if rc is None else rc,
+                        "source": c.get("source", "")})
+    return out
 
-    # Collect sessions
+
+def _deterministic_undo_cmd(cmd: str, pkg_mgr: str = "apt") -> str:
+    """Return a safe reverse command for well-known patterns, or ''."""
+    c = (cmd or "").strip()
+    if not c or is_dangerous(c):
+        return ""
+    # Package install → remove (distro-aware)
+    m = re.match(
+        r"^(?:sudo\s+)?(?:apt-get|apt)\s+install\s+(?:-[yY]\s+)*(?:--[^\s]+\s+)*(.+)$",
+        c,
+    )
+    if m and pkg_mgr in ("apt", "apt-get", ""):
+        pkgs = " ".join(t for t in m.group(1).split() if not t.startswith("-"))
+        if pkgs and re.match(r"^[\w.+/:~= -]+$", pkgs):
+            return f"sudo apt-get remove -y {pkgs}"
+    m = re.match(r"^(?:sudo\s+)?dnf\s+install\s+(?:-[yY]\s+)*(.+)$", c)
+    if m and pkg_mgr == "dnf":
+        pkgs = " ".join(t for t in m.group(1).split() if not t.startswith("-"))
+        if pkgs:
+            return f"sudo dnf remove -y {pkgs}"
+    m = re.match(r"^(?:sudo\s+)?pacman\s+-S\s+(?:--noconfirm\s+)*(.+)$", c)
+    if m and pkg_mgr == "pacman":
+        pkgs = " ".join(t for t in m.group(1).split() if not t.startswith("-"))
+        if pkgs:
+            return f"sudo pacman -R --noconfirm {pkgs}"
+    # systemctl enable --now / start / disable
+    m = re.match(r"^(?:sudo\s+)?systemctl\s+enable\s+--now\s+([\w.@:-]+)\s*$", c)
+    if m:
+        return f"sudo systemctl disable --now {m.group(1)}"
+    m = re.match(r"^(?:sudo\s+)?systemctl\s+start\s+([\w.@:-]+)\s*$", c)
+    if m:
+        return f"sudo systemctl stop {m.group(1)}"
+    m = re.match(r"^(?:sudo\s+)?systemctl\s+disable\s+--now\s+"
+                 r"NetworkManager-wait-online\.service\s*$", c)
+    if m:
+        return "sudo systemctl enable --now NetworkManager-wait-online.service"
+    # TuxGenie swappiness tweak
+    if "99-tuxgenie-swappiness.conf" in c:
+        return ("sudo rm -f /etc/sysctl.d/99-tuxgenie-swappiness.conf && "
+                "sudo sysctl --system")
+    # nmcli wifi radio
+    if re.search(r"\bnmcli\s+radio\s+wifi\s+on\b", c):
+        return "nmcli radio wifi off"
+    # usermod -aG audio USER  (cannot safely reverse without knowing prior groups)
+    # rfkill unblock — reversing would soft-block wifi; skip
+    return ""
+
+
+def _build_deterministic_undo_plan(ran: list, bctx: dict) -> list:
+    """[(desc, undo_cmd, risk, reason), ...] for commands we can reverse locally."""
+    pm = (bctx or {}).get("pkg_mgr") or "apt"
+    plan = []
+    for entry in reversed(ran):  # undo newest first
+        cmd = entry.get("command") or ""
+        undo = _deterministic_undo_cmd(cmd, pm)
+        if not undo or is_dangerous(undo):
+            continue
+        plan.append((
+            f"Undo: {cmd[:60]}",
+            undo,
+            "moderate",
+            f"Reverses a known-safe pattern from your session history.",
+        ))
+    return plan
+
+
+def feat_rollback(backend, bctx, current_slog):
+    """Phase C — restore a config snapshot and/or undo session commands
+    deterministically first; AI only as an optional deep pass."""
+    hdr("Undo / Rollback — Restore snapshots or reverse changes")
+    snaps = _list_config_snapshots()
+    print(f"""
+  {BOLD}What do you need?{R}
+    {CYAN}{BOLD}1{R}  Restore a config snapshot     {DIM}(real file restore — safest){R}
+    {CYAN}{BOLD}2{R}  Undo commands from a session  {DIM}(deterministic first, AI optional){R}
+""")
+    if snaps:
+        print(f"  {DIM}Latest snapshot:{R} {snaps[0][0]}")
+    try:
+        mode = input(f"  {BOLD}Choose{R} [{C('1', GREEN, BOLD)}/{C('2', CYAN, BOLD)}]: ").strip() or "1"
+    except (EOFError, KeyboardInterrupt):
+        return
+
+    if mode != "2":
+        if not snaps:
+            warn("No config snapshots yet. Create one from menu 16 first.")
+            try:
+                ans = input(f"  {BOLD}Create a snapshot now?{R} [Y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return
+            if ans in ("", "y", "yes"):
+                _create_config_snapshot(bctx)
+            return
+        section("Pick a snapshot to restore")
+        for i, (name, _p, size, _mt) in enumerate(snaps[:10], 1):
+            print(f"  {CYAN}[{i}]{R} {name}  {DIM}({size // 1024} KB){R}")
+        try:
+            sel = input(f"\n  {BOLD}Number{R} [1-{min(10, len(snaps))}]: ").strip()
+            idx = int(sel) - 1
+            if idx < 0 or idx >= min(10, len(snaps)):
+                raise ValueError
+        except (ValueError, EOFError, KeyboardInterrupt):
+            warn("Invalid selection.")
+            return
+        _restore_config_snapshot(snaps[idx][1])
+        return
+
+    # ── Session / action-log undo ────────────────────────────────────────────
     session_files = sorted([
         f for f in os.listdir(SESSIONS_DIR) if f.endswith(".json")
     ], reverse=True)
 
-    if not session_files and not current_slog:
-        warn("No recorded sessions found. Nothing to roll back.")
-        return
-
     options = []
     if current_slog:
         options.append(("current session", current_slog))
-
+    # Recent action log as a synthetic session
+    actions = _action_log_recent(40)
+    if actions:
+        synth = [{"command": a.get("cmd", ""), "rc": a.get("rc"),
+                  "source": a.get("src", "action-log")} for a in actions]
+        options.append(("recent action log", synth))
     for sf in session_files[:5]:
         path = os.path.join(SESSIONS_DIR, sf)
         try:
             data = json.loads(open(path).read())
-            cmds = data.get("commands",[])
+            cmds = data.get("commands", [])
             if cmds:
-                options.append((sf.replace(".json",""), cmds))
+                options.append((sf.replace(".json", ""), cmds))
         except Exception:
             pass
 
     if not options:
-        warn("No commands recorded to roll back."); return
+        warn("No recorded sessions found. Tip: restore a config snapshot (option 1) instead.")
+        return
 
     section("Available sessions")
-    for i,(name,cmds) in enumerate(options,1):
-        run_count = len([c for c in cmds if not c.get("skipped")])
-        info(f"[{i}] {name}  ({run_count} commands ran)")
+    for i, (name, cmds) in enumerate(options, 1):
+        run_count = len(_session_cmds_succeeded(cmds))
+        info(f"[{i}] {name}  ({run_count} undoable candidates)")
 
     try:
         ch = input(f"\n{BOLD}Select session to roll back [1-{len(options)}]:{R} ").strip()
@@ -6933,23 +7437,51 @@ def feat_rollback(backend, bctx, current_slog):
         if idx < 0 or idx >= len(options):
             raise ValueError
     except (ValueError, EOFError, KeyboardInterrupt):
-        warn("Invalid selection."); return
+        warn("Invalid selection.")
+        return
 
     name, cmds = options[idx]
-    ran = [c for c in cmds if not c.get("skipped") and c.get("returncode",1)==0]
+    ran = _session_cmds_succeeded(cmds)
     if not ran:
-        warn("No successfully executed commands to undo."); return
+        warn("No successfully executed commands to undo.")
+        return
 
     section("Commands to undo")
-    for c in ran:
-        print(f"    {C('$',CYAN)} {c['command']}")
+    for c in ran[:30]:
+        print(f"    {C('$', CYAN)} {c['command'][:90]}")
+
+    plan = _build_deterministic_undo_plan(ran, bctx or {})
+    applied = 0
+    if plan:
+        print(f"\n  {CYAN}{BOLD}Safe automatic undo steps{R}  "
+              f"{DIM}({len(plan)} — each shown before it runs){R}\n")
+        applied = _apply_approved_plan(plan, current_slog, source="rollback")
+        if applied:
+            ok(f"Applied {applied} undo step(s).")
+    else:
+        info("No automatic undo patterns matched these commands.")
+
+    leftover = [c for c in ran
+                if not _deterministic_undo_cmd(c.get("command", ""),
+                                               (bctx or {}).get("pkg_mgr") or "apt")]
+    if not leftover:
+        info("Done — nothing left that needs AI for this session.")
+        return
+    try:
+        deeper = input(f"\n  {BOLD}Ask AI to undo the remaining {len(leftover)} command(s)?{R} "
+                       f"[{C('y', GREEN, BOLD)}=yes  {C('n', DIM)}=no]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        deeper = "n"
+    if deeper not in ("y", "yes"):
+        return
 
     sys_p = f"""You are TuxGenie. The user wants to UNDO the following commands that were run on their Linux system.
 Generate undo/rollback steps for each command where possible.
 Explain clearly when a command cannot be undone (e.g. deleted files, already removed packages).
+Prefer safe, reversible steps. Do NOT invent destructive cleanup.
 
 Commands that were run:
-{json.dumps(ran, indent=2)}
+{json.dumps(leftover, indent=2)}
 
 System: {json.dumps(bctx, indent=2)}
 
@@ -6957,7 +7489,7 @@ Return the standard JSON fix plan with rollback steps.
 RETURN ONLY VALID JSON."""
 
     fix_engine(backend, sys_p,
-               [{"role":"user","content":"Undo all the changes from my last session."}],
+               [{"role": "user", "content": "Undo the remaining changes from my session."}],
                current_slog)
 
 # ── FEATURE 21: Git Helper ───────────────────────────────────────────────────
@@ -12168,8 +12700,8 @@ MENU_ITEMS = [
     ("14", "appswitch", "Find Linux App",     "Find Linux equivalents of Windows apps",         feat_appswitch),
     # ── PROTECT & RECOVER ────────────────────────────────────────
     ("15", "security",  "Security Check",     "Harden firewall, SSH, open ports",               feat_security),
-    ("16", "backup",    "Backup Settings",    "Snapshot all system configs to .tar.gz",         feat_backup),
-    ("17", "rollback",  "Undo Changes",       "Undo changes made in a previous session",        feat_rollback),
+    ("16", "backup",    "Backup Settings",    "Create / restore config snapshots (.tar.gz)",    feat_backup),
+    ("17", "rollback",  "Undo Changes",       "Restore snapshot or undo session commands",      feat_rollback),
     # ── SPEED & MAINTENANCE ──────────────────────────────────────
     ("18", "perf",      "Performance Boost",  "My PC is slow — scan + safe speed fixes (optional AI)", feat_performance),
     ("19", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
@@ -12284,8 +12816,8 @@ def show_menu(compact=False):
 
     _cat(BG_NAVY, "🛡️ ", "PROTECT & RECOVER", "Stay safe and reversible")
     _item("15", "Security Check",      "Are you protected? Find out now")
-    _item("16", "Backup Settings",     "Save your config before making changes")
-    _item("17", "Undo Changes",        "Oops? Roll back what TuxGenie did")
+    _item("16", "Backup Settings",     "Create or restore a config snapshot")
+    _item("17", "Undo Changes",        "Restore a snapshot or undo session commands")
 
     _cat(BG_DARK, "⚡", "SPEED & MAINTENANCE", "Keep your computer fast")
     _item("18", "Performance Boost",   "My PC is slow — scan + safe speed fixes")

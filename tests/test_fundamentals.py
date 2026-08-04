@@ -7,6 +7,7 @@ suite before it will build or publish anything, so if any of these fail, that
 version never ships. Keep these fast, deterministic, and about fundamentals —
 not niche feature details (those live in test_tuxgenie.py).
 """
+import json
 import os
 import re
 import sys
@@ -60,6 +61,9 @@ class TestStartupFundamentals:
         # Every free default must always be constructable with a dummy key.
         assert tg.GeminiBackend(api_key="AIza" + "x" * 35) is not None
         assert tg.OpenAICompatBackend(api_key="gsk_" + "x" * 40, provider="groq") is not None
+        # Phase C: Ollama is keyless / local.
+        b = tg.OpenAICompatBackend(api_key=tg._OLLAMA_LOCAL_KEY, provider="ollama")
+        assert b.provider == "ollama" and b._prov.get("local")
 
     def test_free_provider_registry_has_expected_providers(self):
         # The registry must expose Groq as a free OpenAI-compatible provider with
@@ -69,6 +73,8 @@ class TestStartupFundamentals:
         assert "groq" in free
         assert "sambanova" in free    # second free OpenAI-compatible provider
         assert "openrouter" in free   # third free OpenAI-compatible provider
+        assert "ollama" in free       # Phase C — local / offline
+        assert free["ollama"].get("local") and free["ollama"].get("needs_key") is False
         _chinese = ("qwen", "deepseek", "kimi", "glm", "ernie", "minimax", "baichuan")
         for name, prov in free.items():
             assert prov["cfg_key"] and prov["default_model"]
@@ -838,3 +844,113 @@ class TestCrisisPlaybookFundamentals:
         boot = next(r for r in tg.MENU_ITEMS if r[0] == "20")
         assert boot[4] is tg.feat_boot
         assert "dual" in boot[3].lower() or "update" in boot[3].lower()
+
+
+class TestPhaseCLocalAiAndSnapshots:
+    """Phase C: Ollama as a keyless local backend + real config snapshots/undo."""
+
+    def test_ollama_provider_key_when_reachable(self, monkeypatch):
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: True)
+        assert tg._provider_key("ollama", {}) == tg._OLLAMA_LOCAL_KEY
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: False)
+        assert tg._provider_key("ollama", {}) == ""
+
+    def test_ollama_sticky_when_chosen_and_reachable(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tg, "CFG_FILE", str(tmp_path / "config.json"))
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: True)
+        monkeypatch.setattr(tg, "_ollama_pick_model", lambda preferred=None: "llama3.2:3b")
+        for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY",
+                  "OLLAMA_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        tg.save_cfg({"provider": "ollama", "gemini_api_key": "AIza" + "y" * 35})
+        b = tg.load_backend()
+        assert isinstance(b, tg.OpenAICompatBackend) and b.provider == "ollama"
+
+    def test_gemini_still_wins_over_ollama_when_not_sticky(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(tg, "CFG_FILE", str(tmp_path / "config.json"))
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: True)
+        for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
+            monkeypatch.delenv(k, raising=False)
+        tg.save_cfg({"provider": "groq", "gemini_api_key": "AIza" + "y" * 35,
+                     "groq_api_key": "gsk_" + "x" * 40})
+        assert isinstance(tg.load_backend(), tg.GeminiBackend)
+
+    def test_ollama_headers_omit_authorization(self):
+        b = tg.OpenAICompatBackend(api_key=tg._OLLAMA_LOCAL_KEY, provider="ollama")
+        assert "Authorization" not in b._headers()
+
+    def test_deterministic_undo_patterns(self):
+        assert "apt-get remove" in tg._deterministic_undo_cmd(
+            "sudo apt-get install -y vlc", "apt")
+        assert "systemctl disable --now cups" in tg._deterministic_undo_cmd(
+            "sudo systemctl enable --now cups", "apt")
+        assert "99-tuxgenie-swappiness" in tg._deterministic_undo_cmd(
+            "echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-tuxgenie-swappiness.conf",
+            "apt")
+        assert tg._deterministic_undo_cmd("sudo rm -rf /", "apt") == ""
+        assert not tg.is_dangerous(tg._deterministic_undo_cmd(
+            "sudo apt-get install -y htop", "apt"))
+
+    def test_snapshot_create_list_manifest(self, tmp_path, monkeypatch):
+        backup_dir = tmp_path / "backups"
+        backup_dir.mkdir()
+        monkeypatch.setattr(tg, "BACKUPS_DIR", str(backup_dir))
+        monkeypatch.setattr(tg, "_user_backup_dir", lambda: str(backup_dir))
+        monkeypatch.setattr(tg, "_legacy_backup_dirs", lambda: [str(backup_dir)])
+        # Avoid sudo prompts — create as current user with home paths only.
+        monkeypatch.setattr(tg, "BACKUP_PATHS", [str(tmp_path / "sample.conf")])
+        (tmp_path / "sample.conf").write_text("hello=1\n")
+        archive = tg._create_config_snapshot({"os": "Test", "pkg_mgr": "apt"},
+                                             use_sudo_reexec=False)
+        assert archive and os.path.isfile(archive)
+        assert os.path.isfile(archive + ".json")
+        meta = json.loads(open(archive + ".json").read())
+        assert meta["tuxgenie_version"] == tg.__version__
+        assert any("sample.conf" in p for p in meta["paths_backed_up"])
+        snaps = tg._list_config_snapshots()
+        assert snaps and snaps[0][1] == os.path.realpath(archive)
+
+    def test_restore_rejects_foreign_archive(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(tg, "_list_config_snapshots", lambda: [])
+        evil = tmp_path / "evil.tar.gz"
+        evil.write_bytes(b"nope")
+        assert tg._restore_config_snapshot(str(evil)) is False
+
+    def test_session_cmds_accept_rc_or_returncode(self):
+        cmds = [
+            {"command": "echo a", "returncode": 0},
+            {"command": "echo b", "rc": 0},
+            {"command": "echo c", "source": "agentic"},  # legacy omit → included
+            {"command": "echo d", "rc": 1},
+            {"skipped": True, "command": "echo e", "rc": 0},
+        ]
+        got = [c["command"] for c in tg._session_cmds_succeeded(cmds)]
+        assert got == ["echo a", "echo b", "echo c"]
+
+    def test_passthrough_routes_phase_c_phrases(self, monkeypatch):
+        called = {}
+
+        def _fake_backup(*a, **k):
+            called["backup"] = True
+
+        def _fake_rollback(*a, **k):
+            called["rollback"] = True
+
+        monkeypatch.setattr(tg, "feat_backup", _fake_backup)
+        monkeypatch.setattr(tg, "feat_rollback", _fake_rollback)
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: True)
+        monkeypatch.setattr(tg, "_ollama_pick_model", lambda preferred=None: "llama3.2:3b")
+        monkeypatch.setattr(tg, "save_cfg", lambda u: None)
+        assert tg.try_passthrough("backup my config", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert called.get("backup")
+        assert tg.try_passthrough("restore my snapshot", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert called.get("rollback")
+        assert tg.try_passthrough("use ollama", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+
+    def test_menu_16_17_wired(self):
+        assert next(r for r in tg.MENU_ITEMS if r[0] == "16")[4] is tg.feat_backup
+        assert next(r for r in tg.MENU_ITEMS if r[0] == "17")[4] is tg.feat_rollback
+        assert "snapshot" in next(r for r in tg.MENU_ITEMS if r[0] == "16")[3].lower()
