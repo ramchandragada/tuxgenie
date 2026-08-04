@@ -744,7 +744,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
   <div class="container" style="max-width:780px">
     <div class="sec-head fade">
       <h2 class="sh">Install on <span class="grad">your distro</span></h2>
-      <p class="sh-sub">Pick your Linux distribution — get the exact install command.</p>
+      <p class="sh-sub">One curl works on every major distro — or pick yours for the exact command.</p>
     </div>
     <div class="cost-note fade">
       <span style="font-size:18px;flex-shrink:0;line-height:1.3">💡</span>
@@ -898,9 +898,9 @@ function installHtml(d){
     return curlBox+`<div style="margin:14px 0 6px;color:var(--t3);font-size:12px;font-weight:600">— or install the .deb package manually —</div>`+ibox('Download .deb package',debManual,mono(debDisplay,true));
   }
   const note={
-    rpm:`<div class="alt-note" style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:#92400e">ℹ <strong>No .deb needed.</strong> The curl installer uses <code>pip3</code> automatically on Fedora / RHEL-based systems.</div>`,
-    arch:`<div class="alt-note" style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);color:#1e40af">ℹ <strong>Arch user?</strong> The curl installer uses <code>pip3</code> automatically. AUR also: <code>yay -S tuxgenie</code>.</div>`,
-    suse:`<div class="alt-note" style="background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.3);color:#6b21a8">ℹ <strong>openSUSE user?</strong> The curl installer uses <code>pip3</code>. Make sure Python 3.8+ is installed.</div>`,
+    rpm:`<div class="alt-note" style="background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);color:#92400e">ℹ <strong>No .deb needed.</strong> The curl installer detects <code>dnf</code>/<code>yum</code>, installs via the release wheel or PyPI, and sets up Free AI on first run.</div>`,
+    arch:`<div class="alt-note" style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);color:#1e40af">ℹ <strong>Arch / Manjaro:</strong> The curl installer uses <code>pacman</code> for deps and pip for TuxGenie. First-run setup enables Flatpak + Flathub automatically.</div>`,
+    suse:`<div class="alt-note" style="background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.3);color:#6b21a8">ℹ <strong>openSUSE:</strong> The curl installer uses <code>zypper</code> for deps and pip for TuxGenie. Python 3.8+ required.</div>`,
   }[d.family]||'';
   return curlBox+`<div style="margin:14px 0 6px;color:var(--t3);font-size:12px;font-weight:600">— or install via pip3 —</div>`+ibox('pip3 (Python package manager)',pipCmd,mono(`${prompt} ${hi(pipCmd)}`))+note;
 }

@@ -51,16 +51,24 @@ TuxGenie > my nginx won't start after I edited the config
 
 ## Install
 
-### Debian / Ubuntu / Linux Mint
+### Any Linux distro (recommended)
+```bash
+curl -fsSL https://tuxgenie.com/install.sh | bash
+```
+Detects your package manager (apt / dnf / pacman / zypper / apk), installs the
+`.deb` on Debian-family systems, or the release wheel / PyPI package everywhere else.
+
+### Debian / Ubuntu / Linux Mint (manual .deb)
 ```bash
 # Download the latest .deb from GitHub Releases, then:
-sudo dpkg -i tuxgenie_5.79.0_all.deb
+sudo dpkg -i tuxgenie_*_all.deb
 ```
 [Download latest .deb →](https://github.com/ramchandragada/tuxgenie/releases/latest)
 
 ### Any Linux distro (pip)
 ```bash
 pip install tuxgenie
+# or:  python3 -m pip install --user --upgrade tuxgenie
 ```
 
 ### From source
@@ -72,18 +80,16 @@ pip install .
 
 ### Which distros are supported?
 
-TuxGenie is built for **every** Linux user. The AI assistant detects your
-package manager (apt, dnf, pacman, zypper, apk, …) and adapts its commands, and
-`u` self-update works on both `.deb` and pip installs — so the **core assistant
-works on any Linux distro**.
+TuxGenie is built for **every** Linux user. It detects your package manager
+(apt, dnf, pacman, zypper, apk, …), adapts first-run setup and catalogs, and
+`u` self-update works for both `.deb` and pip installs.
 
-| | Debian family (Ubuntu, Mint, Pop!_OS, Debian, Zorin, elementary, Kali…) | Other distros (Fedora, Arch, openSUSE, …) |
+| | Debian family (Ubuntu, Mint, Pop!_OS, Debian, …) | Other distros (Fedora, Arch, openSUSE, Alpine, …) |
 |---|:---:|:---:|
 | AI fix / diagnose / install, system updates | ✅ | ✅ |
-| `.deb` install + app-menu icon + windowed app | ✅ | — (install via `pip`, runs in your terminal) |
-| App catalog | ✅ full | ✅ Flatpak entries (auto-adapted for your package manager) |
-
-On non-Debian systems, install with `pip install tuxgenie` and run `tuxgenie`.
+| Distro-aware first-run (updates, codecs, Flatpak, firewall) | ✅ | ✅ |
+| `.deb` install + app-menu icon + windowed app | ✅ | — (pip / curl installer; runs in your terminal) |
+| App catalog | ✅ full | ✅ Flatpak + native packages adapted per distro |
 
 ---
 

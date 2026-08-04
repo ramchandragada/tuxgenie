@@ -60,9 +60,14 @@ When adding a genuinely new fundamental guarantee, add a test for it to
 TuxGenie must work for **every** Linux user, not just Debian/Ubuntu:
 - The AI engine adapts to the detected package manager (`base_ctx()['pkg_mgr']`:
   apt/dnf/pacman/zypper/apk/…). Never hard-code apt in AI guidance.
+- First-run setup (`_first_run_setup_steps`) is distro-aware: updates, essentials,
+  codecs, Flatpak+Flathub, firewall, NTP — never apt-only.
 - Catalog installs are distro-adapted via `_distro_adapt_prompt()` (Flatpak/native
   on non-Debian). Prefer a Flathub app-id in new catalog entries so they work everywhere.
-- `u` self-update handles both `.deb` (dpkg) and non-Debian (pip) systems.
+- Universal install: `docs/install.sh` (curl | bash) — `.deb` on Debian-family,
+  wheel/PyPI elsewhere. `u` self-update handles both `.deb` and pip installs.
+- Note: Flatpak sandboxing is a poor fit for packaging *TuxGenie itself* (needs
+  host sudo/apt); Flathub is for *catalog apps*, not the assistant binary.
 
 ## Provider startup priority (load_backend)
 

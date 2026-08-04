@@ -36,7 +36,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.76.0"
+__version__ = "6.77.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -11817,6 +11817,122 @@ def show_help():
     {RED}{BOLD}q{R}         Quit TuxGenie
 """)
 
+def _first_run_setup_steps(pkg_mgr: str, os_name: str = "") -> list:
+    """Distro-aware first-run playbook: [(description, command, risk), ...].
+
+    Phase A — never hard-code apt. Every major package manager gets a working
+    path for updates, essentials, codecs (best-effort), Flatpak+Flathub,
+    firewall, and NTP. Unknown managers still get Flatpak/NTP when possible.
+    """
+    pm = (pkg_mgr or "unknown").strip().lower()
+    os_l = (os_name or "").lower()
+    steps = []
+
+    update = {
+        "apt":    "sudo apt-get update -q",
+        # dnf/yum return 100 when updates exist — not a failure.
+        "dnf":    "sudo dnf check-update -q || true",
+        "yum":    "sudo yum check-update -q || true",
+        "pacman": "sudo pacman -Sy --noconfirm",
+        "zypper": "sudo zypper --non-interactive refresh",
+        "apk":    "sudo apk update",
+    }.get(pm)
+    if update:
+        steps.append(("Update package list", update, "safe"))
+
+    upgrade = {
+        "apt":    "sudo apt-get upgrade -y",
+        "dnf":    "sudo dnf upgrade -y",
+        "yum":    "sudo yum update -y",
+        "pacman": "sudo pacman -Su --noconfirm",
+        "zypper": "sudo zypper --non-interactive update",
+        "apk":    "sudo apk upgrade",
+    }.get(pm)
+    if upgrade:
+        steps.append(("Install system updates", upgrade, "moderate"))
+
+    tools = {
+        "apt":    "sudo apt-get install -y curl wget git unzip htop",
+        "dnf":    "sudo dnf install -y curl wget git unzip htop",
+        "yum":    "sudo yum install -y curl wget git unzip htop",
+        "pacman": "sudo pacman -S --noconfirm curl wget git unzip htop",
+        "zypper": "sudo zypper --non-interactive install curl wget git unzip htop",
+        "apk":    "sudo apk add curl wget git unzip htop",
+    }.get(pm)
+    if tools:
+        steps.append(("Install useful tools (curl, git, htop…)", tools, "safe"))
+
+    # Codecs — best-effort; never fail the whole setup if a meta-package is gone.
+    codecs = None
+    if pm == "apt":
+        if "mint" in os_l:
+            codecs = "sudo apt-get install -y mint-meta-codecs || true"
+        elif any(x in os_l for x in ("ubuntu", "pop", "elementary", "zorin")):
+            codecs = "sudo apt-get install -y ubuntu-restricted-extras || true"
+        else:
+            codecs = ("sudo apt-get install -y ffmpeg gstreamer1.0-libav "
+                      "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly || true")
+    elif pm in ("dnf", "yum"):
+        codecs = "sudo dnf install -y ffmpeg || sudo dnf install -y ffmpeg-free || true"
+    elif pm == "pacman":
+        codecs = "sudo pacman -S --noconfirm ffmpeg gst-plugins-good gst-libav || true"
+    elif pm == "zypper":
+        codecs = "sudo zypper --non-interactive install ffmpeg gstreamer-plugins-good || true"
+    elif pm == "apk":
+        codecs = "sudo apk add ffmpeg || true"
+    if codecs:
+        steps.append(("Install media codecs / ffmpeg (best effort)", codecs, "safe"))
+
+    # Flatpak + Flathub — the universal app store for every distro.
+    if shutil.which("flatpak"):
+        flatpak_cmd = (
+            "sudo flatpak remote-add --if-not-exists flathub "
+            "https://dl.flathub.org/repo/flathub.flatpakrepo"
+        )
+    else:
+        bootstrap = {
+            "apt":    "sudo apt-get install -y flatpak",
+            "dnf":    "sudo dnf install -y flatpak",
+            "yum":    "sudo yum install -y flatpak",
+            "zypper": "sudo zypper --non-interactive install flatpak",
+            "pacman": "sudo pacman -S --noconfirm flatpak",
+            "apk":    "sudo apk add flatpak",
+        }.get(pm)
+        if bootstrap:
+            flatpak_cmd = (
+                f"{bootstrap} && sudo flatpak remote-add --if-not-exists flathub "
+                "https://dl.flathub.org/repo/flathub.flatpakrepo"
+            )
+        else:
+            flatpak_cmd = None
+    if flatpak_cmd:
+        steps.append(("Enable Flatpak + Flathub (apps that work everywhere)", flatpak_cmd, "safe"))
+
+    # Firewall — ufw on Debian-family; firewalld on Fedora/RHEL; best-effort elsewhere.
+    if pm == "apt" or shutil.which("ufw"):
+        fw = ("sudo apt-get install -y ufw 2>/dev/null || true; "
+              "sudo ufw allow OpenSSH 2>/dev/null || true; "
+              "sudo ufw --force enable && sudo ufw status")
+        if pm != "apt" and shutil.which("ufw"):
+            fw = ("sudo ufw allow OpenSSH 2>/dev/null || true; "
+                  "sudo ufw --force enable && sudo ufw status")
+        steps.append(("Enable firewall (ufw)", fw, "moderate"))
+    elif pm in ("dnf", "yum") or shutil.which("firewall-cmd"):
+        steps.append((
+            "Enable firewall (firewalld)",
+            "sudo systemctl enable --now firewalld 2>/dev/null || true; "
+            "sudo firewall-cmd --state 2>/dev/null || true",
+            "moderate",
+        ))
+
+    steps.append((
+        "Sync system clock (NTP)",
+        "sudo timedatectl set-ntp true 2>/dev/null || true",
+        "safe",
+    ))
+    return steps
+
+
 def first_run_check():
     """Show one-time welcome + optional setup wizard for brand new users."""
     flag = os.path.join(CFG_DIR, ".welcomed")
@@ -11835,6 +11951,7 @@ def first_run_check():
   {CYAN}{BOLD}Quick example:{R}
     You type:  {CYAN}\"my wifi is not connecting\"{R}
     TuxGenie:  Finds the problem, explains it, and fixes it
+    Or try:    {CYAN}\"my PC is slow\"{R}  — safe speed fixes, no AI needed
 
   {YELLOW}{BOLD}🔑 You're always in control:{R}
     Every command is shown before it runs.
@@ -11851,44 +11968,49 @@ def first_run_check():
         ans = "n"
 
     if ans in ("y", "yes"):
+        bctx = base_ctx()
+        pm = bctx.get("pkg_mgr") or "unknown"
         print(f"\n  {CYAN}{BOLD}Running First-Time Setup…{R}")
-        print(f"  {DIM}This will update your system, install essentials, and set up basic security.{R}\n")
+        print(f"  {DIM}Detected: {bctx.get('os', 'Linux')} · package manager: {pm}{R}")
+        print(f"  {DIM}Each step is adapted for your distro. You approve every change.{R}\n")
 
-        setup_steps = [
-            ("Update package list",        "sudo apt-get update -q",                              "safe"),
-            ("Install system updates",     "sudo apt-get upgrade -y",                             "moderate"),
-            ("Install useful tools",       "sudo apt-get install -y curl wget git unzip htop",    "safe"),
-            ("Install media codecs",       "sudo apt-get install -y ubuntu-restricted-extras 2>/dev/null || sudo apt-get install -y mint-meta-codecs 2>/dev/null || true", "safe"),
-            ("Enable firewall",            "sudo ufw enable && sudo ufw status",                  "moderate"),
-            ("Sync system clock",          "sudo timedatectl set-ntp true",                       "safe"),
-        ]
-
-        for desc, cmd, risk in setup_steps:
-            print(f"\n  {DIM}▸ {desc}{R}")
-            try:
-                ch = input(f"    Run this? [{C('y',GREEN,BOLD)}/{C('s',YELLOW,BOLD)}=skip/{C('q',RED,BOLD)}=quit setup]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                break
-            if ch in ("q", "quit"):
-                break
-            if ch in ("s", "skip", "n"):
-                print(C("    ↳ Skipped.", DIM)); continue
-            if ch in ("y", "yes", ""):
+        setup_steps = _first_run_setup_steps(pm, bctx.get("os") or "")
+        if not setup_steps:
+            warn("Could not detect a known package manager — skipping automatic setup.")
+            info("You can still use catalogs, menus, and plain-English fixes anytime.")
+        else:
+            for desc, cmd, risk in setup_steps:
+                print(f"\n  {DIM}▸ {desc}{R}")
+                print(f"    {DIM}$ {cmd}{R}")
+                try:
+                    ch = input(f"    Run this? [{C('y',GREEN,BOLD)}/{C('s',YELLOW,BOLD)}=skip/{C('q',RED,BOLD)}=quit setup]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if ch in ("q", "quit"):
+                    break
+                if ch in ("s", "skip", "n"):
+                    print(C("    ↳ Skipped.", DIM)); continue
+                if ch not in ("y", "yes", ""):
+                    print(C("    ↳ Skipped.", DIM)); continue
                 sudo_pw = None
-                if cmd.strip().startswith("sudo"):
+                if re.search(r"\bsudo\b", cmd):
                     try:
                         sudo_pw = get_or_cache_sudo_password()
+                        run_cmd_live("sudo -v", sudo_password=sudo_pw, timeout=30)
                     except KeyboardInterrupt:
                         break
                 print(f"  {CYAN}▶ Running…{R}")
-                rc, _, _ = run_cmd_live(cmd, sudo_password=sudo_pw)
+                pw = sudo_pw if cmd.lstrip().startswith("sudo") else None
+                rc, _, _ = run_cmd_live(cmd, sudo_password=pw, timeout=600)
                 _restore_terminal()
                 if rc == 0:
                     ok(desc)
                 else:
                     warn(f"{desc} — had an issue, continuing anyway.")
 
-        print(f"\n  {GREEN}{BOLD}✓ Setup complete! Your Linux is ready.{R}\n")
+            print(f"\n  {GREEN}{BOLD}✓ Setup complete! Your Linux is ready.{R}")
+            print(f"  {DIM}Tip: press {BOLD}77{R}{DIM} for apps · {BOLD}99{R}{DIM} for AI tools · "
+                  f"or type {BOLD}\"my PC is slow\"{R}{DIM}.{R}\n")
 
     try:
         open(flag, "w").write("1")
@@ -11909,7 +12031,7 @@ def main():
     _crash_guard()   # increment crash counter; rolls back if 3 consecutive crashes
     parser = argparse.ArgumentParser(
         prog="tuxgenie",
-        description="TuxGenie — AI-powered Linux assistant powered by Claude",
+        description="TuxGenie — AI-powered Linux assistant (free Gemini/Groq or Claude)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   tuxgenie                          # Interactive menu

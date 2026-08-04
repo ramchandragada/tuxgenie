@@ -510,6 +510,57 @@ class TestCrossDistroFundamentals:
         assert "dnf" in out and "Flatpak" in out and out.endswith(p)
 
 
+class TestFirstRunUniversal:
+    """Phase A: first-run setup must be distro-aware — never apt-only."""
+
+    def test_apt_steps_include_flatpak_and_no_hardcoded_only_path(self):
+        steps = tg._first_run_setup_steps("apt", "Ubuntu 24.04 LTS")
+        descs = " ".join(d for d, _, _ in steps).lower()
+        cmds = " ".join(c for _, c, _ in steps)
+        assert "flatpak" in cmds and "flathub" in cmds
+        assert "apt-get" in cmds
+        assert "ubuntu-restricted-extras" in cmds
+        assert "ufw" in cmds
+        assert steps  # non-empty
+
+    def test_fedora_dnf_steps(self):
+        steps = tg._first_run_setup_steps("dnf", "Fedora Linux 41")
+        cmds = " ".join(c for _, c, _ in steps)
+        assert "dnf" in cmds
+        assert "apt-get" not in cmds
+        assert "flatpak" in cmds and "flathub" in cmds
+        assert "firewalld" in cmds or "firewall-cmd" in cmds
+
+    def test_arch_pacman_steps(self):
+        steps = tg._first_run_setup_steps("pacman", "Arch Linux")
+        cmds = " ".join(c for _, c, _ in steps)
+        assert "pacman" in cmds
+        assert "apt-get" not in cmds
+        assert "flatpak" in cmds
+
+    def test_alpine_apk_steps(self):
+        steps = tg._first_run_setup_steps("apk", "Alpine Linux")
+        cmds = " ".join(c for _, c, _ in steps)
+        assert "apk" in cmds
+        assert "apt-get" not in cmds
+
+    def test_mint_prefers_mint_codecs(self):
+        steps = tg._first_run_setup_steps("apt", "Linux Mint 22")
+        cmds = " ".join(c for _, c, _ in steps)
+        assert "mint-meta-codecs" in cmds
+
+    def test_unknown_pm_still_has_ntp(self):
+        steps = tg._first_run_setup_steps("unknown", "Something")
+        cmds = " ".join(c for _, c, _ in steps)
+        assert "timedatectl" in cmds
+        assert "apt-get" not in cmds
+
+    def test_setup_commands_are_not_dangerous(self):
+        for pm in ("apt", "dnf", "pacman", "zypper", "apk"):
+            for desc, cmd, _risk in tg._first_run_setup_steps(pm, "Test OS"):
+                assert not tg.is_dangerous(cmd), (pm, desc, cmd)
+
+
 class TestSlowPcFundamentals:
     """Phase 4 promise: 'my PC is slow' is a deterministic one-tap repair —
     scan locally, propose safe fixes, optional AI only after consent."""
