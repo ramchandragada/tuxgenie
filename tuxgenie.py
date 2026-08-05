@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.82.0"
+__version__ = "6.83.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -13159,6 +13159,43 @@ _BEGINNER_GUI_ACTIONS = (
 )
 
 _GUI_NO_TK_EXIT = 2  # tuxgenie-gui falls back to VTE/terminal when tkinter missing
+_SHELL_NO_GI_EXIT = 3  # unified shell / tuxgenie-app: GTK/VTE unavailable
+
+
+def _unified_shell_main() -> int:
+    """Launch the Unified Shell (WebKit/GTK + live VTE). Exit 3 if GI missing."""
+    # Prefer the installed PATH entry (deb / pip script).
+    app = shutil.which("tuxgenie-app")
+    here = os.path.dirname(os.path.abspath(__file__))
+    sibling = os.path.join(here, "tuxgenie_shell.py")
+    if app and os.path.isfile(app) and os.path.realpath(app) != os.path.realpath(__file__):
+        try:
+            os.execv(app, [app])
+        except Exception:
+            pass
+    # Import sibling module (dev tree or /usr/lib/tuxgenie/).
+    try:
+        import importlib.util
+        path = sibling if os.path.isfile(sibling) else None
+        if path is None:
+            import tuxgenie_shell as _ts  # type: ignore
+            return int(_ts.main() or 0)
+        spec = importlib.util.spec_from_file_location("tuxgenie_shell", path)
+        if spec is None or spec.loader is None:
+            raise ImportError("cannot load tuxgenie_shell")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return int(mod.main() or 0)
+    except SystemExit as e:
+        code = e.code
+        return int(code) if isinstance(code, int) else (0 if code is None else 1)
+    except Exception as e:
+        print(f"tuxgenie --shell: Unified Shell unavailable: {e}", file=sys.stderr)
+        print("  Install: python3-gi gir1.2-gtk-3.0 gir1.2-vte-2.91 "
+              "(and gir1.2-webkit2-4.1 for the modern control deck)",
+              file=sys.stderr)
+        return _SHELL_NO_GI_EXIT
+
 
 
 def _gui_tk_available() -> bool:
@@ -13670,7 +13707,9 @@ def main():
     # to developers.
     import warnings
     warnings.filterwarnings("ignore")
-    # Phase D: beginner GUI — before crash guard / interactive theme.
+    # Phase D / Unified Shell — before crash guard / interactive theme.
+    if len(sys.argv) >= 2 and sys.argv[1] in ("--shell",):
+        sys.exit(_unified_shell_main())
     if len(sys.argv) >= 2 and sys.argv[1] in ("--gui", "-g"):
         sys.exit(gui_main())
     _crash_guard()   # increment crash counter; rolls back if 3 consecutive crashes
@@ -13680,7 +13719,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
   tuxgenie                          # Interactive menu
-  tuxgenie --gui                    # Beginner desktop window (Phase D)
+  tuxgenie --shell                  # Unified Shell (control deck + live terminal)
+  tuxgenie --gui                    # Beginner Tk window (fallback desktop UI)
   tuxgenie "my wifi is not working" # One-shot fix (no menu)
   tuxgenie --feature health         # Run a specific feature directly
   tuxgenie --self-update            # Check for a newer TuxGenie release
@@ -13694,6 +13734,10 @@ def main():
     parser.add_argument(
         "--feature", "-f", metavar="NAME",
         help="Run a specific feature directly (e.g. health, network, disk, git, security)"
+    )
+    parser.add_argument(
+        "--shell", action="store_true",
+        help="Open the Unified Shell (WebKit/GTK control deck + live terminal)"
     )
     parser.add_argument(
         "--gui", "-g", action="store_true",
@@ -13712,6 +13756,8 @@ def main():
         help="Run the background error monitor daemon (used by the systemd user service)"
     )
     args = parser.parse_args()
+    if args.shell:
+        sys.exit(_unified_shell_main())
     if args.gui:
         sys.exit(gui_main())
     if args.self_update:

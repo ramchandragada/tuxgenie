@@ -102,11 +102,20 @@ finish the task on Claude — paid, so only after an explicit "yes"
 ## Phase D — Beginner GUI
 
 - `tuxgenie --gui` opens a Tk beginner launcher (needs `python3-tk`).
-- Desktop entry (`tuxgenie-gui`) tries `--gui` first; exit 2 falls back to
-  VTE app window / terminal (no rewrite of CLI features).
 - Buttons shell out to `tuxgenie --feature …`, plain-English one-shots, or
   `--self-update`. "Full assistant" opens `tuxgenie-app` / interactive CLI —
   never re-enters `tuxgenie-gui` (avoids a GUI loop).
+
+## Unified Shell (flagship desktop)
+
+- `tuxgenie-app` / `tuxgenie --shell` — one window: ~60% WebKit (or GTK) control
+  deck + ~40% live VTE running TuxGenie. Clicks feed the existing PTY (no new
+  terminals). Source: `tuxgenie_shell.py`.
+- Desktop launcher (`tuxgenie-gui`) order: **Unified Shell → Tk `--gui` → plain
+  terminal**. Exit 3 = GTK/VTE missing; exit 2 = Tk missing.
+- Recommends: `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-vte-2.91`,
+  `gir1.2-webkit2-4.1` (WebKit optional — GTK button deck fallback).
+- Approvals (`y/n`) stay in the live terminal pane.
 
 ## Cost Optimisation Principles
 

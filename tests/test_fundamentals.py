@@ -1006,15 +1006,71 @@ class TestPhaseDBeginnerGui:
         assert tg._gui_run_action("full") is True
         assert seen[-1] == ("full",)
 
-    def test_deb_launcher_prefers_beginner_gui(self):
-        # Packaging must try tuxgenie --gui before VTE/terminal fallback.
+    def test_deb_launcher_prefers_unified_shell(self):
+        # Packaging: Unified Shell (tuxgenie-app) before Tk --gui before terminal.
         src = open(os.path.join(ROOT, "create_deb.py")).read()
-        assert "tuxgenie --gui" in src
+        assert "tuxgenie-app" in src and "tuxgenie --gui" in src
+        assert "gir1.2-webkit2" in src
+        assert "tuxgenie_shell.py" in src
+        # LAUNCHER_GUI blob: app before --gui
+        i = src.find("LAUNCHER_GUI")
+        assert i > 0
+        chunk = src[i:i + 1200]
+        assert chunk.find("tuxgenie-app") < chunk.find("tuxgenie --gui")
+        assert 'rc" != "3"' in src or '[ "$rc" != "3" ]' in src
+        assert 'rc" != "2"' in src or '[ "$rc" != "2" ]' in src
         assert "python3-tk" in src
-        assert 'rc" != "2"' in src or "[ \"$rc\" != \"2\" ]" in src
 
     def test_gui_visual_helpers(self):
         # Colour math + tile accents power the modern animated window.
         assert tg._gui_hex_lerp("#000000", "#ffffff", 0.5) == "#7f7f7f"
         assert tg._gui_tile_accent("apps").startswith("#")
         assert tg._gui_tile_accent("full") != tg._gui_tile_accent("apps")
+
+
+class TestUnifiedShell:
+    """Flagship desktop: WebKit/GTK control deck + live VTE (tuxgenie_shell)."""
+
+    def test_shell_module_compiles_and_version_matches(self):
+        import py_compile
+        path = os.path.join(ROOT, "tuxgenie_shell.py")
+        assert os.path.isfile(path)
+        py_compile.compile(path, doraise=True)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tuxgenie_shell", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        assert mod.VERSION == tg.__version__
+        assert mod.APP_ID == "com.tuxgenie.TuxGenie"
+
+    def test_shell_actions_align_with_menu_keywords(self):
+        path = os.path.join(ROOT, "tuxgenie_shell.py")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tuxgenie_shell", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        kws = {kw for _n, kw, _name, _tip, _fn in tg.MENU_ITEMS}
+        ids = {a["id"] for a in mod.ACTIONS}
+        assert "health" in ids and "apps" in ids and "fix" in ids
+        for a in mod.ACTIONS:
+            if a["kind"] == "kw":
+                assert a["payload"] in kws or a["payload"] in ("u", "s", "menu"), a
+
+    def test_shell_html_is_self_contained(self):
+        path = os.path.join(ROOT, "tuxgenie_shell.py")
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("tuxgenie_shell", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        html = mod._shell_html(mod.VERSION)
+        assert "TuxGenie" in html
+        assert "http://" not in html and "https://" not in html
+        assert "webkit.messageHandlers.tuxgenie" in html
+        assert mod.VERSION in html
+
+    def test_create_deb_ships_shell_as_app(self):
+        src = open(os.path.join(ROOT, "create_deb.py")).read()
+        assert "TUXGENIE_SHELL" in src
+        assert '"./usr/lib/tuxgenie/tuxgenie_shell.py"' in src or \
+               "./usr/lib/tuxgenie/tuxgenie_shell.py" in src
+        assert "Unified Shell" in src or "unified" in src.lower()

@@ -200,6 +200,16 @@ if not os.path.exists(src):
 with open(src, "rb") as fh:
     TUXGENIE_PY = fh.read()
 
+# Unified Shell (flagship desktop: WebKit/GTK control deck + live VTE).
+# Ships as /usr/bin/tuxgenie-app and /usr/lib/tuxgenie/tuxgenie_shell.py.
+_shell_src = os.path.join(SCRIPT_DIR, "tuxgenie_shell.py")
+if not os.path.exists(_shell_src):
+    sys.exit(f"ERROR: {_shell_src} not found — Unified Shell is required for packaging.")
+with open(_shell_src, "rb") as fh:
+    TUXGENIE_SHELL = fh.read()
+# Executable copy for PATH (same source; shebang already present).
+TUXGENIE_APP = TUXGENIE_SHELL
+
 # ── Read the community fixes JSON (ships with every release) ─────────────────
 _community_path = os.path.join(SCRIPT_DIR, "community_fixes.json")
 if os.path.exists(_community_path):
@@ -226,7 +236,7 @@ for _sz in (16, 32, 48, 64, 128, 256):
     print(".", end="", flush=True)
 print(f" done ({sum(len(v) for v in ICONS.values())//1024} KB total)")
 
-INSTALLED_KB = max(1, (len(TUXGENIE_PY) + sum(len(v) for v in ICONS.values()) + len(COMMUNITY_FIXES) + 1023) // 1024 + 8)
+INSTALLED_KB = max(1, (len(TUXGENIE_PY) + len(TUXGENIE_SHELL) + sum(len(v) for v in ICONS.values()) + len(COMMUNITY_FIXES) + 1023) // 1024 + 8)
 
 # ── File contents (all in-memory) ─────────────────────────────────────────────
 
@@ -282,7 +292,7 @@ Priority: optional
 Architecture: {ARCH}
 Installed-Size: {INSTALLED_KB}
 Depends: python3 (>= 3.8)
-Recommends: python3-pip, python3-tk, python3-gi, gir1.2-vte-2.91, gir1.2-gtk-3.0, xterm | gnome-terminal | konsole | xfce4-terminal | mate-terminal | lxterminal | ptyxis
+Recommends: python3-pip, python3-gi, gir1.2-gtk-3.0, gir1.2-vte-2.91, gir1.2-webkit2-4.1 | gir1.2-webkit2-4.0, python3-tk, xterm | gnome-terminal | konsole | xfce4-terminal | mate-terminal | lxterminal | ptyxis
 Conflicts: ai-terminal, tuxgenie (<< {VERSION})
 Replaces: ai-terminal, tuxgenie (<< {VERSION})
 Provides: ai-terminal
@@ -295,12 +305,12 @@ Description: AI-powered Linux assistant (plain-English troubleshooting)
  scheduling, permission fixer, boot repair, Docker management, config backup,
  hardware info, SSH diagnostics, process manager, and session rollback.
  .
- Usage: tuxgenie   or   tuxgenie --gui  (beginner desktop window)
+ Desktop: Unified Shell (tuxgenie-app) — modern control deck + live terminal in
+ one window. Falls back to tuxgenie --gui (Tk) or a plain terminal if needed.
  .
  Free to run: choose a free AI provider on first launch (Google Gemini or Groq,
  no credit card), local Ollama, or Anthropic Claude for best quality. Common
- terminal commands run with no key at all. Desktop menu opens the beginner GUI
- when python3-tk is installed (recommended).
+ terminal commands run with no key at all.
 """.encode()
 
 POSTINST = b"""\
@@ -330,19 +340,19 @@ case "$1" in
 # TuxGenie GUI launcher - opens tuxgenie as an app-like, single-instance window.
 # Avoid x-terminal-emulator (can resolve to Warp on 26.04+).
 
-# Phase D: beginner Tk window first (exit 2 = no python3-tk).
-if command -v tuxgenie >/dev/null 2>&1; then
-    tuxgenie --gui
-    rc=$?
-    [ "$rc" != "2" ] && exit "$rc"
-fi
-
-# Prefer the real app window (own icon, groups in the dock). Exit 3 = GTK/VTE
-# unavailable or spawn failed -> fall back to a plain terminal below.
+# Unified Shell first (WebKit/GTK control deck + live VTE). Exit 3 = GTK/VTE
+# unavailable or spawn failed -> fall through.
 if command -v tuxgenie-app >/dev/null 2>&1; then
     tuxgenie-app
     rc=$?
     [ "$rc" != "3" ] && exit "$rc"
+fi
+
+# Phase D: beginner Tk window (exit 2 = no python3-tk).
+if command -v tuxgenie >/dev/null 2>&1; then
+    tuxgenie --gui
+    rc=$?
+    [ "$rc" != "2" ] && exit "$rc"
 fi
 
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/tuxgenie-$(id -u).lock"
@@ -407,7 +417,7 @@ TryExec=tuxgenie
 Exec=/usr/bin/tuxgenie-gui
 Terminal=false
 Categories=System;Administration;Utility;
-Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;gui;beginner;
+Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;gui;shell;beginner;
 StartupNotify=false
 StartupWMClass=com.tuxgenie.TuxGenie
 SingleMainWindow=true
@@ -470,168 +480,31 @@ esac
 exit 0
 """
 
-# App window: hosts the TuxGenie text UI inside our own GTK+VTE window so it
-# carries the TuxGenie app-id/icon (groups under the penguin in the dock) and is
-# single-instance by design. Exits 3 if GTK/VTE are unavailable, so the launcher
-# can fall back to a plain terminal. ASCII-only (bytes literal).
-TUXGENIE_APP = b'''\
-#!/usr/bin/env python3
-# TuxGenie app window - runs the TuxGenie text UI inside our own GTK window so it
-# shows the TuxGenie icon and groups under it in the dock. Exits 3 if GTK/VTE are
-# missing; then tuxgenie-gui falls back to a plain terminal.
-import os, sys
-try:
-    import gi
-    gi.require_version("Gtk", "3.0")
-    gi.require_version("Vte", "2.91")
-    from gi.repository import Gtk, Gdk, Vte, GLib, Gio
-except Exception as e:
-    print("tuxgenie-app: GTK/VTE unavailable:", e, file=sys.stderr)
-    sys.exit(3)
+# App window: Unified Shell (tuxgenie_shell.py) — modern control deck + live VTE.
+# Loaded from disk above as TUXGENIE_APP / TUXGENIE_SHELL. Exit 3 if GTK/VTE
+# unavailable so the launcher can fall back to Tk --gui or a plain terminal.
 
-APP_ID = "com.tuxgenie.TuxGenie"
-RUN = "/usr/bin/tuxgenie; echo; read -rp 'Press Enter to close...' _"
-
-class Win(Gtk.ApplicationWindow):
-    def __init__(self, app):
-        super().__init__(application=app, title="TuxGenie")
-        self.set_default_size(920, 640)
-        for nm in ("tuxgenie", "com.tuxgenie.TuxGenie"):
-            try:
-                self.set_icon_name(nm)
-                break
-            except Exception:
-                pass
-        self.term = Vte.Terminal()
-        try:
-            self.term.set_scrollback_lines(-1)          # unlimited scrollback
-            self.term.set_mouse_autohide(True)
-            self.term.set_scroll_on_keystroke(True)      # typing jumps to bottom
-            self.term.set_scroll_on_output(False)        # reading/selecting won't get yanked down
-        except Exception:
-            pass
-        self.term.connect("child-exited", self._exited)
-        # A raw VTE widget has no clipboard bindings or context menu of its own,
-        # so wire up the terminal-standard ones (a plain terminal gives these for
-        # free; without them you cannot copy or paste in this window).
-        self.term.connect("key-press-event", self._on_key)
-        self.term.connect("button-press-event", self._on_button)
-        # Use VTE's OWN scrolling with a Gtk.Scrollbar bound to its adjustment.
-        # NOT a Gtk.ScrolledWindow - that fights VTE's scrollback and clears the
-        # text selection when you scroll, so you cannot select past one screen.
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        box.pack_start(self.term, True, True, 0)
-        try:
-            sb = Gtk.Scrollbar(orientation=Gtk.Orientation.VERTICAL,
-                               adjustment=self.term.get_vadjustment())
-            box.pack_start(sb, False, False, 0)
-        except Exception:
-            pass
-        self.add(box)
-        self.show_all()
-        try:
-            self.term.spawn_async(
-                Vte.PtyFlags.DEFAULT,
-                os.path.expanduser("~"),
-                ["/bin/bash", "-lc", RUN],
-                None,
-                GLib.SpawnFlags.DEFAULT,
-                None, None, -1, None, self._spawned)
-        except Exception as e:
-            print("tuxgenie-app: spawn failed:", e, file=sys.stderr)
-            os._exit(3)
-
-    def _spawned(self, *args):
-        err = next((a for a in args if isinstance(a, GLib.Error)), None)
-        if err is not None:
-            print("tuxgenie-app: could not start tuxgenie:", err.message, file=sys.stderr)
-            os._exit(3)
-
-    def _copy(self):
-        try:
-            self.term.copy_clipboard_format(Vte.Format.TEXT)
-        except Exception:
-            try:
-                self.term.copy_clipboard()
-            except Exception:
-                pass
-
-    def _on_key(self, term, event):
-        # Terminal-standard clipboard: Ctrl+Shift+C copy, Ctrl+Shift+V paste
-        # (plain Ctrl+C must stay as interrupt). Also accept Ctrl+Shift+Insert.
-        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
-        shift = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
-        name = (Gdk.keyval_name(event.keyval) or "").lower()
-        if ctrl and shift and name == "c":
-            self._copy(); return True
-        if ctrl and shift and name in ("v", "insert"):
-            self.term.paste_clipboard(); return True
-        return False
-
-    def _on_button(self, term, event):
-        if event.button == 2:            # middle-click: paste the selection
-            try: self.term.paste_primary()
-            except Exception: pass
-            return True
-        if event.button == 3:            # right-click: Copy / Paste / Select All
-            menu = Gtk.Menu()
-            def _item(label, cb):
-                mi = Gtk.MenuItem(label=label)
-                mi.connect("activate", lambda *_: cb())
-                menu.append(mi)
-            _item("Copy", self._copy)
-            _item("Paste", lambda: self.term.paste_clipboard())
-            _item("Select All", lambda: self.term.select_all())
-            menu.show_all()
-            try:
-                menu.popup_at_pointer(event)
-            except Exception:
-                menu.popup(None, None, None, None, event.button, event.time)
-            return True
-        return False
-
-    def _exited(self, *args):
-        app = self.get_application()
-        if app is not None:
-            app.quit()
-
-class App(Gtk.Application):
-    def __init__(self):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
-        self.win = None
-
-    def do_activate(self):
-        if self.win is None:
-            self.win = Win(self)
-        self.win.present()
-
-if __name__ == "__main__":
-    sys.exit(App().run(None))
-'''
-
-# GUI launcher: prefers the TuxGenie app window (own icon), else opens the best
-# available terminal emulator. More reliable than Terminal=true.
+# GUI launcher: Unified Shell first, then Tk --gui, then plain terminal.
 LAUNCHER_GUI = b"""\
 #!/bin/bash
 # TuxGenie GUI launcher - opens tuxgenie as an app-like, single-instance window.
 # Note: we intentionally avoid x-terminal-emulator because on Ubuntu 26.04+
 # it can resolve to Warp Terminal, which doesn't accept the standard -e flag.
 
-# Phase D: prefer the beginner Tk window when python3-tk is installed.
-# Exit 2 = Tkinter unavailable -> fall through to VTE / terminal UI below.
-if command -v tuxgenie >/dev/null 2>&1; then
-    tuxgenie --gui
-    rc=$?
-    [ "$rc" != "2" ] && exit "$rc"
-fi
-
-# Prefer the real app window (own icon, groups in the dock, single-instance via
-# GtkApplication). Exit code 3 = GTK/VTE unavailable or spawn failed -> fall
-# back to a plain terminal below. Any other exit code is the app's own result.
+# Unified Shell first (WebKit/GTK + live VTE). Exit 3 = GTK/VTE unavailable
+# or spawn failed -> fall through to Tk / plain terminal.
 if command -v tuxgenie-app >/dev/null 2>&1; then
     tuxgenie-app
     rc=$?
     [ "$rc" != "3" ] && exit "$rc"
+fi
+
+# Phase D: beginner Tk window when python3-tk is installed.
+# Exit 2 = Tkinter unavailable -> fall through to plain terminal below.
+if command -v tuxgenie >/dev/null 2>&1; then
+    tuxgenie --gui
+    rc=$?
+    [ "$rc" != "2" ] && exit "$rc"
 fi
 
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/tuxgenie-$(id -u).lock"
@@ -708,7 +581,7 @@ TryExec=tuxgenie
 Exec=/usr/bin/tuxgenie-gui
 Terminal=false
 Categories=System;Administration;Utility;
-Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;gui;beginner;
+Keywords=ai;linux;troubleshoot;claude;terminal;fix;tuxgenie;gui;shell;beginner;
 StartupNotify=false
 StartupWMClass=com.tuxgenie.TuxGenie
 SingleMainWindow=true
@@ -860,6 +733,8 @@ data_entries = [
      "type": "file", "data": EMERGENCY_UPDATE,                           "mode": 0o755},
     {"path": "./usr/lib/tuxgenie/tuxgenie.py",
      "type": "file", "data": TUXGENIE_PY,                                "mode": 0o644},
+    {"path": "./usr/lib/tuxgenie/tuxgenie_shell.py",
+     "type": "file", "data": TUXGENIE_SHELL,                             "mode": 0o644},
     {"path": f"./usr/share/doc/{PACKAGE}/copyright",
      "type": "file", "data": COPYRIGHT,                                  "mode": 0o644},
     # Desktop file named after the app-id so GNOME links the running window
@@ -930,32 +805,35 @@ print(f"  Done!  {out_path}  ({size_kb:.1f} KB)")
 install_sh_path = os.path.join(SCRIPT_DIR, "install.sh")
 install_sh = f"""\
 #!/bin/bash
-# TuxGenie Installer - double-click this file in your file manager to install.
+# TuxGenie Installer — double-click this file in your file manager to install.
 # Works on Ubuntu, Debian, Linux Mint, and all Debian-based systems.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEB="$SCRIPT_DIR/{DEB_OUT}"
+
+# Auto-detect the .deb file next to this script (works for any version)
+DEB=$(ls "$SCRIPT_DIR"/tuxgenie_*_all.deb 2>/dev/null | sort -V | tail -1)
+VERSION=$(echo "$DEB" | grep -oP '(?<=tuxgenie_)[\\d.]+(?=_all\\.deb)' 2>/dev/null || echo "{VERSION}")
 
 install_tuxgenie() {{
     echo ""
-    echo "  🧞 TuxGenie Installer"
+    echo "  TuxGenie Installer"
     echo "  ─────────────────────────────────────────────"
 
-    if [ ! -f "$DEB" ]; then
-        echo "  ✗ ERROR: Cannot find $DEB"
+    if [ -z "$DEB" ] || [ ! -f "$DEB" ]; then
+        echo "  ERROR: Cannot find a tuxgenie_*_all.deb file in this folder."
         echo "  Make sure install.sh is in the same folder as the .deb file."
         echo ""
         read -p "  Press Enter to close..."
         exit 1
     fi
 
-    # Check if already installed - show upgrade vs fresh install message
+    # Check if already installed — show upgrade vs fresh install message
     OLD_VER=$(dpkg -l tuxgenie 2>/dev/null | awk '/^ii/ {{print $3}}')
     if [ -n "$OLD_VER" ]; then
         echo "  Found existing version: $OLD_VER"
-        echo "  Upgrading to v{VERSION} - your API key and settings will be kept."
+        echo "  Upgrading to v$VERSION — your API key and settings will be kept."
     else
-        echo "  Fresh install - installing TuxGenie v{VERSION}."
+        echo "  Fresh install — installing TuxGenie v$VERSION."
     fi
     echo ""
     echo "  You may be asked for your password (this is normal for installing software)."
@@ -964,18 +842,18 @@ install_tuxgenie() {{
     if sudo dpkg -i "$DEB"; then
         echo ""
         if [ -n "$OLD_VER" ]; then
-            echo "  ✓ Upgraded from v$OLD_VER  →  v{VERSION} successfully!"
+            echo "  Upgraded from v$OLD_VER to v$VERSION successfully!"
         else
-            echo "  ✓ TuxGenie v{VERSION} installed successfully!"
+            echo "  TuxGenie v$VERSION installed successfully!"
         fi
         echo ""
         echo "  How to use:"
         echo "    • Open a Terminal and type:  tuxgenie"
-        echo "    • Or find TuxGenie in your app menu"
+        echo "    • Or find TuxGenie in your app menu / Unified Shell"
         echo ""
     else
         echo ""
-        echo "  ✗ Installation failed. Trying to fix dependencies..."
+        echo "  Installation failed. Trying to fix dependencies..."
         sudo apt-get install -f -y
         echo ""
         read -p "  Press Enter to close..."
@@ -1007,7 +885,7 @@ else
         fi
     done
     # Fallback: no terminal found, try running directly with pkexec for GUI password prompt
-    sudo dpkg -i "$DEB" && zenity --info --text="TuxGenie v{VERSION} installed!\\nOpen a terminal and type: tuxgenie" 2>/dev/null
+    sudo dpkg -i "$DEB" && zenity --info --text="TuxGenie v$VERSION installed!\\nOpen a terminal and type: tuxgenie" 2>/dev/null
 fi
 """
 

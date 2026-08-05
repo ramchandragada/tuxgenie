@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tuxgenie"
-version = "6.82.0"
+version = "6.83.0"
 description = "AI-powered Linux assistant — fix any Linux problem in plain English"
 readme = "README.md"
 license = "MIT"
@@ -32,6 +32,7 @@ classifiers = [
 
 [project.scripts]
 tuxgenie = "tuxgenie:main"
+tuxgenie-app = "tuxgenie_shell:main"
 
 [project.urls]
 Homepage    = "https://github.com/ramchandragada/tuxgenie"
@@ -40,7 +41,7 @@ Source      = "https://github.com/ramchandragada/tuxgenie"
 Changelog   = "https://github.com/ramchandragada/tuxgenie/releases"
 
 [tool.setuptools]
-py-modules = ["tuxgenie"]
+py-modules = ["tuxgenie", "tuxgenie_shell"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
