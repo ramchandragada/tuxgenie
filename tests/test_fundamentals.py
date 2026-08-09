@@ -1113,13 +1113,16 @@ class TestUnifiedShell:
         assert 'class="dial"' in html
         assert "pulseCpuArc" in html and "setDial" in html
         assert 'id="healthBtn"' in html and "Health scan" in html
-        assert "pc-strip" in html
+        assert "pc-strip" not in html  # full-width strip removed
+        assert 'data-pulse="pc"' in html and "pc-badge" in html
+        assert "repeat(4, minmax(0, 1fr))" in html
         assert "severity" in html  # teal / ember / danger dial states
         # Dials sit above Quick actions (not a footer strip)
         assert html.find('id="pulse"') < html.find('id="grid"')
         # Responsive breakpoints for laptops / short screens
         assert "max-height: 720px" in html
         assert "min-width: 720px" in html
+        assert "max-width: 560px" in html  # 2×2 pulse on narrow
         # Soft-tighten: compact hero so dials sit closer to Ask
         assert "soft-tighten" in html
         assert "min-height: 78px" in html

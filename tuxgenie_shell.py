@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.91.0"
+VERSION = "6.92.0"
 
 # Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
 ACTIONS = [
@@ -357,7 +357,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     text-transform: uppercase; color: var(--muted); font-weight: 800;
   }
 
-  /* System pulse — dials nest under Ask; Quick actions get the freed space */
+  /* System pulse — 4 cards (3 dials + PC badge); no full-width strip */
   .pulse-wrap {
     flex: 0 0 auto;
     padding: 2px 12px 0;
@@ -365,23 +365,24 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .pulse-wrap .sec { padding: 4px 6px 3px; }
   .pulse {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: clamp(6px, 1.2vw, 12px);
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: clamp(5px, 1vw, 10px);
   }
   .pulse-card {
-    appearance: none; border: 1px solid var(--line); border-radius: 18px;
+    appearance: none; border: 1px solid var(--line); border-radius: 16px;
     background:
       radial-gradient(120% 90% at 50% 0%, rgba(30,200,212,.10), transparent 55%),
       rgba(255,255,255,.92);
-    padding: clamp(10px, 1.6vw, 16px) 8px clamp(8px, 1.2vw, 12px);
+    padding: clamp(8px, 1.3vw, 14px) 6px clamp(7px, 1vw, 11px);
     cursor: pointer; text-align: center;
     font: inherit; color: inherit; min-width: 0;
-    display: flex; flex-direction: column; align-items: center; gap: 5px;
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
     transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
     animation: dialIn .55s var(--ease) both;
   }
-  .pulse-card:nth-child(2) { animation-delay: .06s; }
-  .pulse-card:nth-child(3) { animation-delay: .12s; }
+  .pulse-card:nth-child(2) { animation-delay: .05s; }
+  .pulse-card:nth-child(3) { animation-delay: .1s; }
+  .pulse-card:nth-child(4) { animation-delay: .15s; }
   @keyframes dialIn {
     from { opacity: 0; transform: translateY(10px) scale(.96); }
     to { opacity: 1; transform: none; }
@@ -393,18 +394,18 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   .pulse-card:active { transform: none; }
   .pulse-card .k {
-    font-size: .64rem; font-weight: 800; letter-spacing: .11em;
-    text-transform: uppercase; color: var(--muted); margin: 2px 0 0;
+    font-size: .6rem; font-weight: 800; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); margin: 1px 0 0;
   }
   .pulse-card .s {
-    margin: 0; font-size: clamp(.62rem, 1.3vw, .72rem); color: var(--muted); line-height: 1.25;
+    margin: 0; font-size: clamp(.58rem, 1.15vw, .7rem); color: var(--muted); line-height: 1.2;
     max-width: 100%;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .dial {
+  .dial, .pc-badge-wrap {
     position: relative;
-    width: clamp(68px, 15vw, 96px);
-    height: clamp(68px, 15vw, 96px);
+    width: clamp(56px, 11vw, 86px);
+    height: clamp(56px, 11vw, 86px);
     flex: 0 0 auto;
   }
   .dial svg {
@@ -439,47 +440,26 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .dial-val {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: clamp(.88rem, 2.4vw, 1.2rem); font-weight: 800; letter-spacing: -.03em;
+    font-size: clamp(.78rem, 2vw, 1.1rem); font-weight: 800; letter-spacing: -.03em;
     color: var(--ink); pointer-events: none;
   }
-
-  .pc-strip {
-    appearance: none; width: 100%; margin-top: 6px;
-    border: 1px solid var(--line); border-radius: 14px;
-    background: rgba(255,255,255,.88);
-    padding: 10px 12px; cursor: pointer;
-    display: flex; align-items: center; gap: 10px;
-    font: inherit; color: inherit; text-align: left; min-width: 0;
-    transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
+  .pc-badge-wrap {
+    display: flex; align-items: center; justify-content: center;
   }
-  .pc-strip:hover {
-    transform: translateY(-1px);
-    border-color: color-mix(in srgb, var(--tide2) 40%, white);
-    box-shadow: 0 10px 22px rgba(3,40,48,.1);
+  .pc-badge {
+    width: 74%; height: 74%; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: clamp(.7rem, 1.6vw, .85rem); font-weight: 800;
+    letter-spacing: .06em; color: #fff;
+    background: linear-gradient(145deg, var(--tide2), var(--tide0));
+    box-shadow: 0 8px 18px rgba(6,90,102,.22);
   }
-  .pc-strip .pc-dot {
-    width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto;
-    background: linear-gradient(145deg, var(--tide3), var(--tide1));
-    box-shadow: 0 0 0 3px rgba(14,168,180,.15);
-  }
-  .pc-strip .pc-meta { min-width: 0; flex: 1; }
-  .pc-strip .pc-k {
-    font-size: .6rem; font-weight: 800; letter-spacing: .1em;
-    text-transform: uppercase; color: var(--muted);
-  }
-  .pc-strip .v {
-    margin: 1px 0 0; font-size: clamp(.82rem, 1.8vw, .95rem); font-weight: 800;
-    letter-spacing: -.01em; color: var(--ink);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .pc-strip .s {
-    margin: 1px 0 0; font-size: .68rem; color: var(--muted);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .pc-strip .pc-go {
-    flex: 0 0 auto; font-size: .7rem; font-weight: 800; color: #fff;
-    background: linear-gradient(135deg, var(--tide1), var(--tide2));
-    padding: 7px 11px; border-radius: 9px; white-space: nowrap;
+  .pulse-card.pc .v {
+    margin: 0; max-width: 100%;
+    font-size: clamp(.62rem, 1.2vw, .74rem); font-weight: 800;
+    letter-spacing: -.01em; color: var(--ink); line-height: 1.2;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden;
   }
 
   .grid {
@@ -631,10 +611,14 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   /* Wide control deck (large monitors / ultrawide left pane) */
   @media (min-width: 720px) {
-    .dial { width: 100px; height: 100px; }
-    .dial-val { font-size: 1.22rem; }
-    .pulse-card { padding: 16px 10px 14px; }
+    .dial, .pc-badge-wrap { width: 90px; height: 90px; }
+    .dial-val { font-size: 1.15rem; }
+    .pulse-card { padding: 14px 8px 12px; }
     .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  }
+  /* Narrow: 2×2 so four cards stay readable */
+  @media (max-width: 560px) {
+    .pulse { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   /* Narrow laptops / small window split */
   @media (max-width: 480px) {
@@ -645,11 +629,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .ask { margin: -16px 10px 0; padding: 9px; }
     .row { flex-wrap: wrap; }
     .row button#askBtn { flex: 1 1 auto; min-height: 42px; }
-    .dial { width: 64px; height: 64px; }
-    .dial-val { font-size: .86rem; }
+    .dial, .pc-badge-wrap { width: 62px; height: 62px; }
+    .dial-val { font-size: .84rem; }
     .pulse-card { border-radius: 14px; padding: 8px 4px 8px; gap: 3px; }
-    .pc-strip { padding: 9px 10px; gap: 8px; }
-    .pc-strip .pc-go { padding: 6px 9px; font-size: .66rem; }
     .grid { padding: 2px 10px 10px; gap: 7px; }
   }
   @media (max-width: 360px) {
@@ -665,7 +647,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .ember-line { margin-top: 4px; }
     .ask { margin-top: -14px; }
     .ask-tools .hint { display: none; }
-    .dial { width: clamp(58px, 12vh, 78px); height: clamp(58px, 12vh, 78px); }
+    .dial, .pc-badge-wrap { width: clamp(52px, 11vh, 72px); height: clamp(52px, 11vh, 72px); }
     .sec { padding-top: 4px; }
   }
   @media (max-height: 600px) {
@@ -754,16 +736,15 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
           <div class="k">Disk</div>
           <div class="s" id="pulseDiskS">used / total</div>
         </button>
-      </div>
-      <button type="button" class="pc-strip" data-pulse="pc" title="PC configuration">
-        <span class="pc-dot" aria-hidden="true"></span>
-        <span class="pc-meta">
-          <span class="pc-k">PC config</span>
+        <button type="button" class="pulse-card pc" data-pulse="pc" title="PC configuration">
+          <div class="pc-badge-wrap" aria-hidden="true">
+            <div class="pc-badge">PC</div>
+          </div>
+          <div class="k">PC config</div>
           <div class="v" id="pulsePc">—</div>
-          <div class="s" id="pulsePcS">hardware details →</div>
-        </span>
-        <span class="pc-go">Details →</span>
-      </button>
+          <div class="s" id="pulsePcS">hardware →</div>
+        </button>
+      </div>
     </div>
 
     <div class="sec">Quick actions</div>
@@ -903,7 +884,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     if (!card) return;
     const key = card.getAttribute("data-pulse");
     const kw = pulseActions[key] || key;
-    const labelEl = card.querySelector(".k, .pc-k");
+    const labelEl = card.querySelector(".k");
     setStatus("<strong>Starting</strong> — " + ((labelEl && labelEl.textContent) || kw));
     post({ op: "run", kind: "kw", payload: kw });
   });
