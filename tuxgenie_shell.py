@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.85.0"
+VERSION = "6.86.0"
 
 # Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
 ACTIONS = [
@@ -35,7 +35,7 @@ ACTIONS = [
      "kind": "kw", "payload": "drivers", "accent": "#0f6f8c"},
     {"id": "perf", "label": "My PC is slow", "tip": "Scan + safe speed fixes",
      "kind": "kw", "payload": "perf", "accent": "#c45c12"},
-    {"id": "apps", "label": "App Store", "tip": "Browse & install 200+ apps",
+    {"id": "apps", "label": "App Store", "tip": "Browse & install 220+ apps",
      "kind": "tab", "payload": "store", "accent": "#d4620f"},
     {"id": "remove", "label": "My Apps", "tip": "Uninstall apps from this PC",
      "kind": "tab", "payload": "myapps", "accent": "#b54a2a"},

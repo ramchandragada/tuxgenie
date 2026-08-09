@@ -92,8 +92,29 @@ class TestCatalogFundamentals:
             assert e["prompt"].strip(), f"empty prompt for {e.get('name')}"
 
     def test_app_catalog_integrity(self):
-        assert len(tg.APP_CATALOG) >= 150
+        assert len(tg.APP_CATALOG) >= 220
         self._check(tg.APP_CATALOG, ("id", "name", "cat", "prompt", "desc"))
+        # Unique ids/names — duplicate store entries confuse users.
+        ids = [e["id"] for e in tg.APP_CATALOG]
+        names = [e["name"] for e in tg.APP_CATALOG]
+        assert len(ids) == len(set(ids)), "duplicate catalog ids"
+        assert len(names) == len(set(names)), "duplicate catalog names"
+
+    def test_wave_a_high_demand_apps_present(self):
+        names = {e["name"] for e in tg.APP_CATALOG}
+        for n in (
+            "Sober", "Dolphin Emulator", "PPSSPP", "ScummVM", "Modrinth App",
+            "Vesktop", "Dropbox", "MEGA Sync", "Proton Mail", "Notion (Cohesion)",
+            "PDF Arranger", "EasyEffects", "Godot Engine", "Unity Hub",
+            "Tailscale", "NordVPN", "Organic Maps", "GnuCash", "HomeBank", "VSCodium",
+        ):
+            assert n in names, n
+        # Must NOT re-add confusing duplicates of existing apps.
+        assert "Minecraft" not in names  # Prism + Modrinth already cover Minecraft
+        assert "Maestral" not in names   # Dropbox official is enough for Wave A
+        assert "Discord" in names and "Vesktop" in names
+        assert "Visual Studio Code" in names and "VSCodium" in names
+        assert "Prism Launcher" in names and "Modrinth App" in names
 
     def test_ai_catalog_integrity(self):
         assert len(tg.AI_CATALOG) >= 10

@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.85.0"
+__version__ = "6.86.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -10475,6 +10475,29 @@ APP_CATALOG = [
     {"id": 198,"name": "LibreSprite",         "cat": "Graphics",       "prompt": "Install LibreSprite, the free/open-source pixel-art and sprite-animation editor (a community fork of Aseprite), via flatpak from Flathub: com.github.libresprite.LibreSprite.", "desc": "Pixel-art & sprite animation editor"},
     {"id": 199,"name": "Stellarium",          "cat": "Utilities",      "prompt": "Install Stellarium, the free planetarium that shows a realistic 3D sky on your screen — spot planets, stars and constellations in real time, via flatpak from Flathub: org.stellarium.Stellarium (or apt: stellarium). Great for stargazing, students and families.", "desc": "Free planetarium — explore the night sky"},
     {"id": 200,"name": "Starship",            "cat": "Developer",      "prompt": "Install Starship, the fast, minimal, cross-shell prompt that shows git status, language versions and more. Run the official installer: curl -sS https://starship.rs/install.sh | sh. Then tell the user to add the init line to their shell config (e.g. eval \"$(starship init bash)\" in ~/.bashrc, or the fish/zsh equivalent) — but do NOT edit their shell config without asking first.", "desc": "Fast, minimal cross-shell prompt"},
+    # ── Wave A (v6.86.0) — high-demand gaps; names chosen to avoid duplicates ──
+    {"id": 202,"name": "Sober",               "cat": "Gaming",         "prompt": "Install Sober, the Linux Roblox client, via flatpak from Flathub: org.vinegarhq.Sober. Tell the user it is a community project (not affiliated with Roblox) and to read Sober's notice before use.", "desc": "Play Roblox on Linux (community client)"},
+    {"id": 203,"name": "Dolphin Emulator",    "cat": "Gaming",         "prompt": "Install Dolphin Emulator (GameCube / Wii), via flatpak from Flathub: org.DolphinEmu.dolphin-emu. Do NOT install the KDE Dolphin file manager.", "desc": "GameCube & Wii emulator (not the file manager)"},
+    {"id": 204,"name": "PPSSPP",              "cat": "Gaming",         "prompt": "Install PPSSPP, the PlayStation Portable emulator, via flatpak from Flathub: org.ppsspp.PPSSPP.", "desc": "PlayStation Portable (PSP) emulator"},
+    {"id": 205,"name": "ScummVM",             "cat": "Gaming",         "prompt": "Install ScummVM, which runs classic point-and-click adventure games, via flatpak from Flathub: org.scummvm.ScummVM (or apt: scummvm).", "desc": "Classic adventure-game engine"},
+    {"id": 206,"name": "Modrinth App",        "cat": "Gaming",         "prompt": "Install the Modrinth App (Minecraft mods & instances launcher) via flatpak from Flathub: com.modrinth.ModrinthApp. This is separate from Prism Launcher — Modrinth focuses on browsing/installing mods from Modrinth.", "desc": "Minecraft mods & instances (Modrinth)"},
+    {"id": 207,"name": "Vesktop",             "cat": "Communication",  "prompt": "Install Vesktop, a lightweight Discord client for Linux with better screen-share audio, via flatpak from Flathub: dev.vencord.Vesktop. Mention it is an alternative to the official Discord app already in the catalog.", "desc": "Discord client optimized for Linux"},
+    {"id": 208,"name": "Dropbox",             "cat": "Files & Sync",   "prompt": "Install the Dropbox desktop client via flatpak from Flathub: com.dropbox.Client (or the official Dropbox .deb from dropbox.com if Flatpak is unavailable).", "desc": "Cloud file sync (Dropbox)"},
+    {"id": 209,"name": "MEGA Sync",           "cat": "Files & Sync",   "prompt": "Install MEGA Desktop (MEGAsync) using MEGA's official Linux packages from https://mega.nz/linux — pick the matching .deb/.rpm for this distro, or follow MEGA's current install instructions. Prefer the official MEGA sync client (not third-party downloaders).", "desc": "Cloud file sync (MEGA official client)"},
+    {"id": 210,"name": "Proton Mail",         "cat": "Office & Notes", "prompt": "Install Proton Mail desktop via flatpak from Flathub: me.proton.Mail. Complements Proton VPN / Proton Pass already in the catalog.", "desc": "Encrypted email (Proton)"},
+    {"id": 211,"name": "Notion (Cohesion)",   "cat": "Office & Notes", "prompt": "Install Cohesion, an unofficial Notion desktop client for Linux, via flatpak from Flathub: io.github.brunofin.Cohesion. Clearly tell the user it is unofficial (not from Notion Labs). If they want a FOSS Notion-like app instead, suggest AppFlowy from the catalog.", "desc": "Unofficial Notion desktop client"},
+    {"id": 212,"name": "PDF Arranger",        "cat": "Office & Notes", "prompt": "Install PDF Arranger to merge, split, rotate and rearrange PDF pages, via flatpak from Flathub: com.github.jeromerobert.pdfarranger (or apt: pdfarranger).", "desc": "Merge, split & rearrange PDFs (free)"},
+    {"id": 213,"name": "Master PDF Editor",   "cat": "Office & Notes", "prompt": "Install Master PDF Editor via flatpak from Flathub: net.code_industry.MasterPDFEditor. Note it is a proprietary PDF suite (free version available); for a free/open alternative suggest PDF Arranger.", "desc": "Full PDF editor (proprietary)"},
+    {"id": 214,"name": "EasyEffects",         "cat": "Media",          "prompt": "Install EasyEffects for system-wide microphone/speaker effects and EQ (PipeWire), via flatpak from Flathub: com.github.wwmm.easyeffects.", "desc": "Audio effects & EQ (PipeWire)"},
+    {"id": 215,"name": "Godot Engine",        "cat": "Developer",      "prompt": "Install Godot Engine (2D/3D game engine) via flatpak from Flathub: org.godotengine.Godot.", "desc": "Free & open-source game engine"},
+    {"id": 216,"name": "Unity Hub",           "cat": "Developer",      "prompt": "Install Unity Hub to manage Unity Editor installs and projects, via flatpak from Flathub: com.unity.UnityHub. Mention a Unity account may be required.", "desc": "Manage Unity game-engine installs"},
+    {"id": 217,"name": "Tailscale",           "cat": "Remote Access",  "prompt": "Install Tailscale using the official installer: curl -fsSL https://tailscale.com/install.sh | sh. Then tell the user to run sudo tailscale up and sign in. Do not confuse with Trayscale (unofficial GUI).", "desc": "Zero-config mesh VPN (official)"},
+    {"id": 218,"name": "NordVPN",             "cat": "Security",       "prompt": "Install NordVPN using the official Linux installer from Nord: sh <(curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh) — or follow current instructions at nordvpn.com/download/linux/. Distinct from Proton VPN and Mullvad already in the catalog.", "desc": "Commercial VPN (official app)"},
+    {"id": 219,"name": "Organic Maps",        "cat": "Utilities",      "prompt": "Install Organic Maps, offline privacy-friendly maps based on OpenStreetMap, via flatpak from Flathub: app.organicmaps.desktop.", "desc": "Offline maps (OpenStreetMap)"},
+    {"id": 220,"name": "GnuCash",             "cat": "Office & Notes", "prompt": "Install GnuCash, full double-entry personal/small-business accounting, via flatpak from Flathub: org.gnucash.GnuCash (or apt: gnucash).", "desc": "Full accounting / personal finance"},
+    {"id": 221,"name": "HomeBank",            "cat": "Office & Notes", "prompt": "Install HomeBank, a simple personal accounting app, via flatpak from Flathub: fr.free.Homebank (or apt: homebank). Lighter than GnuCash for everyday budgets.", "desc": "Simple personal budgeting"},
+    {"id": 222,"name": "VSCodium",            "cat": "Developer",      "prompt": "Install VSCodium, the telemetry-free community build of VS Code, via flatpak from Flathub: com.vscodium.codium. Distinct from Visual Studio Code (Microsoft) already in the catalog.", "desc": "VS Code without Microsoft telemetry"},
+
 ]
 
 
@@ -10891,7 +10914,39 @@ _CATALOG_INSTALL = {
                                    "(python3 -m pip install --user pipx && python3 -m pipx ensurepath && "
                                    "python3 -m pipx install openai-whisper)"},
     "ChatGPT Desktop":  {"snap": "chatgpt-desktop"},
+    # ── Wave A (v6.86.0) ──
+    "Sober":            {"flatpak": "org.vinegarhq.Sober"},
+    "Dolphin Emulator": {"flatpak": "org.DolphinEmu.dolphin-emu"},
+    "PPSSPP":           {"flatpak": "org.ppsspp.PPSSPP"},
+    "ScummVM":          {"pkg": "scummvm", "flatpak": "org.scummvm.ScummVM"},
+    "Modrinth App":     {"flatpak": "com.modrinth.ModrinthApp"},
+    "Vesktop":          {"flatpak": "dev.vencord.Vesktop"},
+    "Dropbox":          {"flatpak": "com.dropbox.Client"},
+    "MEGA Sync":        {"script": "set -e; . /etc/os-release; ver=${VERSION_ID:-24.04}; "
+                                   "base=https://mega.nz/linux/repo/xUbuntu_${ver}/amd64; "
+                                   "curl -fsSL -o /tmp/megasync.deb "
+                                   "\"$base/megasync-xUbuntu_${ver}_amd64.deb\" "
+                                   "|| curl -fsSL -o /tmp/megasync.deb "
+                                   "\"https://mega.nz/linux/repo/xUbuntu_24.04/amd64/megasync-xUbuntu_24.04_amd64.deb\"; "
+                                   "sudo apt-get install -y /tmp/megasync.deb",
+                         "script_root": True},
+    "Proton Mail":      {"flatpak": "me.proton.Mail"},
+    "Notion (Cohesion)": {"flatpak": "io.github.brunofin.Cohesion"},
+    "PDF Arranger":     {"pkg": "pdfarranger", "flatpak": "com.github.jeromerobert.pdfarranger"},
+    "Master PDF Editor": {"flatpak": "net.code_industry.MasterPDFEditor"},
+    "EasyEffects":      {"flatpak": "com.github.wwmm.easyeffects"},
+    "Godot Engine":     {"flatpak": "org.godotengine.Godot"},
+    "Unity Hub":        {"flatpak": "com.unity.UnityHub"},
+    "Tailscale":        {"script": "curl -fsSL https://tailscale.com/install.sh | sh",
+                         "script_root": True},
+    "NordVPN":          {"script": "sh <(curl -sSf https://downloads.nordcdn.com/apps/linux/install.sh)",
+                         "script_root": True},
+    "Organic Maps":     {"flatpak": "app.organicmaps.desktop"},
+    "GnuCash":          {"pkg": "gnucash", "flatpak": "org.gnucash.GnuCash"},
+    "HomeBank":         {"pkg": "homebank", "flatpak": "fr.free.Homebank"},
+    "VSCodium":         {"flatpak": "com.vscodium.codium"},
 }
+
 
 # Apps that genuinely cannot be a one-command install (registration walls, manual
 # downloads, or per-machine PWA setup). These intentionally use the AI's guided
@@ -11228,7 +11283,7 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
 
 
 def feat_install_apps(backend, bctx, slog):
-    """Quick app installer — 200-app catalog covering browsers, communication,
+    """Quick app installer — 220+ app catalog covering browsers, communication,
     office, media, graphics, developer tools, system tools, files & sync,
     utilities, gaming, security, and free/open-source games. Each entry maps to a
     natural-language install prompt;
@@ -12902,7 +12957,7 @@ MENU_ITEMS = [
     ("39", "suggest",   "Suggest a Setup",    "Not sure? Answer one question, get the right setup",  feat_suggest_setup),
     ("40", "env",       "Dev Environments",   "Ready-to-run stacks: LAMP/LEMP, Node, Python, DBs, WordPress", feat_dev_environments),
     # ── HEADLINE CATALOGS — catchy numbers so they stand out ─────
-    ("77", "apps",      "Install Apps",       "200-app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
+    ("77", "apps",      "Install Apps",       "220+ app catalog (Brave, Signal, Blender, Bitwarden, Steam, SuperTuxKart…)", feat_install_apps),
     ("78", "remove",    "Remove Apps",        "Uninstall installed apps — apt/snap/flatpak, no AI, system pkgs hidden", feat_remove_apps),
     ("88", "cloud",     "Cloud Sync",         "Google Drive · Dropbox · OneDrive · S3 · WebDAV",   feat_cloud_manager),
     ("99", "ai",        "AI Tools",           "22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI…", feat_install_ai_tools),
@@ -13043,7 +13098,7 @@ def show_menu(compact=False):
     _item("40", "Dev Environments",    "Ready-to-run stacks: LAMP/LEMP, Node, Python, databases, WordPress")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
-    _item("77", "Install Apps",        "🎁 200 apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
+    _item("77", "Install Apps",        "🎁 220+ apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
     _item("88", "Cloud Sync",          "☁  Google Drive · Dropbox · OneDrive · S3 · WebDAV — one place")
     _item("99", "AI Tools",            "🤖 22 tools: Cursor, Windsurf, Zed, Ollama, Claude Code, Copilot CLI, GPT4All…")
 
@@ -13336,7 +13391,7 @@ _BEGINNER_GUI_ACTIONS = (
     ("sound",    "Sound / Audio",     "No sound or mic issues",                 "feature", "sound"),
     ("drivers",  "Drivers / NVIDIA",  "Missing GPU or hardware drivers",        "feature", "drivers"),
     ("perf",     "My PC is slow",     "Scan + safe speed fixes",                "feature", "perf"),
-    ("apps",     "Install apps",      "200-app catalog — Chrome, Steam, etc.",  "feature", "apps"),
+    ("apps",     "Install apps",      "220+ app catalog — Chrome, Steam, etc.",  "feature", "apps"),
     ("remove",   "Remove apps",       "Uninstall apps you no longer need",      "feature", "remove"),
     ("ai",       "AI tools catalog",  "Ollama, Cursor, Claude Code, and more",  "feature", "ai"),
     ("backup",   "Backup settings",   "Create or restore a config snapshot",    "feature", "backup"),
