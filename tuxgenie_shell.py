@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.95.0"
+VERSION = "6.96.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -518,16 +518,22 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     content: ""; flex: 1; height: 1px; min-width: 24px;
     background: linear-gradient(90deg, rgba(6,90,102,.22), transparent 85%);
   }
-  /* Compact action rows — WebKitGTK-safe: never grid/flex the <button> itself */
+  /* Action rows — DIV + table layout (WebKitGTK blanks <button> children) */
   .tile {
-    appearance: none; -webkit-appearance: none;
-    border: 1px solid var(--line); border-radius: 12px;
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 1px solid rgba(7,45,56,.12);
+    border-radius: 12px;
     background: #ffffff;
-    padding: 0; margin: 0; cursor: pointer; text-align: left;
-    position: relative; overflow: hidden;
-    min-width: 0; width: 100%;
-    color: var(--ink);
+    margin: 0;
+    cursor: pointer;
+    text-align: left;
+    color: #07131a;
     font: inherit;
+    box-sizing: border-box;
     transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
     animation: tileIn .45s var(--ease) both;
     animation-delay: calc(var(--i, 0) * 28ms);
@@ -536,22 +542,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: none; }
   }
-  .tile-inner {
-    display: -webkit-box;
-    display: -webkit-flex;
-    display: flex;
-    -webkit-box-align: center;
-    -webkit-align-items: center;
-    align-items: center;
-    gap: 9px;
-    padding: 9px 10px 9px 9px;
-    box-sizing: border-box;
-    width: 100%;
-    min-width: 0;
-  }
   .tile:hover {
     transform: translateY(-1px);
-    border-color: rgba(10,138,150,.35);
+    border-color: rgba(10,138,150,.38);
     box-shadow: 0 10px 22px rgba(3,40,48,.09);
     background: #fbfefe;
   }
@@ -562,51 +555,61 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     outline-offset: 2px;
   }
   .tile .mark {
-    -webkit-flex: 0 0 34px;
-    flex: 0 0 34px;
-    width: 34px; height: 34px; border-radius: 9px;
-    display: -webkit-box; display: -webkit-flex; display: flex;
-    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
-    -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center;
-    font-size: .62rem; font-weight: 800; letter-spacing: .04em;
-    color: var(--accent, var(--tide1));
-    background: rgba(14,168,180,.12);
-    border: 1px solid rgba(14,168,180,.22);
-    box-sizing: border-box;
+    display: table-cell;
+    width: 42px;
+    vertical-align: middle;
+    text-align: center;
+    font-size: .62rem;
+    font-weight: 800;
+    letter-spacing: .04em;
+    color: #065a66;
+    background: #e7f4f6;
+    border-right: 1px solid rgba(7,45,56,.08);
+    border-radius: 11px 0 0 11px;
   }
-  .tile .body {
-    -webkit-box-flex: 1;
-    -webkit-flex: 1 1 auto;
-    flex: 1 1 auto;
-    min-width: 0;
+  .tile .copy {
+    display: table-cell;
+    vertical-align: middle;
+    padding: 9px 10px;
     overflow: hidden;
   }
   .tile .name {
     display: block;
-    font-weight: 800; font-size: .86rem; margin: 0; letter-spacing: -.015em;
-    color: #07131a;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-weight: 800;
+    font-size: .86rem;
+    line-height: 1.2;
+    margin: 0;
+    letter-spacing: -.015em;
+    color: #07131a !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .tile .tip {
     display: block;
-    margin: 2px 0 0; font-size: .68rem; color: #5c7380; line-height: 1.25;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    margin: 2px 0 0;
+    font-size: .68rem;
+    line-height: 1.25;
+    color: #5c7380 !important;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .tile .chev {
-    -webkit-flex: 0 0 22px;
-    flex: 0 0 22px;
-    width: 22px; height: 22px; border-radius: 50%;
-    display: -webkit-box; display: -webkit-flex; display: flex;
-    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
-    -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center;
-    font-size: .78rem; font-weight: 800; color: #5c7380;
-    background: #eef4f6;
-    transition: transform .18s var(--ease), color .18s, background .18s;
+    display: table-cell;
+    width: 28px;
+    vertical-align: middle;
+    text-align: center;
+    font-size: .85rem;
+    font-weight: 800;
+    color: #5c7380;
+    background: #f3f7f8;
+    border-left: 1px solid rgba(7,45,56,.06);
+    border-radius: 0 11px 11px 0;
   }
   .tile:hover .chev {
-    color: #fff;
-    background: var(--accent, var(--tide2));
-    transform: translateX(2px);
+    color: #ffffff;
+    background: #0a8a96;
   }
 
   /* ── STORE / MY APPS ── */
@@ -1014,9 +1017,21 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   function tileMark(label) {
     const parts = String(label || "").replace(/[^A-Za-z0-9 /&+-]/g, " ").trim().split(/[ /]+/).filter(Boolean);
-    if (!parts.length) return "•";
+    if (!parts.length) return "**";
     if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
     return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
+  function accentTint(hex) {
+    hex = String(hex || "#0a8a96").replace("#", "");
+    if (hex.length !== 6) return { fg: "#065a66", bg: "#e7f4f6" };
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return {
+      fg: "#" + hex,
+      bg: "rgba(" + r + "," + g + "," + b + ",0.14)"
+    };
   }
 
   const grid = document.getElementById("grid");
@@ -1025,36 +1040,52 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     if (a.kind === "sec") {
       const sec = document.createElement("div");
       sec.className = "sec-inline";
-      sec.textContent = a.label || "";
+      sec.appendChild(document.createTextNode(a.label || ""));
       grid.appendChild(sec);
       return;
     }
-    const el = document.createElement("button");
-    el.type = "button";
+    // DIV not <button>: WebKitGTK often paints blank white buttons
+    const el = document.createElement("div");
     el.className = "tile";
-    el.style.setProperty("--accent", a.accent || "#0a7a8a");
-    el.style.setProperty("--i", tileI++);
-    // Inner flex wrapper — WebKitGTK breaks display:flex/grid on <button>
-    el.innerHTML = '<span class="tile-inner"><span class="mark" aria-hidden="true"></span><span class="body"><span class="name"></span><span class="tip"></span></span><span class="chev" aria-hidden="true">→</span></span>';
-    el.querySelector(".mark").textContent = tileMark(a.label);
-    el.querySelector(".name").textContent = a.label;
-    el.querySelector(".tip").textContent = a.tip || "";
-    el.querySelector(".mark").style.color = a.accent || "#0a7a8a";
-    el.querySelector(".mark").style.background = "rgba(14,168,180,.12)";
-    el.querySelector(".mark").style.borderColor = "rgba(14,168,180,.22)";
-    // Tint mark from accent without color-mix (weak in some WebKitGTK builds)
-    try {
-      const hex = (a.accent || "#0a8a96").replace("#", "");
-      if (hex.length === 6) {
-        const r = parseInt(hex.slice(0, 2), 16);
-        const g = parseInt(hex.slice(2, 4), 16);
-        const b = parseInt(hex.slice(4, 6), 16);
-        el.querySelector(".mark").style.background = "rgba(" + r + "," + g + "," + b + ",0.14)";
-        el.querySelector(".mark").style.borderColor = "rgba(" + r + "," + g + "," + b + ",0.28)";
-      }
-    } catch (e) {}
+    el.setAttribute("role", "button");
+    el.setAttribute("tabindex", "0");
+    el.style.setProperty("--i", String(tileI++));
+
+    const mark = document.createElement("div");
+    mark.className = "mark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.appendChild(document.createTextNode(tileMark(a.label)));
+    const tint = accentTint(a.accent);
+    mark.style.color = tint.fg;
+    mark.style.background = tint.bg;
+
+    const copy = document.createElement("div");
+    copy.className = "copy";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.appendChild(document.createTextNode(a.label || ""));
+    const tip = document.createElement("div");
+    tip.className = "tip";
+    tip.appendChild(document.createTextNode(a.tip || ""));
+    copy.appendChild(name);
+    copy.appendChild(tip);
+
+    const chev = document.createElement("div");
+    chev.className = "chev";
+    chev.setAttribute("aria-hidden", "true");
+    chev.appendChild(document.createTextNode("\u2192"));
+
+    el.appendChild(mark);
+    el.appendChild(copy);
+    el.appendChild(chev);
     el.setAttribute("title", a.tip || a.label || "");
     el.addEventListener("click", () => runAction(a));
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        runAction(a);
+      }
+    });
     grid.appendChild(el);
   });
   const qaCount = document.getElementById("qaCount");
