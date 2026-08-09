@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.86.0"
+VERSION = "6.87.0"
 
 # Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
 ACTIONS = [
@@ -127,7 +127,8 @@ def _load_gi():
 
 
 def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
-    """Self-contained App Store deck — no external network/CDN."""
+    """Flagship control deck — brand-first, luminous teal, intentional motion.
+    Self-contained: no CDN, no remote fonts, no third-party assets."""
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -136,217 +137,429 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 <title>TuxGenie</title>
 <style>
   :root {
-    --ink: #0b1520;
-    --muted: #5a6d78;
-    --mist: #e8f1f4;
-    --panel: rgba(255,255,255,.94);
+    --ink: #07131a;
+    --ink2: #1a2c36;
+    --muted: #5c7380;
+    --fog: #eef5f7;
+    --paper: #f7fbfc;
+    --panel: rgba(255,255,255,.82);
     --ember: #e85d04;
-    --ember2: #ff7a1a;
-    --teal0: #063642;
-    --teal1: #0a7a8a;
-    --teal2: #14b8c4;
-    --line: rgba(12,46,56,.12);
-    --danger: #b54a2a;
+    --ember2: #ff8a2a;
+    --tide0: #032830;
+    --tide1: #065a66;
+    --tide2: #0a8a96;
+    --tide3: #1ec8d4;
+    --line: rgba(7,45,56,.10);
+    --danger: #b23a22;
+    --shadow: 0 24px 60px rgba(3,40,48,.14);
+    --ease: cubic-bezier(.22,.9,.24,1);
   }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; height: 100%;
-    font-family: "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+    font-family: "Ubuntu", "Cantarell", "Noto Sans", "Source Sans 3", "DejaVu Sans", sans-serif;
     color: var(--ink);
+    background: var(--fog);
+    overflow: hidden;
+  }
+  .app {
+    display: flex; flex-direction: column; height: 100%; min-height: 0;
+    position: relative;
     background:
-      radial-gradient(1200px 500px at 10% -10%, #1ad0de55, transparent 55%),
-      radial-gradient(900px 420px at 110% 0%, #ff7a1a33, transparent 50%),
-      linear-gradient(165deg, #f3f8fa 0%, #e6eef2 55%, #dce8ec 100%);
+      radial-gradient(900px 420px at 0% 0%, #1ec8d433, transparent 55%),
+      radial-gradient(700px 380px at 100% 8%, #ff8a2a22, transparent 50%),
+      linear-gradient(168deg, #f4fafb 0%, #e7f0f3 48%, #dce8ec 100%);
   }
-  .app { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .app::before {
+    content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .35;
+    background-image:
+      linear-gradient(rgba(6,90,102,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(6,90,102,.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 20%, transparent 75%);
+  }
+
+  /* ── Top brand strip ── */
+  .top {
+    position: relative; z-index: 2;
+    flex: 0 0 auto;
+    padding: 18px 22px 0;
+  }
+  .brandrow {
+    display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
+  }
+  .logo {
+    font-size: clamp(2rem, 4.2vw, 2.7rem);
+    font-weight: 800; letter-spacing: -.04em; line-height: .95;
+    margin: 0;
+    background: linear-gradient(115deg, var(--tide0) 10%, var(--tide2) 55%, var(--tide1) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: brandIn .7s var(--ease) both;
+  }
+  @keyframes brandIn {
+    from { opacity: 0; transform: translateY(10px); letter-spacing: .04em; }
+    to { opacity: 1; transform: none; letter-spacing: -.04em; }
+  }
+  .ver {
+    font-size: .72rem; color: var(--muted); font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase;
+    padding-bottom: 4px; white-space: nowrap;
+  }
+  a.site {
+    color: var(--tide1); text-decoration: none; border-bottom: 1px solid transparent;
+    transition: border-color .2s, color .2s;
+  }
+  a.site:hover { color: var(--ember); border-bottom-color: var(--ember); }
+
+  .nav {
+    display: flex; gap: 4px; margin-top: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .nav button {
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    font: inherit; font-weight: 700; font-size: .86rem; color: var(--muted);
+    padding: 10px 14px 12px; position: relative;
+    transition: color .2s;
+  }
+  .nav button::after {
+    content: ""; position: absolute; left: 14px; right: 14px; bottom: -1px; height: 3px;
+    border-radius: 3px 3px 0 0;
+    background: linear-gradient(90deg, var(--ember), var(--ember2));
+    transform: scaleX(0); transform-origin: left;
+    transition: transform .28s var(--ease);
+  }
+  .nav button:hover { color: var(--ink2); }
+  .nav button.active { color: var(--ink); }
+  .nav button.active::after { transform: scaleX(1); }
+
+  .panel {
+    display: none; flex: 1; min-height: 0; flex-direction: column;
+    position: relative; z-index: 1;
+  }
+  .panel.active { display: flex; animation: panelIn .35s var(--ease) both; }
+  @keyframes panelIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* ── HOME ── */
   .hero {
-    flex: 0 0 auto; padding: 16px 18px 10px;
-    background: linear-gradient(135deg, var(--teal0), #0a7a8a 55%, #12a3b0);
-    color: #fff; position: relative; overflow: hidden;
+    position: relative; margin: 16px 16px 0; border-radius: 22px;
+    overflow: hidden; min-height: 168px;
+    color: #fff;
+    background: linear-gradient(135deg, var(--tide0) 0%, var(--tide1) 48%, #0b6f7c 100%);
+    box-shadow: var(--shadow);
+    isolation: isolate;
   }
-  .hero::after {
-    content: ""; position: absolute; right: -40px; top: -50px;
-    width: 180px; height: 180px; border-radius: 50%;
-    background: #14b8c455;
+  .hero .aurora {
+    position: absolute; inset: -30%;
+    background:
+      radial-gradient(circle at 20% 30%, #1ec8d455, transparent 40%),
+      radial-gradient(circle at 80% 20%, #ff8a2a33, transparent 42%),
+      radial-gradient(circle at 60% 80%, #14b8c440, transparent 45%);
+    animation: aurora 10s ease-in-out infinite alternate;
   }
-  .brand { margin: 0; font-size: 1.75rem; font-weight: 800; letter-spacing: -.02em; }
-  .tag { margin: 4px 0 0; opacity: .9; font-size: .92rem; }
-  .meta { margin-top: 8px; font-size: .75rem; opacity: .85; }
-  a.site { color: #b8eef2; }
-  .tabs {
-    display: flex; gap: 6px; padding: 10px 12px 0; flex: 0 0 auto;
+  @keyframes aurora {
+    from { transform: translate3d(-2%, -1%, 0) rotate(0deg); }
+    to { transform: translate3d(3%, 2%, 0) rotate(4deg); }
   }
-  .tabs button {
-    border: 1px solid var(--line); background: var(--panel);
-    border-radius: 999px; padding: 8px 14px; font-weight: 700;
-    font-size: .8rem; cursor: pointer; color: var(--ink);
+  .hero svg.wave {
+    position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 54px;
+    opacity: .55;
   }
-  .tabs button.active {
-    background: linear-gradient(135deg, var(--teal1), var(--teal2));
-    color: #fff; border-color: transparent;
+  .hero .copy {
+    position: relative; z-index: 1; padding: 26px 26px 40px;
+    max-width: 34rem;
   }
-  .panel { display: none; flex: 1; min-height: 0; flex-direction: column; }
-  .panel.active { display: flex; }
-  .ask { padding: 12px 16px 8px; }
-  .ask h2 { margin: 0 0 8px; font-size: .95rem; }
+  .hero h2 {
+    margin: 0; font-size: clamp(1.35rem, 2.8vw, 1.75rem);
+    font-weight: 700; letter-spacing: -.02em; line-height: 1.2;
+  }
+  .hero p {
+    margin: 8px 0 0; font-size: .95rem; opacity: .88; line-height: 1.4;
+    max-width: 28rem;
+  }
+  .ember-line {
+    margin-top: 14px; height: 3px; width: 72px; border-radius: 3px;
+    background: linear-gradient(90deg, var(--ember), var(--ember2));
+    animation: sweep 2.4s var(--ease) infinite alternate;
+    transform-origin: left;
+  }
+  @keyframes sweep {
+    from { width: 56px; opacity: .85; }
+    to { width: 110px; opacity: 1; }
+  }
+
+  .ask {
+    margin: -22px 20px 0; position: relative; z-index: 3;
+    background: var(--panel);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,.7);
+    border-radius: 18px;
+    padding: 14px 14px 12px;
+    box-shadow: 0 18px 40px rgba(3,40,48,.12);
+  }
+  .ask label {
+    display: block; font-size: .72rem; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+    margin: 0 0 8px 4px;
+  }
   .row { display: flex; gap: 8px; }
   .row input {
     flex: 1; border: 1px solid var(--line); border-radius: 12px;
-    padding: 12px 14px; font-size: .95rem; background: #fff;
+    padding: 13px 14px; font-size: .98rem; background: #fff; color: var(--ink);
+    font-family: inherit;
+    transition: border-color .2s, box-shadow .2s;
   }
-  .row input:focus { outline: none; border-color: var(--teal1); box-shadow: 0 0 0 3px #0a7a8a22; }
-  .row button#askBtn, .btn-primary {
-    border: 0; border-radius: 12px; padding: 0 16px;
+  .row input:focus {
+    outline: none; border-color: var(--tide2);
+    box-shadow: 0 0 0 3px rgba(14,168,180,.18);
+  }
+  .row button#askBtn {
+    border: 0; border-radius: 12px; padding: 0 18px;
     background: linear-gradient(135deg, var(--ember), var(--ember2));
-    color: #fff; font-weight: 700; cursor: pointer;
+    color: #fff; font-weight: 800; font-size: .92rem; cursor: pointer;
+    letter-spacing: .01em;
+    transition: transform .15s var(--ease), filter .15s;
+    animation: breath 2.6s ease-in-out infinite;
   }
-  .hint { margin: 8px 0 0; font-size: .75rem; color: var(--muted); }
+  .row button#askBtn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+  .row button#askBtn:active { transform: translateY(1px); }
+  @keyframes breath {
+    0%,100% { box-shadow: 0 8px 18px rgba(232,93,4,.28); }
+    50% { box-shadow: 0 10px 26px rgba(255,138,42,.38); }
+  }
+  .hint {
+    margin: 8px 4px 0; font-size: .74rem; color: var(--muted);
+  }
+
   .sec {
-    padding: 6px 16px 4px; font-size: .72rem; letter-spacing: .1em;
-    text-transform: uppercase; color: var(--muted); font-weight: 700;
+    padding: 16px 22px 6px; font-size: .7rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); font-weight: 800;
   }
   .grid {
-    flex: 1; overflow: auto; padding: 4px 12px 16px;
+    flex: 1; overflow: auto; padding: 4px 14px 18px;
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     align-content: start;
   }
   .tile {
-    position: relative; border: 1px solid var(--line); border-radius: 14px;
-    background: var(--panel); padding: 12px 12px 12px 14px;
-    cursor: pointer; text-align: left;
-    transition: transform .18s, box-shadow .18s;
+    appearance: none; border: 1px solid var(--line); border-radius: 16px;
+    background: rgba(255,255,255,.78);
+    padding: 14px 14px 14px 16px; cursor: pointer; text-align: left;
+    position: relative; overflow: hidden;
+    transition: transform .22s var(--ease), box-shadow .22s, border-color .22s;
+    animation: tileIn .5s var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 40ms);
+    font: inherit; color: inherit;
+  }
+  @keyframes tileIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: none; }
   }
   .tile::before {
     content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
-    background: var(--accent, var(--teal1));
+    background: var(--accent, var(--tide2));
   }
-  .tile:hover { transform: translateY(-2px); box-shadow: 0 14px 30px rgba(6,54,66,.14); }
-  .tile .name { font-weight: 700; font-size: .9rem; margin: 0 0 4px; }
-  .tile .tip { margin: 0; font-size: .74rem; color: var(--muted); line-height: 1.35; }
+  .tile::after {
+    content: ""; position: absolute; right: -20px; top: -20px;
+    width: 72px; height: 72px; border-radius: 50%;
+    background: color-mix(in srgb, var(--accent, var(--tide2)) 14%, transparent);
+    transition: transform .35s var(--ease);
+  }
+  .tile:hover {
+    transform: translateY(-3px);
+    border-color: color-mix(in srgb, var(--accent, var(--tide2)) 40%, white);
+    box-shadow: 0 16px 32px rgba(3,40,48,.12);
+  }
+  .tile:hover::after { transform: scale(1.35); }
+  .tile:active { transform: translateY(0); }
+  .tile .name { font-weight: 800; font-size: .95rem; margin: 0 0 4px; letter-spacing: -.01em; }
+  .tile .tip { margin: 0; font-size: .76rem; color: var(--muted); line-height: 1.35; }
   .tile .go {
-    display: inline-block; margin-top: 8px; font-size: .72rem; font-weight: 700;
-    color: #fff; background: var(--accent, var(--teal1));
-    padding: 4px 10px; border-radius: 8px;
+    display: inline-block; margin-top: 10px; font-size: .72rem; font-weight: 800;
+    color: #fff; background: var(--accent, var(--tide2));
+    padding: 5px 11px; border-radius: 8px; letter-spacing: .02em;
   }
+
+  /* ── STORE / MY APPS ── */
+  .store-head {
+    padding: 14px 18px 0; flex: 0 0 auto;
+  }
+  .store-head h2 {
+    margin: 0; font-size: 1.35rem; font-weight: 800; letter-spacing: -.02em;
+  }
+  .store-head p { margin: 4px 0 0; color: var(--muted); font-size: .85rem; }
   .store-bar {
-    display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 6px;
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px 6px;
     align-items: center;
   }
   .store-bar input {
-    flex: 1 1 160px; min-width: 140px;
+    flex: 1 1 180px; min-width: 140px;
     border: 1px solid var(--line); border-radius: 12px;
-    padding: 10px 12px; font-size: .9rem; background: #fff;
+    padding: 11px 14px; font-size: .92rem; background: #fff;
+    font-family: inherit;
+  }
+  .store-bar input:focus {
+    outline: none; border-color: var(--tide2);
+    box-shadow: 0 0 0 3px rgba(14,168,180,.16);
+  }
+  .btn-ghost, .btn-primary {
+    border-radius: 12px; padding: 10px 14px; font-weight: 800;
+    font-size: .8rem; cursor: pointer; font-family: inherit;
+  }
+  .btn-primary {
+    border: 0; color: #fff;
+    background: linear-gradient(135deg, var(--tide1), var(--tide2));
+  }
+  .btn-ghost {
+    border: 1px solid var(--line); background: #fff; color: var(--ink2);
   }
   .chips {
     display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto;
-    padding: 0 12px 8px; scrollbar-width: thin;
+    padding: 0 16px 10px; scrollbar-width: thin;
   }
   .chips button {
-    flex: 0 0 auto; border: 1px solid var(--line); background: #fff;
-    border-radius: 999px; padding: 6px 12px; font-size: .75rem;
-    font-weight: 600; cursor: pointer; color: var(--ink); white-space: nowrap;
+    flex: 0 0 auto; border: 1px solid var(--line); background: rgba(255,255,255,.85);
+    border-radius: 10px; padding: 7px 12px; font-size: .74rem;
+    font-weight: 700; cursor: pointer; color: var(--ink2); white-space: nowrap;
+    font-family: inherit; transition: background .15s, color .15s, border-color .15s;
   }
   .chips button.on {
-    background: var(--teal0); color: #fff; border-color: var(--teal0);
+    background: var(--tide0); color: #fff; border-color: var(--tide0);
   }
   .cards {
-    flex: 1; overflow: auto; padding: 4px 12px 16px;
+    flex: 1; overflow: auto; padding: 2px 14px 18px;
     display: grid; grid-template-columns: 1fr; gap: 8px;
     align-content: start;
   }
   .card {
-    display: grid; grid-template-columns: 1fr auto; gap: 8px 12px;
-    border: 1px solid var(--line); border-radius: 14px;
-    background: var(--panel); padding: 12px 14px;
+    display: grid; grid-template-columns: 1fr auto; gap: 8px 14px;
+    border: 1px solid var(--line); border-radius: 16px;
+    background: rgba(255,255,255,.86);
+    padding: 14px 14px 14px 16px;
     align-items: center;
+    transition: transform .18s var(--ease), box-shadow .18s;
   }
-  .card h3 { margin: 0; font-size: .95rem; }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px rgba(3,40,48,.08);
+  }
+  .card h3 { margin: 0; font-size: .98rem; font-weight: 800; letter-spacing: -.01em; }
   .card p { margin: 4px 0 0; font-size: .78rem; color: var(--muted); line-height: 1.35; }
-  .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
   .badge {
-    font-size: .65rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .04em; padding: 2px 7px; border-radius: 6px;
-    background: #e8f4f6; color: var(--teal0);
+    font-size: .62rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .05em; padding: 3px 7px; border-radius: 6px;
+    background: #e7f4f6; color: var(--tide0);
   }
-  .badge.cat { background: #fff3e8; color: #9a4a10; }
+  .badge.cat { background: #fff1e6; color: #9a3f08; }
   .card .actions { display: flex; flex-direction: column; gap: 6px; }
   .card button {
-    border: 0; border-radius: 10px; padding: 8px 14px; font-weight: 700;
-    font-size: .78rem; cursor: pointer; white-space: nowrap;
+    border: 0; border-radius: 10px; padding: 9px 14px; font-weight: 800;
+    font-size: .78rem; cursor: pointer; white-space: nowrap; font-family: inherit;
   }
   .card button.install {
-    background: linear-gradient(135deg, var(--teal1), var(--teal2)); color: #fff;
+    background: linear-gradient(135deg, var(--tide1), var(--tide3)); color: #fff;
   }
   .card button.remove {
-    background: linear-gradient(135deg, #a63d22, var(--danger)); color: #fff;
+    background: linear-gradient(135deg, #9a3320, var(--danger)); color: #fff;
   }
-  .card button:active { transform: translateY(1px); }
   .empty {
-    padding: 28px 16px; text-align: center; color: var(--muted); font-size: .9rem;
+    padding: 36px 16px; text-align: center; color: var(--muted); font-size: .92rem;
   }
   .status {
-    flex: 0 0 auto; padding: 8px 16px 10px;
-    background: linear-gradient(90deg, #071820, #0c2e38);
-    color: #b7d4da; font-size: .75rem;
+    flex: 0 0 auto; padding: 9px 18px 11px;
+    background: linear-gradient(90deg, #031820, #0a2e38);
+    color: #a9c8d0; font-size: .74rem; letter-spacing: .01em;
+    position: relative; z-index: 2;
   }
-  .status strong { color: #fff; font-weight: 600; }
-  @media (min-width: 520px) {
+  .status strong { color: #fff; font-weight: 700; }
+  @media (min-width: 560px) {
     .cards { grid-template-columns: 1fr 1fr; }
+  }
+  @media (max-width: 420px) {
+    .grid { grid-template-columns: 1fr; }
+    .hero .copy { padding: 22px 18px 36px; }
   }
 </style>
 </head>
 <body>
 <div class="app">
-  <header class="hero">
-    <h1 class="brand">TuxGenie</h1>
-    <p class="tag">Linux made easy — App Store + live terminal</p>
-    <div class="meta">v__VERSION__ ·
-      <a class="site" href="https://www.tuxgenie.com" id="siteLink">www.tuxgenie.com</a>
+  <header class="top">
+    <div class="brandrow">
+      <h1 class="logo">TuxGenie</h1>
+      <div class="ver">v__VERSION__ · <a class="site" href="https://www.tuxgenie.com" id="siteLink">www.tuxgenie.com</a></div>
     </div>
+    <nav class="nav" id="tabs">
+      <button type="button" data-tab="home" class="active">Home</button>
+      <button type="button" data-tab="store">App Store</button>
+      <button type="button" data-tab="myapps">My Apps</button>
+    </nav>
   </header>
 
-  <nav class="tabs" id="tabs">
-    <button type="button" data-tab="home" class="active">Home</button>
-    <button type="button" data-tab="store">App Store</button>
-    <button type="button" data-tab="myapps">My Apps</button>
-  </nav>
-
   <section class="panel active" id="tab-home">
+    <div class="hero">
+      <div class="aurora" aria-hidden="true"></div>
+      <svg class="wave" viewBox="0 0 1200 80" preserveAspectRatio="none" aria-hidden="true">
+        <path fill="rgba(247,251,252,.22)" d="M0,40 C200,80 400,0 600,40 C800,80 1000,10 1200,40 L1200,80 L0,80 Z">
+          <animate attributeName="d" dur="8s" repeatCount="indefinite"
+            values="M0,40 C200,80 400,0 600,40 C800,80 1000,10 1200,40 L1200,80 L0,80 Z;
+                    M0,48 C220,10 420,70 620,30 C820,0 1020,60 1200,36 L1200,80 L0,80 Z;
+                    M0,40 C200,80 400,0 600,40 C800,80 1000,10 1200,40 L1200,80 L0,80 Z"/>
+        </path>
+      </svg>
+      <div class="copy">
+        <h2>Linux, in plain English</h2>
+        <p>Ask anything — or open the App Store. Live terminal on the right keeps every step honest.</p>
+        <div class="ember-line" aria-hidden="true"></div>
+      </div>
+    </div>
+
     <div class="ask">
-      <h2>What do you need?</h2>
+      <label for="q">What do you need?</label>
       <div class="row">
         <input id="q" type="text" placeholder="my wifi is not working" autocomplete="off"/>
         <button id="askBtn" type="button">Ask →</button>
       </div>
-      <p class="hint">Try: “install chrome” · “why is it slow?” · or open the App Store</p>
+      <p class="hint">Try “install chrome” · “why is it slow?” · or browse the App Store</p>
     </div>
+
     <div class="sec">Quick actions</div>
     <div class="grid" id="grid"></div>
   </section>
 
   <section class="panel" id="tab-store">
+    <div class="store-head">
+      <h2>App Store</h2>
+      <p>220+ apps — search, filter, install. Approve steps in the live terminal.</p>
+    </div>
     <div class="store-bar">
-      <input id="storeQ" type="search" placeholder="Search apps — chrome, steam, notes…" autocomplete="off"/>
+      <input id="storeQ" type="search" placeholder="Search — chrome, steam, notes…" autocomplete="off"/>
     </div>
     <div class="chips" id="storeChips"></div>
     <div class="cards" id="storeCards"></div>
   </section>
 
   <section class="panel" id="tab-myapps">
+    <div class="store-head">
+      <h2>My Apps</h2>
+      <p>Apps installed on this PC. System packages stay hidden.</p>
+    </div>
     <div class="store-bar">
       <input id="myQ" type="search" placeholder="Search installed apps…" autocomplete="off"/>
-      <button type="button" class="btn-primary" id="refreshInstalled" style="padding:10px 14px">Refresh</button>
+      <button type="button" class="btn-primary" id="refreshInstalled">Refresh</button>
     </div>
     <div class="cards" id="myCards"></div>
   </section>
 
-  <footer class="status" id="status"><strong>Ready</strong> — installs run in the live terminal (approve with y/n).</footer>
+  <footer class="status" id="status"><strong>Ready</strong> — installs confirm in the live terminal (y/n).</footer>
 </div>
 <script>
   const ACTIONS = __ACTIONS__;
   const STORE_APPS = __STORE__;
   const AI_APPS = __AI__;
-  let storeMode = "apps"; // apps | ai
+  let storeMode = "apps";
   let storeCat = "All";
   let installed = [];
 
@@ -372,9 +585,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   function showTab(name) {
     if (name === "store-ai") { storeMode = "ai"; name = "store"; }
-    if (name === "store") { /* keep storeMode */ }
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-    document.querySelectorAll(".tabs button").forEach(b => {
+    document.querySelectorAll(".nav button").forEach(b => {
       b.classList.toggle("active", b.getAttribute("data-tab") === name);
     });
     const panel = document.getElementById("tab-" + name);
@@ -409,14 +621,14 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     post({ op: "run", kind: a.kind || "kw", payload: a.payload, label: a.label });
   }
 
-  // Home tiles
   const grid = document.getElementById("grid");
   ACTIONS.forEach((a, i) => {
     const el = document.createElement("button");
     el.type = "button";
     el.className = "tile";
     el.style.setProperty("--accent", a.accent || "#0a7a8a");
-    el.innerHTML = '<div class="name"></div><p class="tip"></p><span class="go">Open →</span>';
+    el.style.setProperty("--i", i);
+    el.innerHTML = '<div class="name"></div><p class="tip"></p><span class="go"></span>';
     el.querySelector(".name").textContent = a.label;
     el.querySelector(".tip").textContent = a.tip;
     el.querySelector(".go").textContent = (a.kind === "tab") ? "Browse →" : "Run →";
@@ -449,7 +661,6 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     modeAi.className = storeMode === "ai" ? "on" : "";
     modeAi.addEventListener("click", () => { storeMode = "ai"; storeCat = "All"; renderStore(); });
     chips.appendChild(modeAi);
-
     const rows = catalogSource();
     ["All"].concat(uniqueCats(rows)).forEach(cat => {
       const b = document.createElement("button");
@@ -569,7 +780,6 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     setStatus("<strong>My Apps</strong> — " + rows.length + " removable");
   }
 
-  // Called from Python after scanning
   window.__setInstalled = function(rows) {
     installed = Array.isArray(rows) ? rows : [];
     renderMyApps();
@@ -605,6 +815,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     html = html.replace("__STORE__", json.dumps(store_apps, ensure_ascii=False))
     html = html.replace("__AI__", json.dumps(ai_apps, ensure_ascii=False))
     return html
+
 
 
 class UnifiedShell:
@@ -644,7 +855,7 @@ class UnifiedShell:
             self.win.present()
             return
         self.win = self.Gtk.ApplicationWindow(application=app, title="TuxGenie")
-        self.win.set_default_size(1240, 780)
+        self.win.set_default_size(1280, 820)
         for nm in ("tuxgenie", "com.tuxgenie.TuxGenie"):
             try:
                 self.win.set_icon_name(nm)
@@ -834,7 +1045,7 @@ class UnifiedShell:
         except Exception:
             pass
         sub = Gtk.Label(
-            label="Install gir1.2-webkit2-4.1 for the App Store UI — terminal still works"
+            label="For the full modern App Store UI: sudo apt install gir1.2-webkit2-4.1"
         )
         sub.set_xalign(0)
         sub.set_line_wrap(True)

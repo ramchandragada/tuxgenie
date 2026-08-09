@@ -125,6 +125,9 @@ finish the task on Claude — paid, so only after an explicit "yes"
   Those commands call `cli_install_catalog_ref` / `cli_remove_app_ref` — same
   deterministic catalog engine as the terminal picker. Approvals stay in the
   right-hand VTE. Do not reimplement install logic in the shell.
+- **Shell visual design:** brand-first luminous teal + ember (no purple / no CDN
+  fonts). Home hero + ask CTA + quick actions; Store/My Apps are interactive
+  panels. Keep the 40% VTE chrome minimal — the deck carries the wow.
 - **Catalog uniqueness:** every `APP_CATALOG` name/id must be unique. When adding
   alternatives (Vesktop vs Discord, VSCodium vs VS Code), use distinct names and
   descs so users are not confused. Prefer Flatpak ids verified on Flathub.
