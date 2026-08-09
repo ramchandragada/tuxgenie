@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.93.0"
+VERSION = "6.94.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -490,63 +490,95 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     overflow: hidden;
   }
 
+  .qa-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 10px; padding: 8px 16px 2px;
+  }
+  .qa-head .sec { padding: 0; }
+  .qa-head .qa-count {
+    font-size: .68rem; font-weight: 700; color: var(--muted); letter-spacing: .02em;
+  }
+
   .grid {
-    flex: 1; overflow: auto; padding: 2px 12px 12px;
+    flex: 1; overflow: auto; padding: 2px 12px 14px;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    gap: 6px;
     align-content: start;
   }
   .sec-inline {
     grid-column: 1 / -1;
-    margin: 6px 2px 0;
-    padding: 0 2px;
-    font-size: .66rem; letter-spacing: .12em;
-    text-transform: uppercase; color: var(--muted); font-weight: 800;
+    display: flex; align-items: center; gap: 10px;
+    margin: 10px 0 1px; padding: 0 2px;
+    font-size: .64rem; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--tide1); font-weight: 800;
   }
-  .sec-inline:first-child { margin-top: 0; }
+  .sec-inline:first-child { margin-top: 2px; }
+  .sec-inline::after {
+    content: ""; flex: 1; height: 1px; min-width: 24px;
+    background: linear-gradient(90deg, rgba(6,90,102,.22), transparent 85%);
+  }
+  /* Compact action rows — mark + copy + chevron (no blob decorations) */
   .tile {
-    appearance: none; border: 1px solid var(--line); border-radius: 14px;
-    background: rgba(255,255,255,.78);
-    padding: 12px 12px 12px 14px; cursor: pointer; text-align: left;
+    appearance: none; border: 1px solid var(--line); border-radius: 12px;
+    background: #fff;
+    padding: 9px 10px 9px 9px; cursor: pointer; text-align: left;
     position: relative; overflow: hidden;
     min-width: 0;
-    transition: transform .22s var(--ease), box-shadow .22s, border-color .22s;
-    animation: tileIn .5s var(--ease) both;
-    animation-delay: calc(var(--i, 0) * 40ms);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center; gap: 9px;
+    transition: transform .18s var(--ease), box-shadow .18s, border-color .18s,
+      background .18s;
+    animation: tileIn .45s var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 28ms);
     font: inherit; color: inherit;
   }
   @keyframes tileIn {
-    from { opacity: 0; transform: translateY(12px); }
+    from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: none; }
   }
-  .tile::before {
-    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
-    background: var(--accent, var(--tide2));
-  }
-  .tile::after {
-    content: ""; position: absolute; right: -18px; top: -18px;
-    width: 56px; height: 56px; border-radius: 50%;
-    background: color-mix(in srgb, var(--accent, var(--tide2)) 12%, transparent);
-    pointer-events: none;
-    transition: transform .35s var(--ease);
-  }
   .tile:hover {
-    transform: translateY(-2px);
-    border-color: color-mix(in srgb, var(--accent, var(--tide2)) 40%, white);
-    box-shadow: 0 12px 26px rgba(3,40,48,.1);
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--accent, var(--tide2)) 42%, white);
+    box-shadow: 0 10px 22px rgba(3,40,48,.09);
+    background: linear-gradient(180deg, #fff, #f7fbfc);
   }
-  .tile:hover::after { transform: scale(1.2); }
-  .tile:active { transform: translateY(0); }
+  .tile:active { transform: none; }
+  .tile:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent, var(--tide2)) 55%, white);
+    outline-offset: 2px;
+  }
+  .tile .mark {
+    width: 34px; height: 34px; border-radius: 9px; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .62rem; font-weight: 800; letter-spacing: .04em;
+    color: var(--accent, var(--tide1));
+    background: color-mix(in srgb, var(--accent, var(--tide2)) 14%, #fff);
+    border: 1px solid color-mix(in srgb, var(--accent, var(--tide2)) 22%, #fff);
+  }
+  .tile .body { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .tile .name {
-    font-weight: 800; font-size: .9rem; margin: 0 0 3px; letter-spacing: -.01em;
+    font-weight: 800; font-size: .86rem; margin: 0; letter-spacing: -.015em;
+    color: var(--ink);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .tile .tip { margin: 0; font-size: .72rem; color: var(--muted); line-height: 1.3; }
-  .tile .go {
-    display: inline-block; margin-top: 8px; font-size: .68rem; font-weight: 800;
-    color: #fff; background: var(--accent, var(--tide2));
-    padding: 4px 10px; border-radius: 7px; letter-spacing: .02em;
+  .tile .tip {
+    margin: 0; font-size: .68rem; color: var(--muted); line-height: 1.25;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .tile .chev {
+    flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .78rem; font-weight: 800; color: var(--muted);
+    background: #f0f5f7;
+    transition: transform .18s var(--ease), color .18s, background .18s;
+  }
+  .tile:hover .chev {
+    color: #fff;
+    background: var(--accent, var(--tide2));
+    transform: translateX(2px);
   }
 
   /* ── STORE / MY APPS ── */
@@ -783,7 +815,10 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       </div>
     </div>
 
-    <div class="sec">Quick actions</div>
+    <div class="qa-head">
+      <div class="sec">Quick actions</div>
+      <div class="qa-count" id="qaCount"></div>
+    </div>
     <div class="grid" id="grid"></div>
   </section>
 
@@ -949,6 +984,13 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     post({ op: "run", kind: a.kind || "kw", payload: a.payload, label: a.label });
   }
 
+  function tileMark(label) {
+    const parts = String(label || "").replace(/[^A-Za-z0-9 /&+-]/g, " ").trim().split(/[ /]+/).filter(Boolean);
+    if (!parts.length) return "•";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+
   const grid = document.getElementById("grid");
   let tileI = 0;
   ACTIONS.forEach((a) => {
@@ -964,13 +1006,16 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     el.className = "tile";
     el.style.setProperty("--accent", a.accent || "#0a7a8a");
     el.style.setProperty("--i", tileI++);
-    el.innerHTML = '<div class="name"></div><p class="tip"></p><span class="go"></span>';
+    el.innerHTML = '<span class="mark" aria-hidden="true"></span><span class="body"><span class="name"></span><span class="tip"></span></span><span class="chev" aria-hidden="true">→</span>';
+    el.querySelector(".mark").textContent = tileMark(a.label);
     el.querySelector(".name").textContent = a.label;
     el.querySelector(".tip").textContent = a.tip || "";
-    el.querySelector(".go").textContent = (a.kind === "tab") ? "Browse →" : "Run →";
+    el.setAttribute("title", a.tip || a.label || "");
     el.addEventListener("click", () => runAction(a));
     grid.appendChild(el);
   });
+  const qaCount = document.getElementById("qaCount");
+  if (qaCount) qaCount.textContent = tileI + " shortcuts";
 
   function catalogSource() {
     return storeMode === "ai" ? AI_APPS : STORE_APPS;

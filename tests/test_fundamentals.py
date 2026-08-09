@@ -1130,6 +1130,9 @@ class TestUnifiedShell:
         assert "severity" in html  # teal / ember / danger dial states
         assert "sec-inline" in html  # Quick action section headers
         assert "Suggest a setup" in html and "Webcam fix" in html
+        assert "qa-head" in html and "tileMark" in html
+        assert 'class="mark"' in html and 'class="chev"' in html
+        assert "class=\"go\"" not in html  # old chunky Run pills removed
         # Dials sit above Quick actions (not a footer strip)
         assert html.find('id="pulse"') < html.find('id="grid"')
         # Responsive breakpoints for laptops / short screens
