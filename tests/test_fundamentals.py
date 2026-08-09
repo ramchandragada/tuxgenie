@@ -1071,11 +1071,22 @@ class TestUnifiedShell:
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         kws = set(tg.menu_keyword_map())
-        ids = {a["id"] for a in mod.ACTIONS}
+        ids = {a["id"] for a in mod.ACTIONS if a.get("kind") != "sec"}
         assert "health" in ids and "apps" in ids and "fix" in ids
-        # kw tiles → exact menu keywords; tab tiles → Store / My Apps panes.
+        # Wave A coverage — common full-menu items that were missing from Home
+        for need in ("display", "bluetooth", "printer", "webcam", "disk",
+                     "battery", "security", "gaming", "cloud", "suggest"):
+            assert need in ids, need
+        # My Apps / AI stay as nav tabs — not duplicated as Quick action tiles
+        assert "remove" not in ids and "ai" not in ids
+        secs = [a["label"] for a in mod.ACTIONS if a.get("kind") == "sec"]
+        assert "Start here" in secs and "Fix something" in secs
+        # kw tiles → exact menu keywords; tab tiles → Store pane; sec = headers.
         for a in mod.ACTIONS:
-            assert a["kind"] in ("kw", "tab"), a
+            assert a["kind"] in ("kw", "tab", "sec"), a
+            if a["kind"] == "sec":
+                assert a.get("label"), a
+                continue
             assert a["payload"], a
             if a["kind"] == "kw":
                 assert a["payload"] in kws or a["payload"] in ("u", "s", "menu"), a
@@ -1117,6 +1128,8 @@ class TestUnifiedShell:
         assert 'data-pulse="pc"' in html and "pc-badge" in html
         assert "repeat(4, minmax(0, 1fr))" in html
         assert "severity" in html  # teal / ember / danger dial states
+        assert "sec-inline" in html  # Quick action section headers
+        assert "Suggest a setup" in html and "Webcam fix" in html
         # Dials sit above Quick actions (not a footer strip)
         assert html.find('id="pulse"') < html.find('id="grid"')
         # Responsive breakpoints for laptops / short screens

@@ -19,37 +19,65 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.92.0"
+VERSION = "6.93.0"
 
-# Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
+# Home quick actions — curated Wave A (not the full terminal menu).
+# kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
 ACTIONS = [
+    {"kind": "sec", "label": "Start here"},
     {"id": "fix", "label": "Fix a problem", "tip": "Describe what's wrong in plain English",
      "kind": "kw", "payload": "fix", "accent": "#0d8a9a"},
     {"id": "health", "label": "Health check", "tip": "CPU, RAM, disk, services",
      "kind": "kw", "payload": "health", "accent": "#148f6a"},
+
+    {"kind": "sec", "label": "Fix something"},
     {"id": "network", "label": "Wi-Fi / Internet", "tip": "Can't connect? Safe scan + fixes",
      "kind": "kw", "payload": "network", "accent": "#0b7ea8"},
     {"id": "sound", "label": "Sound / Audio", "tip": "No sound or mic issues",
      "kind": "kw", "payload": "sound", "accent": "#1a8a7a"},
+    {"id": "display", "label": "Display", "tip": "Wrong resolution or monitor not detected",
+     "kind": "kw", "payload": "display", "accent": "#0c7c8e"},
+    {"id": "bluetooth", "label": "Bluetooth", "tip": "Won't pair or keeps disconnecting",
+     "kind": "kw", "payload": "bluetooth", "accent": "#156f9a"},
+    {"id": "printer", "label": "Printer setup", "tip": "Install a printer or fix printing",
+     "kind": "kw", "payload": "printer", "accent": "#1a7a6e"},
+    {"id": "webcam", "label": "Webcam fix", "tip": "Camera blank in Zoom / Teams / Meet",
+     "kind": "kw", "payload": "webcam", "accent": "#0e7a86"},
     {"id": "drivers", "label": "Drivers / NVIDIA", "tip": "Missing GPU or hardware drivers",
      "kind": "kw", "payload": "drivers", "accent": "#0f6f8c"},
-    {"id": "perf", "label": "My PC is slow", "tip": "Scan + safe speed fixes",
-     "kind": "kw", "payload": "perf", "accent": "#c45c12"},
+
+    {"kind": "sec", "label": "Install & update"},
     {"id": "apps", "label": "App Store", "tip": "Browse & install 220+ apps",
      "kind": "tab", "payload": "store", "accent": "#d4620f"},
-    {"id": "remove", "label": "My Apps", "tip": "Uninstall apps from this PC",
-     "kind": "tab", "payload": "myapps", "accent": "#b54a2a"},
-    {"id": "ai", "label": "AI tools", "tip": "Ollama, Cursor, Claude Code, and more",
-     "kind": "tab", "payload": "store-ai", "accent": "#0e7c86"},
-    {"id": "backup", "label": "Backup settings", "tip": "Create or restore a config snapshot",
-     "kind": "kw", "payload": "backup", "accent": "#1b7a4a"},
     {"id": "updates", "label": "System updates", "tip": "Check and install OS updates",
      "kind": "kw", "payload": "updates", "accent": "#0d6e8c"},
     {"id": "selfupd", "label": "Update TuxGenie", "tip": "Get the latest TuxGenie release",
      "kind": "kw", "payload": "u", "accent": "#c35508"},
+    {"id": "cloud", "label": "Cloud sync", "tip": "Google Drive, Dropbox, OneDrive, and more",
+     "kind": "kw", "payload": "cloud", "accent": "#0b6f9a"},
+
+    {"kind": "sec", "label": "Protect & speed"},
+    {"id": "security", "label": "Security check", "tip": "Are you protected? Find out now",
+     "kind": "kw", "payload": "security", "accent": "#1b6b4a"},
+    {"id": "backup", "label": "Backup settings", "tip": "Create or restore a config snapshot",
+     "kind": "kw", "payload": "backup", "accent": "#1b7a4a"},
+    {"id": "perf", "label": "My PC is slow", "tip": "Scan + safe speed fixes",
+     "kind": "kw", "payload": "perf", "accent": "#c45c12"},
+    {"id": "disk", "label": "Disk cleanup", "tip": "Running out of storage?",
+     "kind": "kw", "payload": "disk", "accent": "#b85a18"},
+    {"id": "battery", "label": "Battery & power", "tip": "Draining fast or overheating?",
+     "kind": "kw", "payload": "battery", "accent": "#c46a10"},
+    {"id": "gaming", "label": "Gaming setup", "tip": "Steam + Proton, GPU, GameMode",
+     "kind": "kw", "payload": "gaming", "accent": "#a34b1a"},
+
+    {"kind": "sec", "label": "Guided"},
+    {"id": "suggest", "label": "Suggest a setup", "tip": "Not sure? One question → right setup",
+     "kind": "kw", "payload": "suggest", "accent": "#0e7c86"},
+
+    {"kind": "sec", "label": "More"},
     {"id": "settings", "label": "Settings", "tip": "AI provider, keys, preferences",
      "kind": "kw", "payload": "s", "accent": "#3d5a80"},
-    {"id": "menu", "label": "Show menu", "tip": "Bring the full terminal menu back",
+    {"id": "menu", "label": "Show menu", "tip": "Full terminal menu for everything else",
      "kind": "kw", "payload": "menu", "accent": "#1a2744"},
 ]
 
@@ -469,6 +497,14 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     gap: 8px;
     align-content: start;
   }
+  .sec-inline {
+    grid-column: 1 / -1;
+    margin: 6px 2px 0;
+    padding: 0 2px;
+    font-size: .66rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); font-weight: 800;
+  }
+  .sec-inline:first-child { margin-top: 0; }
   .tile {
     appearance: none; border: 1px solid var(--line); border-radius: 14px;
     background: rgba(255,255,255,.78);
@@ -901,6 +937,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
 
   function runAction(a) {
+    if (!a || a.kind === "sec") return;
     if (a.kind === "tab") {
       if (a.payload === "store-ai") storeMode = "ai";
       if (a.payload === "store") storeMode = "apps";
@@ -913,15 +950,23 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
 
   const grid = document.getElementById("grid");
-  ACTIONS.forEach((a, i) => {
+  let tileI = 0;
+  ACTIONS.forEach((a) => {
+    if (a.kind === "sec") {
+      const sec = document.createElement("div");
+      sec.className = "sec-inline";
+      sec.textContent = a.label || "";
+      grid.appendChild(sec);
+      return;
+    }
     const el = document.createElement("button");
     el.type = "button";
     el.className = "tile";
     el.style.setProperty("--accent", a.accent || "#0a7a8a");
-    el.style.setProperty("--i", i);
+    el.style.setProperty("--i", tileI++);
     el.innerHTML = '<div class="name"></div><p class="tip"></p><span class="go"></span>';
     el.querySelector(".name").textContent = a.label;
-    el.querySelector(".tip").textContent = a.tip;
+    el.querySelector(".tip").textContent = a.tip || "";
     el.querySelector(".go").textContent = (a.kind === "tab") ? "Browse →" : "Run →";
     el.addEventListener("click", () => runAction(a));
     grid.appendChild(el);
@@ -1408,6 +1453,17 @@ class UnifiedShell:
         grid.set_margin_end(12)
         grid.set_margin_bottom(12)
         for a in ACTIONS:
+            if a.get("kind") == "sec":
+                lab = Gtk.Label()
+                lab.set_xalign(0)
+                lab.set_markup(
+                    "<span size='small' foreground='#5c7380'><b>%s</b></span>"
+                    % (a.get("label") or "").replace("&", "&amp;")
+                )
+                lab.set_margin_top(8)
+                lab.set_margin_bottom(2)
+                grid.add(lab)
+                continue
             b = Gtk.Button()
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
             box.set_margin_top(8)
@@ -1417,7 +1473,7 @@ class UnifiedShell:
             l1 = Gtk.Label()
             l1.set_xalign(0)
             l1.set_markup("<b>%s</b>" % a["label"].replace("&", "&amp;"))
-            l2 = Gtk.Label(label=a["tip"])
+            l2 = Gtk.Label(label=a.get("tip") or "")
             l2.set_xalign(0)
             l2.set_line_wrap(True)
             box.pack_start(l1, False, False, 0)
@@ -1437,6 +1493,8 @@ class UnifiedShell:
 
     def _on_action_btn(self, _btn, action):
         kind = action.get("kind")
+        if kind == "sec":
+            return
         payload = (action.get("payload") or "").strip()
         if kind == "tab":
             # No WebKit store — fall back to terminal catalog keywords
