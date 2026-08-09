@@ -1131,8 +1131,10 @@ class TestUnifiedShell:
         assert "sec-inline" in html  # Quick action section headers
         assert "Suggest a setup" in html and "Webcam fix" in html
         assert "qa-head" in html and "tileMark" in html
+        assert "tile-inner" in html  # WebKitGTK-safe flex wrapper (not grid on button)
         assert 'class="mark"' in html and 'class="chev"' in html
         assert "class=\"go\"" not in html  # old chunky Run pills removed
+        assert "never grid/flex the <button>" in html or "WebKitGTK-safe" in html
         # Dials sit above Quick actions (not a footer strip)
         assert html.find('id="pulse"') < html.find('id="grid"')
         # Responsive breakpoints for laptops / short screens
