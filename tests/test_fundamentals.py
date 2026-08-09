@@ -1114,6 +1114,12 @@ class TestUnifiedShell:
         assert "webkit.messageHandlers.tuxgenie" in html
         assert mod.VERSION in html
         assert "Brave Browser" in html  # catalog embedded
+        # Aspera company wordmark on the dark status bar (TuxGenie stays hero)
+        assert 'id="asperaLink"' in html
+        assert "aspera-mark" in html
+        assert "aria-label=\"Aspera\"" in html
+        assert "https://www.tuxgenie.com/aspera-hub.html" in html
+        assert "Stylized A" in html
         # System pulse (above Quick actions): round dials + PC strip + Health CTA
         assert 'id="pulse"' in html
         assert "system-pulse" in html

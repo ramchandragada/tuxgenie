@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.96.0"
+VERSION = "6.97.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -698,13 +698,44 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .empty {
     padding: 36px 16px; text-align: center; color: var(--muted); font-size: .92rem;
   }
-  .status {
-    flex: 0 0 auto; padding: 9px 18px 11px;
-    background: linear-gradient(90deg, #031820, #0a2e38);
+  .status-bar {
+    flex: 0 0 auto;
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+    -webkit-box-pack: justify; -webkit-justify-content: space-between; justify-content: space-between;
+    gap: 12px;
+    padding: 8px 14px 9px 16px;
+    background: linear-gradient(90deg, #031820, #0a1628 55%, #0b1a2e);
     color: #a9c8d0; font-size: .74rem; letter-spacing: .01em;
     position: relative; z-index: 2;
   }
+  .status {
+    -webkit-box-flex: 1; -webkit-flex: 1 1 auto; flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
   .status strong { color: #fff; font-weight: 700; }
+  /* Aspera wordmark — company attribution on the dark bar (logo-native colors) */
+  a.aspera-mark {
+    -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+    gap: 7px;
+    text-decoration: none;
+    opacity: .92;
+    transition: opacity .2s;
+  }
+  a.aspera-mark:hover { opacity: 1; }
+  a.aspera-mark .by {
+    font-size: .62rem; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: #6d8494;
+  }
+  a.aspera-mark svg { display: block; height: 14px; width: auto; }
+  @media (max-width: 420px) {
+    a.aspera-mark .by { display: none; }
+  }
   @media (min-width: 560px) {
     .cards { grid-template-columns: 1fr 1fr; }
   }
@@ -877,7 +908,17 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     <div class="cards" id="myCards"></div>
   </section>
 
-  <footer class="status" id="status"><strong>Ready</strong> — installs confirm in the live terminal (y/n).</footer>
+  <footer class="status-bar">
+    <div class="status" id="status"><strong>Ready</strong> — installs confirm in the live terminal (y/n).</div>
+    <a class="aspera-mark" id="asperaLink" href="https://www.tuxgenie.com/aspera-hub.html" title="Aspera Technologies">
+      <span class="by">by</span>
+      <svg viewBox="0 0 118 22" role="img" aria-label="Aspera">
+        <!-- Stylized A (no crossbar) + SPERA — matches Aspera wordmark -->
+        <path d="M11 2.2 L1.6 19.8 H5.4 L11 8.2 L16.6 19.8 H20.4 L11 2.2 Z" fill="#8FA4FF"/>
+        <text x="26" y="16.2" fill="#FFFFFF" font-family="Ubuntu, Cantarell, Noto Sans, DejaVu Sans, sans-serif" font-size="13.5" font-weight="700" letter-spacing="2.2">SPERA</text>
+      </svg>
+    </a>
+  </footer>
 </div>
 <script>
   const ACTIONS = __ACTIONS__;
@@ -1262,6 +1303,13 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     site.addEventListener("click", (e) => {
       e.preventDefault();
       post({ op: "open", payload: "https://www.tuxgenie.com" });
+    });
+  }
+  const aspera = document.getElementById("asperaLink");
+  if (aspera) {
+    aspera.addEventListener("click", (e) => {
+      e.preventDefault();
+      post({ op: "open", payload: "https://www.tuxgenie.com/aspera-hub.html" });
     });
   }
   post({ op: "system-pulse" });
