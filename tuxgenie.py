@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.83.0"
+__version__ = "6.84.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -12744,6 +12744,24 @@ MENU_ITEMS = [
 ]
 
 
+def menu_keyword_map():
+    """Exact menu keywords (health, apps, settings, …) → feature callables.
+
+    Used by --feature, the interactive ❯ prompt, one-shot exact keywords, and
+    the Unified Shell (which feeds these keywords into the live VTE).
+    """
+    return {kw.lower(): fn for _, kw, _name, _tip, fn in MENU_ITEMS}
+
+
+def is_last_failed_trigger(choice: str) -> bool:
+    """True for !! / why — NOT bare 'fix' (that is the menu Fix feature)."""
+    c = (choice or "").strip()
+    if not c:
+        return False
+    cl = c.lower()
+    return cl == "!!" or cl == "why" or cl.startswith("!! ")
+
+
 def _clear_screen():
     """Clear the visible screen and home the cursor so the menu reappears at the
     top — no scrolling. Terminal scrollback is preserved (uses 2J, not 3J), so
@@ -13285,6 +13303,22 @@ def _gui_open_full_assistant() -> bool:
     return _gui_spawn_in_terminal(_gui_build_cli_argv("full"))
 
 
+def _gui_open_url(url: str = "https://www.tuxgenie.com") -> bool:
+    """Open a URL in the user's browser (desktop link clicks)."""
+    if not url.startswith(("https://", "http://")):
+        return False
+    try:
+        subprocess.Popen(
+            ["xdg-open", url],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def _gui_action_by_id(action_id: str):
     for row in _BEGINNER_GUI_ACTIONS:
         if row[0] == action_id:
@@ -13466,11 +13500,23 @@ def gui_main(argv=None) -> int:
         hero.create_rectangle(x0, 118, x1, 122, fill=C["ember"], outline="")
         hero.create_text(
             28, 156, anchor="w",
-            text=f"v{__version__}  ·  free forever  ·  www.tuxgenie.com",
+            text=f"v{__version__}  ·  free forever",
             fill="#9fd8de", font=f_tip,
         )
 
     hero.bind("<Configure>", paint_hero)
+
+    # Real clickable site link (canvas text cannot host a stable href)
+    site_bar = tk.Frame(root, bg=C["hero0"])
+    site_bar.pack(fill="x")
+    site_lbl = tk.Label(
+        site_bar,
+        text="www.tuxgenie.com  →  open in browser",
+        font=f_tip, fg="#b8eef2", bg=C["hero0"],
+        cursor="hand2", pady=4,
+    )
+    site_lbl.pack(anchor="w", padx=28)
+    site_lbl.bind("<Button-1>", lambda _e: _gui_open_url())
 
     # ── Body ────────────────────────────────────────────────────────────────
     body = tk.Frame(root, bg=C["mist"])
@@ -13814,14 +13860,23 @@ def main():
 
     session_log: list = []
     feature_map      = {num: fn   for num, _, name, _, fn in MENU_ITEMS}
-    keyword_map      = {kw:  fn   for _, kw, name, _, fn  in MENU_ITEMS}
+    keyword_map      = menu_keyword_map()
     feature_name_map = {num: name for num, _, name, _, _  in MENU_ITEMS}
     feature_kw_map   = {num: kw   for num, kw, _, _, _    in MENU_ITEMS}
+    # Reverse map: callable → display name / keyword (for history)
+    _fn_name = {fn: name for _, _, name, _, fn in MENU_ITEMS}
+    _fn_kw   = {fn: kw   for _, kw, _, _, fn in MENU_ITEMS}
 
     # ── One-shot mode: tuxgenie "describe problem" ────────────────────────────
     if args.issue:
         if args.issue.lower() in ("share-fix", "sharefix"):
             feat_share_fix()
+            return
+        # Exact menu keyword (e.g. tuxgenie health) → direct feature, never AI.
+        _kw_fn = keyword_map.get(args.issue.strip().lower())
+        if _kw_fn is not None:
+            _kw_fn(backend, bctx, session_log)
+            save_session(session_log)
             return
         if not try_passthrough(args.issue, session_log, backend, bctx):
             agentic_engine(backend, args.issue, bctx, session_log)
@@ -13909,8 +13964,8 @@ def main():
         if choice.lower() in ("m", "monitor"):
             feat_monitor(); continue
 
-        # !! — fix the last failed command (or handle "!! fix: ..." from tg shell function)
-        if choice in ("!!", "fix", "why") or choice.lower().startswith("!! "):
+        # !! / why — fix the last failed command (NOT bare "fix": that is menu #1).
+        if is_last_failed_trigger(choice):
             if choice.lower().startswith("!! "):
                 # Input came from the external tg shell function — pass straight to AI
                 agentic_engine(backend, choice, bctx, session_log)
@@ -13932,6 +13987,7 @@ def main():
             continue
 
         try:
+            _ck = choice.lower()
             if choice in feature_map:
                 fn = feature_map[choice]
                 if fn is None:
@@ -13940,6 +13996,16 @@ def main():
                 fn(backend, bctx, session_log)
                 save_session(session_log)
                 _history_append(feature_name_map.get(choice, choice), feature_kw_map.get(choice, choice))
+            elif _ck in keyword_map:
+                # Exact menu keyword (health, apps, settings, …) — including feeds
+                # from the Unified Shell / GUI. Never send these to AI.
+                fn = keyword_map[_ck]
+                if fn is None:
+                    continue
+                _active_feature = _fn_kw.get(fn, _ck)
+                fn(backend, bctx, session_log)
+                save_session(session_log)
+                _history_append(_fn_name.get(fn, choice), _fn_kw.get(fn, _ck))
             elif choice.isdigit():
                 # A bare number that isn't a menu item is almost always a mis-typed
                 # menu pick — most often a catalog app id typed at the top level
@@ -13963,7 +14029,9 @@ def main():
             _restore_terminal()
             print(f"\n  {YELLOW}Cancelled — back to menu.{R}")
             continue
-        print(f"\n  {DIM}Type a number or describe a problem  {DIM}·{R}  {BOLD}menu{R}{DIM} = start screen  ·  {BOLD}k{R}{DIM}=key  ·  {BOLD}u{R}{DIM}=update  ·  {RED}{BOLD}q{R}{DIM}=quit{R}")
+        print(f"\n  {DIM}Type a number, a keyword (health, apps…), or describe a problem  "
+              f"{DIM}·{R}  {BOLD}menu{R}{DIM} = start screen  ·  {BOLD}k{R}{DIM}=key  ·  "
+              f"{BOLD}u{R}{DIM}=update  ·  {RED}{BOLD}q{R}{DIM}=quit{R}")
 
     save_session(session_log)
 

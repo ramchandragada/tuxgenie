@@ -17,12 +17,13 @@ import shutil
 import sys
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.83.0"
+VERSION = "6.84.0"
 
-# Keep in sync with tuxgenie._BEGINNER_GUI_ACTIONS (keywords the live CLI accepts).
+# Exact menu keywords the interactive ❯ prompt routes to feat_* (never AI).
+# Keep payloads in sync with tuxgenie.MENU_ITEMS keywords / letter shortcuts.
 ACTIONS = [
     {"id": "fix", "label": "Fix a problem", "tip": "Describe what's wrong in plain English",
-     "kind": "text", "payload": "", "accent": "#0d8a9a"},
+     "kind": "kw", "payload": "fix", "accent": "#0d8a9a"},
     {"id": "health", "label": "Health check", "tip": "CPU, RAM, disk, services",
      "kind": "kw", "payload": "health", "accent": "#148f6a"},
     {"id": "network", "label": "Wi-Fi / Internet", "tip": "Can't connect? Safe scan + fixes",
@@ -217,6 +218,10 @@ def _shell_html(version: str) -> str:
   .hint {{
     margin: 8px 0 0; font-size: .75rem; color: var(--muted);
   }}
+  a.site {{
+    color: #9fd8de; text-decoration: underline; cursor: pointer;
+  }}
+  a.site:hover {{ color: #fff; }}
   .sec {{
     padding: 6px 18px 4px; font-size: .72rem; letter-spacing: .1em;
     text-transform: uppercase; color: var(--muted); font-weight: 700;
@@ -253,7 +258,7 @@ def _shell_html(version: str) -> str:
   .tile .go {{
     display: inline-block; margin-top: 8px; font-size: .72rem; font-weight: 700;
     color: #fff; background: var(--accent, var(--teal1));
-    padding: 4px 10px; border-radius: 999px;
+    padding: 4px 10px; border-radius: 8px;
   }}
   .status {{
     flex: 0 0 auto; padding: 8px 16px 10px;
@@ -273,7 +278,9 @@ def _shell_html(version: str) -> str:
     <h1 class="brand">TuxGenie</h1>
     <p class="tag">Linux made easy — ask in plain English</p>
     <div class="underline"></div>
-    <div class="meta">v{version} · live terminal on the right · free forever</div>
+    <div class="meta">v{version} · live terminal on the right ·
+      <a class="site" href="https://www.tuxgenie.com" id="siteLink">www.tuxgenie.com</a>
+    </div>
   </header>
 
   <section class="ask">
@@ -327,13 +334,13 @@ def _shell_html(version: str) -> str:
   }}
 
   function runAction(a) {{
-    setStatus('<strong>Starting</strong> — ' + a.label);
-    if (a.kind === 'text') {{
+    setStatus('<strong>Starting</strong> — ' + a.label + ' (direct, no AI)');
+    if (a.kind === 'text' && !(a.payload || '').trim()) {{
       q.focus();
       setStatus('<strong>Type your problem</strong> above, then Ask →');
       return;
     }}
-    post({{ op: 'run', kind: a.kind, payload: a.payload, label: a.label }});
+    post({{ op: 'run', kind: a.kind || 'kw', payload: a.payload, label: a.label }});
   }}
 
   ACTIONS.forEach((a, i) => {{
@@ -342,7 +349,7 @@ def _shell_html(version: str) -> str:
     el.className = 'tile';
     el.style.setProperty('--accent', a.accent || '#0a7a8a');
     el.style.setProperty('--i', i);
-    el.innerHTML = '<div class="name"></div><p class="tip"></p><span class="go">Open →</span>';
+    el.innerHTML = '<div class="name"></div><p class="tip"></p><span class="go">Run →</span>';
     el.querySelector('.name').textContent = a.label;
     el.querySelector('.tip').textContent = a.tip;
     el.addEventListener('click', () => runAction(a));
@@ -353,6 +360,13 @@ def _shell_html(version: str) -> str:
   q.addEventListener('keydown', (e) => {{
     if (e.key === 'Enter') runText(q.value);
   }});
+  const site = document.getElementById('siteLink');
+  if (site) {{
+    site.addEventListener('click', (e) => {{
+      e.preventDefault();
+      post({{ op: 'open', payload: 'https://www.tuxgenie.com' }});
+    }});
+  }}
   q.focus();
 </script>
 </body>
@@ -378,6 +392,8 @@ class UnifiedShell:
         self.term = None
         self._pos_set = False
         self._tg = _resolve_tuxgenie()
+        self._feed_ready = False
+        self._feed_queue = []
 
         self.app = Gtk.Application(
             application_id=APP_ID,
@@ -452,12 +468,22 @@ class UnifiedShell:
         return frame
 
     def _on_webkit_msg(self, _manager, message):
+        raw = ""
         try:
             js = message.get_js_value()
-            raw = js.to_string() if js is not None else ""
+            if js is not None:
+                try:
+                    raw = js.to_json(0)
+                except Exception:
+                    raw = js.to_string() if hasattr(js, "to_string") else str(js)
         except Exception:
+            raw = ""
+        if not raw:
             try:
-                raw = str(message)
+                # Older WebKit: get_value() / GVariant-ish
+                val = message.get_value() if hasattr(message, "get_value") else None
+                if val is not None:
+                    raw = str(val)
             except Exception:
                 return
         self._handle_payload(raw)
@@ -467,19 +493,40 @@ class UnifiedShell:
             msg = json.loads(raw) if isinstance(raw, str) else raw
         except Exception:
             return
+        # postMessage sometimes delivers an already-encoded JSON string as the
+        # only value — unwrap one level.
+        if isinstance(msg, str):
+            try:
+                msg = json.loads(msg)
+            except Exception:
+                return
         if not isinstance(msg, dict):
             return
-        if msg.get("op") != "run":
+        op = msg.get("op") or "run"
+        if op == "open":
+            url = (msg.get("payload") or "").strip()
+            self._open_url(url)
+            return
+        if op != "run":
             return
         kind = msg.get("kind") or "text"
         payload = (msg.get("payload") or "").strip()
-        if kind == "kw" and payload:
+        if kind in ("kw", "text") and payload:
             self.feed_line(payload)
-        elif kind == "text" and payload:
-            self.feed_line(payload)
-        elif kind == "text":
-            # Focus ask — nothing to feed
-            pass
+
+    def _open_url(self, url: str):
+        if not url.startswith(("https://", "http://")):
+            return
+        try:
+            import subprocess
+            subprocess.Popen(
+                ["xdg-open", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception as e:
+            print("tuxgenie-app: open url failed:", e, file=sys.stderr)
 
     def _build_gtk_fallback(self):
         """Button deck when WebKit is not installed — still split with VTE."""
@@ -559,11 +606,11 @@ class UnifiedShell:
             self._entry.set_text("")
 
     def _on_action_btn(self, _btn, action):
-        if action.get("kind") == "text":
+        payload = (action.get("payload") or "").strip()
+        if action.get("kind") == "text" and not payload:
             if hasattr(self, "_entry"):
                 self._entry.grab_focus()
             return
-        payload = (action.get("payload") or "").strip()
         if payload:
             self.feed_line(payload)
 
@@ -650,8 +697,9 @@ class UnifiedShell:
         if err is not None:
             print("tuxgenie-app: could not start tuxgenie:", err.message, file=sys.stderr)
             os._exit(3)
-        # Give the prompt a moment, then nudge focus to the terminal briefly
+        # Wait for banner + ❯ prompt before injecting keystrokes from the deck.
         self.GLib.timeout_add(400, self._focus_term)
+        self.GLib.timeout_add(1600, self._mark_feed_ready)
 
     def _focus_term(self):
         try:
@@ -660,10 +708,25 @@ class UnifiedShell:
             pass
         return False
 
+    def _mark_feed_ready(self):
+        self._feed_ready = True
+        pending = list(self._feed_queue)
+        self._feed_queue.clear()
+        for line in pending:
+            self._feed_now(line)
+        return False
+
     def feed_line(self, text: str):
         """Type a line into the live TuxGenie session (as if the user typed it)."""
         if not text or self.term is None:
             return
+        line = text.rstrip("\n")
+        if not self._feed_ready:
+            self._feed_queue.append(line)
+            return
+        self._feed_now(line)
+
+    def _feed_now(self, text: str):
         data = (text.rstrip("\n") + "\n").encode("utf-8", "replace")
         try:
             # VTE ≥ 0.52

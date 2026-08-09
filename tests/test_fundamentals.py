@@ -1049,12 +1049,14 @@ class TestUnifiedShell:
         spec = importlib.util.spec_from_file_location("tuxgenie_shell", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        kws = {kw for _n, kw, _name, _tip, _fn in tg.MENU_ITEMS}
+        kws = set(tg.menu_keyword_map())
         ids = {a["id"] for a in mod.ACTIONS}
         assert "health" in ids and "apps" in ids and "fix" in ids
+        # Every tile must feed an exact keyword (or letter shortcut) — never free text.
         for a in mod.ACTIONS:
-            if a["kind"] == "kw":
-                assert a["payload"] in kws or a["payload"] in ("u", "s", "menu"), a
+            assert a["kind"] == "kw", a
+            assert a["payload"], a
+            assert a["payload"] in kws or a["payload"] in ("u", "s", "menu"), a
 
     def test_shell_html_is_self_contained(self):
         path = os.path.join(ROOT, "tuxgenie_shell.py")
@@ -1064,8 +1066,15 @@ class TestUnifiedShell:
         spec.loader.exec_module(mod)
         html = mod._shell_html(mod.VERSION)
         assert "TuxGenie" in html
-        assert "http://" not in html and "https://" not in html
+        # Only the official site link is allowed (opened via xdg-open, not CDN/JS).
+        assert "http://" not in html
+        assert "https://www.tuxgenie.com" in html
+        # No third-party / CDN URLs — every https must be the official site.
+        import re
+        for url in re.findall(r"https://[^\s\"']+", html):
+            assert url.startswith("https://www.tuxgenie.com"), url
         assert "webkit.messageHandlers.tuxgenie" in html
+        assert "Run →" in html
         assert mod.VERSION in html
 
     def test_create_deb_ships_shell_as_app(self):
@@ -1074,3 +1083,32 @@ class TestUnifiedShell:
         assert '"./usr/lib/tuxgenie/tuxgenie_shell.py"' in src or \
                "./usr/lib/tuxgenie/tuxgenie_shell.py" in src
         assert "Unified Shell" in src or "unified" in src.lower()
+
+
+class TestInteractiveKeywordRouting:
+    """GUI/shell feed keywords at ❯ — must hit feat_* directly, never AI."""
+
+    def test_menu_keyword_map_covers_shell_and_gui_tiles(self):
+        km = tg.menu_keyword_map()
+        for kw in ("health", "network", "sound", "drivers", "perf", "apps",
+                   "remove", "ai", "backup", "updates", "fix", "settings"):
+            assert kw in km, kw
+            assert callable(km[kw])
+
+    def test_bare_fix_is_menu_feature_not_last_failed(self):
+        assert tg.is_last_failed_trigger("fix") is False
+        assert tg.is_last_failed_trigger("!!") is True
+        assert tg.is_last_failed_trigger("why") is True
+        assert tg.is_last_failed_trigger("!! fix: boom") is True
+        assert tg.menu_keyword_map()["fix"] is tg.feat_fix
+
+    def test_keywords_do_not_match_passthrough_crisis_phrases(self):
+        # Bare keywords must not be "rescued" only by regex passthrough —
+        # they need exact keyword routing (passthrough wants full phrases).
+        assert tg.try_passthrough("health", [], backend=None, bctx={"pkg_mgr": "apt"}) is False
+        assert tg.try_passthrough("apps", [], backend=None, bctx={"pkg_mgr": "apt"}) is False
+        assert tg.try_passthrough("network", [], backend=None, bctx={"pkg_mgr": "apt"}) is False
+
+    def test_gui_open_url_rejects_non_http(self):
+        assert tg._gui_open_url("javascript:alert(1)") is False
+        assert tg._gui_open_url("/etc/passwd") is False

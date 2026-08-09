@@ -116,6 +116,10 @@ finish the task on Claude — paid, so only after an explicit "yes"
 - Recommends: `python3-gi`, `gir1.2-gtk-3.0`, `gir1.2-vte-2.91`,
   `gir1.2-webkit2-4.1` (WebKit optional — GTK button deck fallback).
 - Approvals (`y/n`) stay in the live terminal pane.
+- **Keyword routing:** tiles feed exact MENU keywords (`health`, `apps`, …).
+  The interactive `❯` loop must resolve those via `menu_keyword_map()` → `feat_*`
+  and must **never** send bare keywords to `agentic_engine`. Bare `fix` is the
+  menu feature; `!!` / `why` are last-failed only.
 
 ## Cost Optimisation Principles
 
