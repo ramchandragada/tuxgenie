@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.87.0"
+VERSION = "6.88.0"
 
 # Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
 ACTIONS = [
@@ -244,8 +244,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   /* ── HOME ── */
   .hero {
-    position: relative; margin: 16px 16px 0; border-radius: 22px;
-    overflow: hidden; min-height: 168px;
+    position: relative; margin: 12px 16px 0; border-radius: 20px;
+    overflow: hidden; min-height: 118px;
     color: #fff;
     background: linear-gradient(135deg, var(--tide0) 0%, var(--tide1) 48%, #0b6f7c 100%);
     box-shadow: var(--shadow);
@@ -264,23 +264,23 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     to { transform: translate3d(3%, 2%, 0) rotate(4deg); }
   }
   .hero svg.wave {
-    position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 54px;
+    position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 40px;
     opacity: .55;
   }
   .hero .copy {
-    position: relative; z-index: 1; padding: 26px 26px 40px;
+    position: relative; z-index: 1; padding: 18px 22px 28px;
     max-width: 34rem;
   }
   .hero h2 {
-    margin: 0; font-size: clamp(1.35rem, 2.8vw, 1.75rem);
+    margin: 0; font-size: clamp(1.2rem, 2.5vw, 1.55rem);
     font-weight: 700; letter-spacing: -.02em; line-height: 1.2;
   }
   .hero p {
-    margin: 8px 0 0; font-size: .95rem; opacity: .88; line-height: 1.4;
+    margin: 6px 0 0; font-size: .88rem; opacity: .88; line-height: 1.35;
     max-width: 28rem;
   }
   .ember-line {
-    margin-top: 14px; height: 3px; width: 72px; border-radius: 3px;
+    margin-top: 10px; height: 3px; width: 64px; border-radius: 3px;
     background: linear-gradient(90deg, var(--ember), var(--ember2));
     animation: sweep 2.4s var(--ease) infinite alternate;
     transform-origin: left;
@@ -291,13 +291,13 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
 
   .ask {
-    margin: -22px 20px 0; position: relative; z-index: 3;
+    margin: -18px 20px 0; position: relative; z-index: 3;
     background: var(--panel);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
     border: 1px solid rgba(255,255,255,.7);
     border-radius: 18px;
-    padding: 14px 14px 12px;
+    padding: 12px 14px 10px;
     box-shadow: 0 18px 40px rgba(3,40,48,.12);
   }
   .ask label {
@@ -335,19 +335,68 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
 
   .sec {
-    padding: 16px 22px 6px; font-size: .7rem; letter-spacing: .12em;
+    padding: 12px 22px 6px; font-size: .7rem; letter-spacing: .12em;
     text-transform: uppercase; color: var(--muted); font-weight: 800;
   }
+
+  /* System pulse — live PC vitals under Ask */
+  .pulse {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px 16px 0;
+  }
+  .pulse-card {
+    appearance: none; border: 1px solid var(--line); border-radius: 14px;
+    background: rgba(255,255,255,.86);
+    padding: 10px 12px; cursor: pointer; text-align: left;
+    font: inherit; color: inherit; min-width: 0;
+    transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
+  }
+  .pulse-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--tide2) 45%, white);
+    box-shadow: 0 10px 22px rgba(3,40,48,.1);
+  }
+  .pulse-card:active { transform: none; }
+  .pulse-card .k {
+    font-size: .65rem; font-weight: 800; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); margin: 0 0 4px;
+  }
+  .pulse-card .v {
+    font-size: 1.05rem; font-weight: 800; letter-spacing: -.02em;
+    color: var(--ink); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pulse-card .s {
+    margin: 3px 0 0; font-size: .72rem; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pulse-card.warn .v { color: var(--ember); }
+  .pulse-card .bar {
+    margin-top: 7px; height: 4px; border-radius: 4px; background: #e2eef1; overflow: hidden;
+  }
+  .pulse-card .bar > i {
+    display: block; height: 100%; width: 0%; border-radius: 4px;
+    background: linear-gradient(90deg, var(--tide2), var(--tide1));
+    transition: width .45s var(--ease);
+  }
+  .pulse-card.warn .bar > i {
+    background: linear-gradient(90deg, var(--ember), var(--ember2));
+  }
+
   .grid {
-    flex: 1; overflow: auto; padding: 4px 14px 18px;
-    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    flex: 1; overflow: auto; padding: 4px 14px 14px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
     align-content: start;
   }
   .tile {
-    appearance: none; border: 1px solid var(--line); border-radius: 16px;
+    appearance: none; border: 1px solid var(--line); border-radius: 14px;
     background: rgba(255,255,255,.78);
-    padding: 14px 14px 14px 16px; cursor: pointer; text-align: left;
+    padding: 12px 12px 12px 14px; cursor: pointer; text-align: left;
     position: relative; overflow: hidden;
+    min-width: 0;
     transition: transform .22s var(--ease), box-shadow .22s, border-color .22s;
     animation: tileIn .5s var(--ease) both;
     animation-delay: calc(var(--i, 0) * 40ms);
@@ -362,24 +411,28 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     background: var(--accent, var(--tide2));
   }
   .tile::after {
-    content: ""; position: absolute; right: -20px; top: -20px;
-    width: 72px; height: 72px; border-radius: 50%;
-    background: color-mix(in srgb, var(--accent, var(--tide2)) 14%, transparent);
+    content: ""; position: absolute; right: -18px; top: -18px;
+    width: 56px; height: 56px; border-radius: 50%;
+    background: color-mix(in srgb, var(--accent, var(--tide2)) 12%, transparent);
+    pointer-events: none;
     transition: transform .35s var(--ease);
   }
   .tile:hover {
-    transform: translateY(-3px);
+    transform: translateY(-2px);
     border-color: color-mix(in srgb, var(--accent, var(--tide2)) 40%, white);
-    box-shadow: 0 16px 32px rgba(3,40,48,.12);
+    box-shadow: 0 12px 26px rgba(3,40,48,.1);
   }
-  .tile:hover::after { transform: scale(1.35); }
+  .tile:hover::after { transform: scale(1.2); }
   .tile:active { transform: translateY(0); }
-  .tile .name { font-weight: 800; font-size: .95rem; margin: 0 0 4px; letter-spacing: -.01em; }
-  .tile .tip { margin: 0; font-size: .76rem; color: var(--muted); line-height: 1.35; }
+  .tile .name {
+    font-weight: 800; font-size: .9rem; margin: 0 0 3px; letter-spacing: -.01em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tile .tip { margin: 0; font-size: .72rem; color: var(--muted); line-height: 1.3; }
   .tile .go {
-    display: inline-block; margin-top: 10px; font-size: .72rem; font-weight: 800;
+    display: inline-block; margin-top: 8px; font-size: .68rem; font-weight: 800;
     color: #fff; background: var(--accent, var(--tide2));
-    padding: 5px 11px; border-radius: 8px; letter-spacing: .02em;
+    padding: 4px 10px; border-radius: 7px; letter-spacing: .02em;
   }
 
   /* ── STORE / MY APPS ── */
@@ -479,8 +532,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .cards { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 420px) {
-    .grid { grid-template-columns: 1fr; }
-    .hero .copy { padding: 22px 18px 36px; }
+    .grid, .pulse { grid-template-columns: 1fr; }
+    .hero .copy { padding: 16px 16px 26px; }
   }
 </style>
 </head>
@@ -525,6 +578,33 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       <p class="hint">Try “install chrome” · “why is it slow?” · or browse the App Store</p>
     </div>
 
+    <div class="sec">This PC</div>
+    <div class="pulse" id="pulse" aria-label="System pulse">
+      <button type="button" class="pulse-card" data-pulse="cpu" title="Open health check">
+        <div class="k">CPU</div>
+        <div class="v" id="pulseCpu">—</div>
+        <div class="s" id="pulseCpuS">sampling…</div>
+        <div class="bar"><i id="pulseCpuBar"></i></div>
+      </button>
+      <button type="button" class="pulse-card" data-pulse="mem" title="Open health check">
+        <div class="k">Memory</div>
+        <div class="v" id="pulseMem">—</div>
+        <div class="s" id="pulseMemS">used / total</div>
+        <div class="bar"><i id="pulseMemBar"></i></div>
+      </button>
+      <button type="button" class="pulse-card" data-pulse="disk" title="Open disk tools">
+        <div class="k">Disk</div>
+        <div class="v" id="pulseDisk">—</div>
+        <div class="s" id="pulseDiskS">used / total</div>
+        <div class="bar"><i id="pulseDiskBar"></i></div>
+      </button>
+      <button type="button" class="pulse-card" data-pulse="pc" title="PC configuration">
+        <div class="k">PC config</div>
+        <div class="v" id="pulsePc">—</div>
+        <div class="s" id="pulsePcS">hardware details →</div>
+      </button>
+    </div>
+
     <div class="sec">Quick actions</div>
     <div class="grid" id="grid"></div>
   </section>
@@ -565,6 +645,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   const status = document.getElementById("status");
   const q = document.getElementById("q");
+  const READY = "<strong>Ready</strong> — installs confirm in the live terminal (y/n).";
+  let pulseActions = { cpu: "health", mem: "health", disk: "disk", pc: "hardware" };
+  let activeTab = "home";
 
   function setStatus(msg) { status.innerHTML = msg; }
 
@@ -585,18 +668,71 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   function showTab(name) {
     if (name === "store-ai") { storeMode = "ai"; name = "store"; }
+    activeTab = name;
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
     document.querySelectorAll(".nav button").forEach(b => {
       b.classList.toggle("active", b.getAttribute("data-tab") === name);
     });
     const panel = document.getElementById("tab-" + name);
     if (panel) panel.classList.add("active");
+    if (name === "home") {
+      setStatus(READY);
+      post({ op: "system-pulse" });
+    }
     if (name === "store") renderStore();
     if (name === "myapps") {
       setStatus("<strong>Scanning</strong> — installed apps…");
       post({ op: "list-installed" });
     }
   }
+
+  function pctClamp(n) {
+    n = Number(n);
+    if (!isFinite(n) || n < 0) return 0;
+    if (n > 100) return 100;
+    return n;
+  }
+
+  function setBar(id, pct, warn) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.width = pctClamp(pct) + "%";
+    const card = el.closest(".pulse-card");
+    if (card) card.classList.toggle("warn", !!warn);
+  }
+
+  window.__setPulse = function(p) {
+    if (!p || typeof p !== "object") return;
+    if (p.actions) pulseActions = p.actions;
+    const cpu = document.getElementById("pulseCpu");
+    const mem = document.getElementById("pulseMem");
+    const disk = document.getElementById("pulseDisk");
+    const pc = document.getElementById("pulsePc");
+    if (cpu) cpu.textContent = (p.cpu_pct != null ? Math.round(p.cpu_pct) + "%" : "—");
+    if (mem) mem.textContent = (p.mem_pct != null ? Math.round(p.mem_pct) + "%" : "—");
+    if (disk) disk.textContent = (p.disk_pct != null ? Math.round(p.disk_pct) + "%" : "—");
+    if (pc) pc.textContent = p.pc_title || "This PC";
+    const cpuS = document.getElementById("pulseCpuS");
+    const memS = document.getElementById("pulseMemS");
+    const diskS = document.getElementById("pulseDiskS");
+    const pcS = document.getElementById("pulsePcS");
+    if (cpuS) cpuS.textContent = p.cpu_label || "";
+    if (memS) memS.textContent = p.mem_label || "";
+    if (diskS) diskS.textContent = p.disk_label || "";
+    if (pcS) pcS.textContent = p.pc_label || "hardware details →";
+    setBar("pulseCpuBar", p.cpu_pct, p.cpu_warn);
+    setBar("pulseMemBar", p.mem_pct, p.mem_warn);
+    setBar("pulseDiskBar", p.disk_pct, p.disk_warn);
+  };
+
+  document.getElementById("pulse").addEventListener("click", (e) => {
+    const card = e.target.closest(".pulse-card[data-pulse]");
+    if (!card) return;
+    const key = card.getAttribute("data-pulse");
+    const kw = pulseActions[key] || key;
+    setStatus("<strong>Starting</strong> — " + (card.querySelector(".k").textContent || kw));
+    post({ op: "run", kind: "kw", payload: kw });
+  });
 
   function runText(text) {
     text = (text || "").trim();
@@ -805,6 +941,10 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       post({ op: "open", payload: "https://www.tuxgenie.com" });
     });
   }
+  post({ op: "system-pulse" });
+  setInterval(function() {
+    if (activeTab === "home") post({ op: "system-pulse" });
+  }, 3000);
   q.focus();
 </script>
 </body>
@@ -950,6 +1090,9 @@ class UnifiedShell:
         if op == "list-installed":
             self._refresh_installed_async()
             return
+        if op == "system-pulse":
+            self._refresh_pulse_async()
+            return
         if op == "install":
             kind = (msg.get("kind") or "app").strip().lower()
             eid = msg.get("id")
@@ -1011,6 +1154,33 @@ class UnifiedShell:
                 self.webview.evaluate_javascript(js, -1, None, None, None, None, None)
             except Exception as e:
                 print("tuxgenie-app: JS push failed:", e, file=sys.stderr)
+        return False
+
+    def _refresh_pulse_async(self):
+        def work():
+            data = {}
+            try:
+                tg = _import_tuxgenie()
+                if tg is not None and hasattr(tg, "gui_system_pulse"):
+                    data = tg.gui_system_pulse() or {}
+            except Exception as e:
+                print("tuxgenie-app: system pulse failed:", e, file=sys.stderr)
+            self.GLib.idle_add(self._push_pulse_js, data)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _push_pulse_js(self, data):
+        if self.webview is None:
+            return False
+        payload = json.dumps(data or {}, ensure_ascii=False)
+        js = "window.__setPulse && window.__setPulse(%s);" % payload
+        try:
+            self.webview.run_javascript(js, None, None, None)
+        except Exception:
+            try:
+                self.webview.evaluate_javascript(js, -1, None, None, None, None, None)
+            except Exception as e:
+                print("tuxgenie-app: pulse JS push failed:", e, file=sys.stderr)
         return False
 
     def _open_url(self, url: str):

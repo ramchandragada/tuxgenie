@@ -1103,6 +1103,33 @@ class TestUnifiedShell:
         assert "webkit.messageHandlers.tuxgenie" in html
         assert mod.VERSION in html
         assert "Brave Browser" in html  # catalog embedded
+        # System pulse widgets + dense 2-col grid (no gutter-bleed decorations)
+        assert 'id="pulse"' in html
+        assert "system-pulse" in html
+        assert "window.__setPulse" in html
+        assert "repeat(2, minmax(0, 1fr))" in html
+        assert "data-pulse=\"cpu\"" in html
+        assert "PC config" in html
+
+    def test_gui_system_pulse_shape(self):
+        p = tg.gui_system_pulse()
+        for key in ("cpu_pct", "cpu_label", "mem_pct", "mem_label",
+                    "disk_pct", "disk_label", "pc_title", "pc_label",
+                    "cpu_warn", "mem_warn", "disk_warn", "actions"):
+            assert key in p, key
+        assert set(p["actions"]) >= {"cpu", "mem", "disk", "pc"}
+        kws = tg.menu_keyword_map()
+        for kw in p["actions"].values():
+            assert kw in kws, kw
+        assert 0 <= float(p["cpu_pct"]) <= 100
+        assert 0 <= float(p["mem_pct"]) <= 100
+        assert 0 <= float(p["disk_pct"]) <= 100
+        assert p["pc_title"]
+        assert " · " in p["pc_label"]
+        # os.uname() must populate kernel/arch (no platform import dependency)
+        left, _, right = p["pc_label"].partition(" · ")
+        assert left and left != "?"
+        assert right and right != "?"
 
     def test_create_deb_ships_shell_as_app(self):
         src = open(os.path.join(ROOT, "create_deb.py")).read()

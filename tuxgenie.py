@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.87.0"
+__version__ = "6.88.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2496,6 +2496,111 @@ def health_ctx() -> dict:
         "zombie_procs":    "ps aux | awk '$8==\"Z\"' | wc -l",
         "temp":            "sensors 2>/dev/null | grep -E 'Core|Package' | head -6",
     })
+
+
+def _cpu_percent_sample(interval: float = 0.12) -> float:
+    """Idle-aware CPU % from /proc/stat (short sample). Falls back to loadavg."""
+    def _read():
+        try:
+            with open("/proc/stat") as f:
+                parts = f.readline().split()
+            # user nice system idle iowait irq softirq steal …
+            nums = [int(x) for x in parts[1:8]]
+            idle = nums[3] + (nums[4] if len(nums) > 4 else 0)
+            total = sum(nums)
+            return idle, total
+        except Exception:
+            return None
+
+    a = _read()
+    if a is None:
+        try:
+            load1 = os.getloadavg()[0]
+            ncpu = os.cpu_count() or 1
+            return min(100.0, round(100.0 * load1 / ncpu, 1))
+        except Exception:
+            return 0.0
+    time.sleep(max(0.05, min(interval, 0.5)))
+    b = _read()
+    if b is None:
+        return 0.0
+    didle = b[0] - a[0]
+    dtotal = b[1] - a[1]
+    if dtotal <= 0:
+        return 0.0
+    return max(0.0, min(100.0, round(100.0 * (1.0 - (didle / dtotal)), 1)))
+
+
+def gui_system_pulse() -> dict:
+    """Fast no-AI snapshot for Unified Shell Home widgets (CPU/mem/disk/PC)."""
+    # Memory
+    mem_total_kb = mem_avail_kb = 0
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    mem_total_kb = int(line.split()[1])
+                elif line.startswith("MemAvailable:"):
+                    mem_avail_kb = int(line.split()[1])
+    except Exception:
+        pass
+    mem_used_kb = max(0, mem_total_kb - mem_avail_kb)
+    mem_pct = round(100.0 * mem_used_kb / mem_total_kb, 1) if mem_total_kb else 0.0
+
+    # Disk (root)
+    try:
+        du = shutil.disk_usage("/")
+        disk_pct = round(100.0 * du.used / du.total, 1) if du.total else 0.0
+        disk_used_gb = round(du.used / (1024 ** 3), 1)
+        disk_total_gb = round(du.total / (1024 ** 3), 1)
+    except Exception:
+        disk_pct = disk_used_gb = disk_total_gb = 0.0
+
+    # OS pretty name
+    pretty = ""
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("PRETTY_NAME="):
+                    pretty = line.split("=", 1)[1].strip().strip('"')
+                    break
+    except Exception:
+        pretty = ""
+    if not pretty:
+        pretty = "Linux"
+
+    try:
+        u = os.uname()
+        kernel = u.release
+        arch = u.machine
+    except Exception:
+        kernel, arch = "?", "?"
+
+    cpu_pct = _cpu_percent_sample()
+    ncpu = os.cpu_count() or 1
+
+    def _gb(kb):
+        return round(kb / (1024 ** 2), 1)
+
+    return {
+        "cpu_pct": cpu_pct,
+        "cpu_label": f"{cpu_pct:.0f}% · {ncpu} cores",
+        "mem_pct": mem_pct,
+        "mem_label": f"{_gb(mem_used_kb):g} / {_gb(mem_total_kb):g} GB",
+        "disk_pct": disk_pct,
+        "disk_label": f"{disk_used_gb:g} / {disk_total_gb:g} GB",
+        "disk_warn": disk_pct >= 90,
+        "mem_warn": mem_pct >= 85,
+        "cpu_warn": cpu_pct >= 85,
+        "pc_title": pretty or "This PC",
+        "pc_label": f"{kernel} · {arch}",
+        "actions": {
+            "cpu": "health",
+            "mem": "health",
+            "disk": "disk",
+            "pc": "hardware",
+        },
+    }
 
 def network_ctx() -> dict:
     gw = _r("ip route | awk '/default/{print $3; exit}'")
