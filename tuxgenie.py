@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "6.84.0"
+__version__ = "6.85.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -11245,6 +11245,176 @@ def feat_install_apps(backend, bctx, slog):
     )
 
 
+def catalog_gui_rows(catalog, *, kind="app"):
+    """Slim catalog rows for the Unified Shell App Store (no prompts/secrets)."""
+    rows = []
+    for e in catalog:
+        methods = []
+        if kind == "app":
+            spec = _CATALOG_INSTALL.get(e.get("name", ""), {}) or {}
+            if spec.get("pkg") or spec.get("deb"):
+                methods.append("native")
+            if spec.get("flatpak"):
+                methods.append("flatpak")
+            if spec.get("snap"):
+                methods.append("snap")
+            if spec.get("script"):
+                methods.append("script")
+            if e.get("name") in _CATALOG_GUIDED:
+                methods.append("guided")
+        rows.append({
+            "id": e["id"],
+            "name": e["name"],
+            "cat": e["cat"],
+            "desc": e.get("desc") or "",
+            "kind": kind,
+            "methods": methods,
+        })
+    return rows
+
+
+def resolve_catalog_entry(ref, catalog):
+    """Resolve a catalog entry by numeric id or unique name substring."""
+    ref = (ref or "").strip()
+    if not ref:
+        return None
+    if ref.isdigit():
+        eid = int(ref)
+        for e in catalog:
+            if e.get("id") == eid:
+                return e
+        return None
+    low = ref.lower()
+    exact = [e for e in catalog if e.get("name", "").lower() == low]
+    if exact:
+        return exact[0]
+    hits = [e for e in catalog if low in e.get("name", "").lower()]
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        warn(f"Several matches for '{ref}' — be more specific "
+             f"(or use the catalog id):")
+        for e in hits[:12]:
+            print(f"   [{e['id']:>3}]  {e['name']}")
+        return None
+    return None
+
+
+def cli_install_catalog_ref(ref, backend, bctx, slog, *, catalog=None,
+                            history_tag="install_apps", item_label="app"):
+    """Install one catalog entry by id/name — used by Unified Shell App Store.
+    Reuses the same deterministic installer + AI fallback as the terminal picker.
+    Confirmations and sudo stay in THIS terminal session."""
+    catalog = APP_CATALOG if catalog is None else catalog
+    entry = resolve_catalog_entry(ref, catalog)
+    if not entry:
+        warn(f"No {item_label} matched '{ref}'. Try a catalog id or full name.")
+        return False
+    hdr(f"Install {entry['name']}")
+    print(f"\n  {BOLD}{entry['name']}{R}  {DIM}({entry['cat']}){R}")
+    print(f"  {DIM}{entry.get('desc', '')}{R}")
+    try:
+        confirm = input(f"\n  {BOLD}Install this {item_label}?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        info("Cancelled — nothing was installed.")
+        return False
+    if confirm not in ("y", "yes"):
+        info("Cancelled — nothing was installed.")
+        return False
+    sudo_state = {"pw": None}
+    section(f"Installing {entry['name']}")
+    try:
+        if not _install_catalog_entry(entry, bctx, sudo_state):
+            agentic_engine(backend, _distro_adapt_prompt(entry["prompt"], bctx), bctx, slog)
+    except KeyboardInterrupt:
+        warn("Cancelled.")
+        return False
+    _history_append(f"Install {entry['name']}", history_tag)
+    return True
+
+
+def cli_remove_app_ref(ref, bctx):
+    """Remove one installed app by id, name, or method:target (GUI My Apps)."""
+    ref = (ref or "").strip()
+    if not ref:
+        warn("Nothing to remove.")
+        return False
+    hdr("Remove App")
+    print(f"\n  {DIM}Scanning installed apps…{R}")
+    apps = _installed_user_apps()
+    if not apps:
+        info("No removable user apps detected.")
+        return False
+    chosen = None
+    if ":" in ref and not ref.startswith("http"):
+        method, target = ref.split(":", 1)
+        method, target = method.strip().lower(), target.strip()
+        for a in apps:
+            if a["method"] == method and a["target"] == target:
+                chosen = a
+                break
+    elif ref.isdigit():
+        eid = int(ref)
+        for a in apps:
+            if a.get("id") == eid:
+                chosen = a
+                break
+    else:
+        low = ref.lower()
+        exact = [a for a in apps if a["name"].lower() == low or a["target"].lower() == low]
+        if len(exact) == 1:
+            chosen = exact[0]
+        elif len(exact) > 1:
+            warn(f"Several matches for '{ref}':")
+            for a in exact[:12]:
+                print(f"   [{a['id']:>3}]  {a['name']}  {DIM}{a['method']}:{a['target']}{R}")
+            return False
+        else:
+            hits = [a for a in apps if low in a["name"].lower() or low in a["target"].lower()]
+            if len(hits) == 1:
+                chosen = hits[0]
+            elif len(hits) > 1:
+                warn(f"Several matches for '{ref}':")
+                for a in hits[:12]:
+                    print(f"   [{a['id']:>3}]  {a['name']}  {DIM}{a['method']}:{a['target']}{R}")
+                return False
+    if not chosen:
+        warn(f"No installed app matched '{ref}'.")
+        return False
+    print(f"\n  {BOLD}{YELLOW}⚠  You're about to REMOVE:{R}")
+    print(f"   {RED}•{R} {BOLD}{chosen['name']}{R}  {DIM}({chosen['desc']}){R}")
+    try:
+        confirm = input(f"\n  {BOLD}Uninstall this app?{R} [y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        info("Cancelled — nothing was removed.")
+        return False
+    if confirm not in ("y", "yes"):
+        info("Cancelled — nothing was removed.")
+        return False
+    cmd, root = _remove_cmd_for(chosen["method"], chosen["target"], chosen["root"])
+    if not cmd or is_dangerous(cmd):
+        warn(f"No safe removal method for {chosen['name']}.")
+        return False
+    section(f"Removing {chosen['name']}")
+    print(f"  {DIM}$ {cmd}{R}")
+    pw = get_or_cache_sudo_password() if root else None
+    try:
+        rc, _, err_out = run_cmd_live(cmd, sudo_password=pw, timeout=900)
+    except KeyboardInterrupt:
+        warn("Cancelled.")
+        return False
+    if rc in (130, 143) or (rc == -1 and "Cancelled" in (err_out or "")):
+        warn("Cancelled.")
+        return False
+    if rc == 0:
+        ok(f"{chosen['name']} removed.")
+        _offer_leftover_cleanup([chosen])
+        _history_append(f"Remove {chosen['name']}", "remove_apps")
+        return True
+    warn(f"Couldn't remove {chosen['name']} (exit {rc}).")
+    return False
+
+
 def _select_entries(entries, item_label):
     """Multi-select picker over a list of {id,name,cat,desc} rows, with search —
     the same UX as the install catalog. Returns the chosen list, or None if the
@@ -13963,6 +14133,25 @@ def main():
             feat_shell_integration(); continue
         if choice.lower() in ("m", "monitor"):
             feat_monitor(); continue
+
+        # Unified Shell App Store / My Apps — direct install/remove by id or name.
+        # Confirmations + sudo stay in this terminal; catalog engine unchanged.
+        _cl = choice.lower()
+        if _cl.startswith("install-app ") or _cl.startswith("install-ai "):
+            ref = choice.split(None, 1)[1]
+            cat = AI_CATALOG if _cl.startswith("install-ai ") else APP_CATALOG
+            tag = "install_ai" if _cl.startswith("install-ai ") else "install_apps"
+            label = "AI tool" if _cl.startswith("install-ai ") else "app"
+            cli_install_catalog_ref(
+                ref, backend, bctx, session_log,
+                catalog=cat, history_tag=tag, item_label=label,
+            )
+            save_session(session_log)
+            continue
+        if _cl.startswith("remove-app "):
+            cli_remove_app_ref(choice.split(None, 1)[1], bctx)
+            save_session(session_log)
+            continue
 
         # !! / why — fix the last failed command (NOT bare "fix": that is menu #1).
         if is_last_failed_trigger(choice):

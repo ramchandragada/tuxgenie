@@ -1052,11 +1052,14 @@ class TestUnifiedShell:
         kws = set(tg.menu_keyword_map())
         ids = {a["id"] for a in mod.ACTIONS}
         assert "health" in ids and "apps" in ids and "fix" in ids
-        # Every tile must feed an exact keyword (or letter shortcut) — never free text.
+        # kw tiles → exact menu keywords; tab tiles → Store / My Apps panes.
         for a in mod.ACTIONS:
-            assert a["kind"] == "kw", a
+            assert a["kind"] in ("kw", "tab"), a
             assert a["payload"], a
-            assert a["payload"] in kws or a["payload"] in ("u", "s", "menu"), a
+            if a["kind"] == "kw":
+                assert a["payload"] in kws or a["payload"] in ("u", "s", "menu"), a
+            else:
+                assert a["payload"] in ("store", "myapps", "store-ai"), a
 
     def test_shell_html_is_self_contained(self):
         path = os.path.join(ROOT, "tuxgenie_shell.py")
@@ -1064,18 +1067,21 @@ class TestUnifiedShell:
         spec = importlib.util.spec_from_file_location("tuxgenie_shell", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        html = mod._shell_html(mod.VERSION)
+        rows = tg.catalog_gui_rows(tg.APP_CATALOG[:3])
+        ai = tg.catalog_gui_rows(tg.AI_CATALOG[:2], kind="ai")
+        html = mod._shell_html(mod.VERSION, rows, ai)
         assert "TuxGenie" in html
+        assert "App Store" in html and "My Apps" in html
+        assert "install-app" not in html  # install goes via bridge op, not baked cmds
         # Only the official site link is allowed (opened via xdg-open, not CDN/JS).
         assert "http://" not in html
         assert "https://www.tuxgenie.com" in html
-        # No third-party / CDN URLs — every https must be the official site.
         import re
         for url in re.findall(r"https://[^\s\"']+", html):
             assert url.startswith("https://www.tuxgenie.com"), url
         assert "webkit.messageHandlers.tuxgenie" in html
-        assert "Run →" in html
         assert mod.VERSION in html
+        assert "Brave Browser" in html  # catalog embedded
 
     def test_create_deb_ships_shell_as_app(self):
         src = open(os.path.join(ROOT, "create_deb.py")).read()
@@ -1112,3 +1118,43 @@ class TestInteractiveKeywordRouting:
     def test_gui_open_url_rejects_non_http(self):
         assert tg._gui_open_url("javascript:alert(1)") is False
         assert tg._gui_open_url("/etc/passwd") is False
+
+
+class TestGuiAppStoreRouting:
+    """In-GUI App Store must reuse catalog engine via install-app / remove-app."""
+
+    def test_catalog_gui_rows_are_slim(self):
+        rows = tg.catalog_gui_rows(tg.APP_CATALOG)
+        assert len(rows) == len(tg.APP_CATALOG)
+        r = rows[0]
+        assert set(r) >= {"id", "name", "cat", "desc", "kind", "methods"}
+        assert "prompt" not in r
+
+    def test_resolve_catalog_entry_by_id_and_name(self):
+        e = tg.resolve_catalog_entry("20", tg.APP_CATALOG)
+        assert e and e["name"] == "VLC Media Player"
+        e2 = tg.resolve_catalog_entry("vlc media player", tg.APP_CATALOG)
+        assert e2 and e2["id"] == 20
+        assert tg.resolve_catalog_entry("no-such-app-zzzz", tg.APP_CATALOG) is None
+
+    def test_cli_install_cancelled(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda *_a, **_k: "n")
+        called = []
+        monkeypatch.setattr(tg, "_install_catalog_entry", lambda *a, **k: called.append(1))
+        monkeypatch.setattr(tg, "agentic_engine", lambda *a, **k: called.append("ai"))
+        ok = tg.cli_install_catalog_ref("20", backend=None, bctx={"pkg_mgr": "apt"}, slog=[])
+        assert ok is False
+        assert called == []
+
+    def test_cli_install_uses_deterministic_engine(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda *_a, **_k: "y")
+        seen = []
+        monkeypatch.setattr(
+            tg, "_install_catalog_entry",
+            lambda entry, bctx, sudo: seen.append(entry["name"]) or True,
+        )
+        monkeypatch.setattr(tg, "agentic_engine", lambda *a, **k: seen.append("ai"))
+        monkeypatch.setattr(tg, "_history_append", lambda *a, **k: None)
+        ok = tg.cli_install_catalog_ref("20", backend=None, bctx={"pkg_mgr": "apt"}, slog=[])
+        assert ok is True
+        assert seen == ["VLC Media Player"]

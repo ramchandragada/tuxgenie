@@ -120,6 +120,11 @@ finish the task on Claude — paid, so only after an explicit "yes"
   The interactive `❯` loop must resolve those via `menu_keyword_map()` → `feat_*`
   and must **never** send bare keywords to `agentic_engine`. Bare `fix` is the
   menu feature; `!!` / `why` are last-failed only.
+- **App Store (GUI):** WebKit tabs Home / App Store / My Apps. Install feeds
+  `install-app <id>` or `install-ai <id>`; Remove feeds `remove-app method:target`.
+  Those commands call `cli_install_catalog_ref` / `cli_remove_app_ref` — same
+  deterministic catalog engine as the terminal picker. Approvals stay in the
+  right-hand VTE. Do not reimplement install logic in the shell.
 
 ## Cost Optimisation Principles
 

@@ -5,8 +5,9 @@ TuxGenie Unified Shell — flagship desktop app.
 
   ~60% modern control deck (WebKitGTK)  |  ~40% live VTE terminal
 
-Clicking an action feeds the already-running TuxGenie session on the right.
-No extra terminal windows. Falls back to a GTK button deck if WebKit is missing.
+Tabs: Home (ask + quick actions) · App Store · My Apps.
+Install/Remove clicks feed the live TuxGenie session on the right
+(install-app / remove-app). Terminal core is unchanged.
 Exit code 3 = GTK/VTE unavailable (launcher falls back further).
 """
 from __future__ import annotations
@@ -15,12 +16,12 @@ import json
 import os
 import shutil
 import sys
+import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.84.0"
+VERSION = "6.85.0"
 
-# Exact menu keywords the interactive ❯ prompt routes to feat_* (never AI).
-# Keep payloads in sync with tuxgenie.MENU_ITEMS keywords / letter shortcuts.
+# Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
 ACTIONS = [
     {"id": "fix", "label": "Fix a problem", "tip": "Describe what's wrong in plain English",
      "kind": "kw", "payload": "fix", "accent": "#0d8a9a"},
@@ -34,12 +35,12 @@ ACTIONS = [
      "kind": "kw", "payload": "drivers", "accent": "#0f6f8c"},
     {"id": "perf", "label": "My PC is slow", "tip": "Scan + safe speed fixes",
      "kind": "kw", "payload": "perf", "accent": "#c45c12"},
-    {"id": "apps", "label": "Install apps", "tip": "200-app catalog — Chrome, Steam, etc.",
-     "kind": "kw", "payload": "apps", "accent": "#d4620f"},
-    {"id": "remove", "label": "Remove apps", "tip": "Uninstall apps you no longer need",
-     "kind": "kw", "payload": "remove", "accent": "#b54a2a"},
-    {"id": "ai", "label": "AI tools catalog", "tip": "Ollama, Cursor, Claude Code, and more",
-     "kind": "kw", "payload": "ai", "accent": "#0e7c86"},
+    {"id": "apps", "label": "App Store", "tip": "Browse & install 200+ apps",
+     "kind": "tab", "payload": "store", "accent": "#d4620f"},
+    {"id": "remove", "label": "My Apps", "tip": "Uninstall apps from this PC",
+     "kind": "tab", "payload": "myapps", "accent": "#b54a2a"},
+    {"id": "ai", "label": "AI tools", "tip": "Ollama, Cursor, Claude Code, and more",
+     "kind": "tab", "payload": "store-ai", "accent": "#0e7c86"},
     {"id": "backup", "label": "Backup settings", "tip": "Create or restore a config snapshot",
      "kind": "kw", "payload": "backup", "accent": "#1b7a4a"},
     {"id": "updates", "label": "System updates", "tip": "Check and install OS updates",
@@ -52,13 +53,14 @@ ACTIONS = [
      "kind": "kw", "payload": "menu", "accent": "#1a2744"},
 ]
 
+# GTK fallback (no WebKit): tab → terminal catalog keyword
+_TAB_FALLBACK_KW = {"store": "apps", "myapps": "remove", "store-ai": "ai"}
+
 
 def _resolve_tuxgenie() -> str:
-    """Absolute path/command used inside the VTE bash -lc session."""
     which = shutil.which("tuxgenie")
     if which:
         return which
-    # Dev / pip: run this repo's tuxgenie.py next to us or on sys.path.
     here = os.path.dirname(os.path.abspath(__file__))
     cand = os.path.join(here, "tuxgenie.py")
     if os.path.isfile(cand):
@@ -69,8 +71,45 @@ def _resolve_tuxgenie() -> str:
     return "tuxgenie"
 
 
+def _import_tuxgenie():
+    """Load tuxgenie module (sibling file or installed package)."""
+    try:
+        import tuxgenie as tg  # type: ignore
+        return tg
+    except Exception:
+        pass
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tuxgenie.py")
+    if not os.path.isfile(path):
+        path = "/usr/lib/tuxgenie/tuxgenie.py"
+    if not os.path.isfile(path):
+        return None
+    spec = importlib.util.spec_from_file_location("tuxgenie", path)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    # Avoid anthropic hard-fail in odd envs
+    if "anthropic" not in sys.modules:
+        import types
+        sys.modules["anthropic"] = types.ModuleType("anthropic")
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_store_catalogs():
+    tg = _import_tuxgenie()
+    if tg is None:
+        return [], []
+    try:
+        apps = tg.catalog_gui_rows(tg.APP_CATALOG, kind="app")
+        ai = tg.catalog_gui_rows(tg.AI_CATALOG, kind="ai")
+        return apps, ai
+    except Exception as e:
+        print("tuxgenie-app: catalog load failed:", e, file=sys.stderr)
+        return [], []
+
+
 def _load_gi():
-    """Import Gtk + Vte; optionally WebKit2. Raises on hard failure."""
     import gi
     gi.require_version("Gtk", "3.0")
     gi.require_version("Vte", "2.91")
@@ -87,291 +126,485 @@ def _load_gi():
     return Gtk, Gdk, Vte, GLib, Gio, webkit
 
 
-def _shell_html(version: str) -> str:
-    """Ultra-modern control deck — brand-first, animated, teal/ember (no purple)."""
-    actions_json = json.dumps(ACTIONS)
-    # NOTE: keep this HTML/CSS self-contained; no external network.
-    return f"""<!DOCTYPE html>
+def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
+    """Self-contained App Store deck — no external network/CDN."""
+    html = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>TuxGenie</title>
 <style>
-  :root {{
+  :root {
     --ink: #0b1520;
     --muted: #5a6d78;
     --mist: #e8f1f4;
-    --panel: rgba(255,255,255,.92);
+    --panel: rgba(255,255,255,.94);
     --ember: #e85d04;
     --ember2: #ff7a1a;
     --teal0: #063642;
     --teal1: #0a7a8a;
     --teal2: #14b8c4;
     --line: rgba(12,46,56,.12);
-    --shadow: 0 18px 50px rgba(6,54,66,.18);
-  }}
-  * {{ box-sizing: border-box; }}
-  html, body {{
+    --danger: #b54a2a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
     margin: 0; height: 100%;
     font-family: "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
     color: var(--ink);
     background:
       radial-gradient(1200px 500px at 10% -10%, #1ad0de55, transparent 55%),
       radial-gradient(900px 420px at 110% 0%, #ff7a1a33, transparent 50%),
-      linear-gradient(165deg, #f3f8fa 0%, #e4eef2 45%, #dce9ee 100%);
-    overflow: hidden;
-  }}
-  .app {{
-    height: 100%; display: flex; flex-direction: column;
-    animation: rise .55s cubic-bezier(.2,.8,.2,1) both;
-  }}
-  @keyframes rise {{
-    from {{ opacity: 0; transform: translateY(12px); }}
-    to   {{ opacity: 1; transform: none; }}
-  }}
-  .hero {{
-    position: relative; flex: 0 0 auto;
-    padding: 22px 22px 18px;
-    color: #fff;
-    background: linear-gradient(135deg, var(--teal0) 0%, var(--teal1) 55%, var(--teal2) 100%);
-    overflow: hidden;
-  }}
-  .hero::before, .hero::after {{
-    content: ""; position: absolute; border-radius: 50%;
-    filter: blur(2px); pointer-events: none;
-  }}
-  .hero::before {{
-    width: 220px; height: 220px; right: -40px; top: -70px;
-    background: #14b8c488;
-    animation: drift 7s ease-in-out infinite alternate;
-  }}
-  .hero::after {{
-    width: 160px; height: 160px; left: -50px; bottom: -80px;
-    background: #ff7a1a33;
-    animation: drift 9s ease-in-out infinite alternate-reverse;
-  }}
-  @keyframes drift {{
-    from {{ transform: translate(0,0) scale(1); }}
-    to   {{ transform: translate(-18px, 10px) scale(1.06); }}
-  }}
-  .brand {{
-    position: relative; z-index: 1;
-    font-size: 2rem; font-weight: 800; letter-spacing: -.03em;
-    margin: 0 0 4px; text-shadow: 0 2px 18px rgba(0,0,0,.2);
-  }}
-  .tag {{
-    position: relative; z-index: 1;
-    margin: 0; opacity: .92; font-size: .95rem; font-weight: 500;
-  }}
-  .underline {{
-    position: relative; z-index: 1;
-    margin-top: 12px; height: 3px; width: 140px; border-radius: 99px;
-    background: linear-gradient(90deg, var(--ember), var(--ember2), transparent);
-    animation: sweep 2.4s ease-in-out infinite;
-    transform-origin: left center;
-  }}
-  @keyframes sweep {{
-    0%,100% {{ transform: scaleX(.7); opacity: .85; }}
-    50% {{ transform: scaleX(1.15); opacity: 1; }}
-  }}
-  .meta {{
-    position: relative; z-index: 1;
-    margin-top: 10px; font-size: .75rem; opacity: .75;
-  }}
-  .ask {{
-    margin: 14px 16px 8px; padding: 14px 14px 12px;
-    background: var(--panel); border: 1px solid var(--line);
-    border-radius: 16px; box-shadow: var(--shadow);
-    border-left: 4px solid var(--ember);
-    backdrop-filter: blur(8px);
-  }}
-  .ask h2 {{
-    margin: 0 0 8px; font-size: .78rem; letter-spacing: .08em;
-    text-transform: uppercase; color: var(--muted); font-weight: 700;
-  }}
-  .row {{ display: flex; gap: 8px; }}
-  .row input {{
+      linear-gradient(165deg, #f3f8fa 0%, #e6eef2 55%, #dce8ec 100%);
+  }
+  .app { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+  .hero {
+    flex: 0 0 auto; padding: 16px 18px 10px;
+    background: linear-gradient(135deg, var(--teal0), #0a7a8a 55%, #12a3b0);
+    color: #fff; position: relative; overflow: hidden;
+  }
+  .hero::after {
+    content: ""; position: absolute; right: -40px; top: -50px;
+    width: 180px; height: 180px; border-radius: 50%;
+    background: #14b8c455;
+  }
+  .brand { margin: 0; font-size: 1.75rem; font-weight: 800; letter-spacing: -.02em; }
+  .tag { margin: 4px 0 0; opacity: .9; font-size: .92rem; }
+  .meta { margin-top: 8px; font-size: .75rem; opacity: .85; }
+  a.site { color: #b8eef2; }
+  .tabs {
+    display: flex; gap: 6px; padding: 10px 12px 0; flex: 0 0 auto;
+  }
+  .tabs button {
+    border: 1px solid var(--line); background: var(--panel);
+    border-radius: 999px; padding: 8px 14px; font-weight: 700;
+    font-size: .8rem; cursor: pointer; color: var(--ink);
+  }
+  .tabs button.active {
+    background: linear-gradient(135deg, var(--teal1), var(--teal2));
+    color: #fff; border-color: transparent;
+  }
+  .panel { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .panel.active { display: flex; }
+  .ask { padding: 12px 16px 8px; }
+  .ask h2 { margin: 0 0 8px; font-size: .95rem; }
+  .row { display: flex; gap: 8px; }
+  .row input {
     flex: 1; border: 1px solid var(--line); border-radius: 12px;
-    padding: 12px 14px; font-size: .95rem; outline: none;
-    background: #fff; color: var(--ink);
-    transition: border-color .2s, box-shadow .2s;
-  }}
-  .row input:focus {{
-    border-color: var(--teal1);
-    box-shadow: 0 0 0 3px #0a7a8a22;
-  }}
-  .row button#askBtn {{
-    border: 0; border-radius: 12px; padding: 0 18px;
+    padding: 12px 14px; font-size: .95rem; background: #fff;
+  }
+  .row input:focus { outline: none; border-color: var(--teal1); box-shadow: 0 0 0 3px #0a7a8a22; }
+  .row button#askBtn, .btn-primary {
+    border: 0; border-radius: 12px; padding: 0 16px;
     background: linear-gradient(135deg, var(--ember), var(--ember2));
     color: #fff; font-weight: 700; cursor: pointer;
-    box-shadow: 0 8px 20px #e85d0444;
-    transition: transform .15s, filter .15s;
-    animation: breath 2.2s ease-in-out infinite;
-  }}
-  .row button#askBtn:hover {{ transform: translateY(-1px); filter: brightness(1.05); }}
-  .row button#askBtn:active {{ transform: translateY(1px); }}
-  @keyframes breath {{
-    0%,100% {{ box-shadow: 0 8px 20px #e85d0444; }}
-    50% {{ box-shadow: 0 10px 28px #ff7a1a66; }}
-  }}
-  .hint {{
-    margin: 8px 0 0; font-size: .75rem; color: var(--muted);
-  }}
-  a.site {{
-    color: #9fd8de; text-decoration: underline; cursor: pointer;
-  }}
-  a.site:hover {{ color: #fff; }}
-  .sec {{
-    padding: 6px 18px 4px; font-size: .72rem; letter-spacing: .1em;
+  }
+  .hint { margin: 8px 0 0; font-size: .75rem; color: var(--muted); }
+  .sec {
+    padding: 6px 16px 4px; font-size: .72rem; letter-spacing: .1em;
     text-transform: uppercase; color: var(--muted); font-weight: 700;
-  }}
-  .grid {{
+  }
+  .grid {
     flex: 1; overflow: auto; padding: 4px 12px 16px;
     display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
     align-content: start;
-  }}
-  .tile {{
+  }
+  .tile {
     position: relative; border: 1px solid var(--line); border-radius: 14px;
     background: var(--panel); padding: 12px 12px 12px 14px;
-    cursor: pointer; overflow: hidden;
-    transition: transform .18s, box-shadow .18s, border-color .18s;
-    animation: tileIn .45s cubic-bezier(.2,.8,.2,1) both;
-    animation-delay: calc(var(--i, 0) * 35ms);
-  }}
-  @keyframes tileIn {{
-    from {{ opacity: 0; transform: translateY(10px) scale(.98); }}
-    to {{ opacity: 1; transform: none; }}
-  }}
-  .tile::before {{
+    cursor: pointer; text-align: left;
+    transition: transform .18s, box-shadow .18s;
+  }
+  .tile::before {
     content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
     background: var(--accent, var(--teal1));
-  }}
-  .tile:hover {{
-    transform: translateY(-2px);
-    border-color: color-mix(in srgb, var(--accent) 45%, white);
-    box-shadow: 0 14px 30px rgba(6,54,66,.14);
-  }}
-  .tile:active {{ transform: translateY(0); }}
-  .tile .name {{ font-weight: 700; font-size: .92rem; margin: 0 0 4px; }}
-  .tile .tip {{ margin: 0; font-size: .75rem; color: var(--muted); line-height: 1.35; }}
-  .tile .go {{
+  }
+  .tile:hover { transform: translateY(-2px); box-shadow: 0 14px 30px rgba(6,54,66,.14); }
+  .tile .name { font-weight: 700; font-size: .9rem; margin: 0 0 4px; }
+  .tile .tip { margin: 0; font-size: .74rem; color: var(--muted); line-height: 1.35; }
+  .tile .go {
     display: inline-block; margin-top: 8px; font-size: .72rem; font-weight: 700;
     color: #fff; background: var(--accent, var(--teal1));
     padding: 4px 10px; border-radius: 8px;
-  }}
-  .status {{
+  }
+  .store-bar {
+    display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 6px;
+    align-items: center;
+  }
+  .store-bar input {
+    flex: 1 1 160px; min-width: 140px;
+    border: 1px solid var(--line); border-radius: 12px;
+    padding: 10px 12px; font-size: .9rem; background: #fff;
+  }
+  .chips {
+    display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto;
+    padding: 0 12px 8px; scrollbar-width: thin;
+  }
+  .chips button {
+    flex: 0 0 auto; border: 1px solid var(--line); background: #fff;
+    border-radius: 999px; padding: 6px 12px; font-size: .75rem;
+    font-weight: 600; cursor: pointer; color: var(--ink); white-space: nowrap;
+  }
+  .chips button.on {
+    background: var(--teal0); color: #fff; border-color: var(--teal0);
+  }
+  .cards {
+    flex: 1; overflow: auto; padding: 4px 12px 16px;
+    display: grid; grid-template-columns: 1fr; gap: 8px;
+    align-content: start;
+  }
+  .card {
+    display: grid; grid-template-columns: 1fr auto; gap: 8px 12px;
+    border: 1px solid var(--line); border-radius: 14px;
+    background: var(--panel); padding: 12px 14px;
+    align-items: center;
+  }
+  .card h3 { margin: 0; font-size: .95rem; }
+  .card p { margin: 4px 0 0; font-size: .78rem; color: var(--muted); line-height: 1.35; }
+  .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .badge {
+    font-size: .65rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .04em; padding: 2px 7px; border-radius: 6px;
+    background: #e8f4f6; color: var(--teal0);
+  }
+  .badge.cat { background: #fff3e8; color: #9a4a10; }
+  .card .actions { display: flex; flex-direction: column; gap: 6px; }
+  .card button {
+    border: 0; border-radius: 10px; padding: 8px 14px; font-weight: 700;
+    font-size: .78rem; cursor: pointer; white-space: nowrap;
+  }
+  .card button.install {
+    background: linear-gradient(135deg, var(--teal1), var(--teal2)); color: #fff;
+  }
+  .card button.remove {
+    background: linear-gradient(135deg, #a63d22, var(--danger)); color: #fff;
+  }
+  .card button:active { transform: translateY(1px); }
+  .empty {
+    padding: 28px 16px; text-align: center; color: var(--muted); font-size: .9rem;
+  }
+  .status {
     flex: 0 0 auto; padding: 8px 16px 10px;
     background: linear-gradient(90deg, #071820, #0c2e38);
     color: #b7d4da; font-size: .75rem;
-  }}
-  .status strong {{ color: #fff; font-weight: 600; }}
-  @media (max-width: 420px) {{
-    .grid {{ grid-template-columns: 1fr; }}
-    .brand {{ font-size: 1.6rem; }}
-  }}
+  }
+  .status strong { color: #fff; font-weight: 600; }
+  @media (min-width: 520px) {
+    .cards { grid-template-columns: 1fr 1fr; }
+  }
 </style>
 </head>
 <body>
 <div class="app">
   <header class="hero">
     <h1 class="brand">TuxGenie</h1>
-    <p class="tag">Linux made easy — ask in plain English</p>
-    <div class="underline"></div>
-    <div class="meta">v{version} · live terminal on the right ·
+    <p class="tag">Linux made easy — App Store + live terminal</p>
+    <div class="meta">v__VERSION__ ·
       <a class="site" href="https://www.tuxgenie.com" id="siteLink">www.tuxgenie.com</a>
     </div>
   </header>
 
-  <section class="ask">
-    <h2>What do you need?</h2>
-    <div class="row">
-      <input id="q" type="text" placeholder="my wifi is not working" autocomplete="off"/>
-      <button id="askBtn" type="button">Ask →</button>
+  <nav class="tabs" id="tabs">
+    <button type="button" data-tab="home" class="active">Home</button>
+    <button type="button" data-tab="store">App Store</button>
+    <button type="button" data-tab="myapps">My Apps</button>
+  </nav>
+
+  <section class="panel active" id="tab-home">
+    <div class="ask">
+      <h2>What do you need?</h2>
+      <div class="row">
+        <input id="q" type="text" placeholder="my wifi is not working" autocomplete="off"/>
+        <button id="askBtn" type="button">Ask →</button>
+      </div>
+      <p class="hint">Try: “install chrome” · “why is it slow?” · or open the App Store</p>
     </div>
-    <p class="hint">Try: “install chrome” · “why is it slow?” · “no sound”</p>
+    <div class="sec">Quick actions</div>
+    <div class="grid" id="grid"></div>
   </section>
 
-  <div class="sec">Quick actions</div>
-  <div class="grid" id="grid"></div>
-  <footer class="status" id="status"><strong>Ready</strong> — pick an action; it runs in the live terminal.</footer>
+  <section class="panel" id="tab-store">
+    <div class="store-bar">
+      <input id="storeQ" type="search" placeholder="Search apps — chrome, steam, notes…" autocomplete="off"/>
+    </div>
+    <div class="chips" id="storeChips"></div>
+    <div class="cards" id="storeCards"></div>
+  </section>
+
+  <section class="panel" id="tab-myapps">
+    <div class="store-bar">
+      <input id="myQ" type="search" placeholder="Search installed apps…" autocomplete="off"/>
+      <button type="button" class="btn-primary" id="refreshInstalled" style="padding:10px 14px">Refresh</button>
+    </div>
+    <div class="cards" id="myCards"></div>
+  </section>
+
+  <footer class="status" id="status"><strong>Ready</strong> — installs run in the live terminal (approve with y/n).</footer>
 </div>
 <script>
-  const ACTIONS = {actions_json};
-  const grid = document.getElementById('grid');
-  const status = document.getElementById('status');
-  const q = document.getElementById('q');
+  const ACTIONS = __ACTIONS__;
+  const STORE_APPS = __STORE__;
+  const AI_APPS = __AI__;
+  let storeMode = "apps"; // apps | ai
+  let storeCat = "All";
+  let installed = [];
 
-  function setStatus(msg) {{
-    status.innerHTML = msg;
-  }}
+  const status = document.getElementById("status");
+  const q = document.getElementById("q");
 
-  function post(msg) {{
-    try {{
-      if (window.webkit && webkit.messageHandlers && webkit.messageHandlers.tuxgenie) {{
+  function setStatus(msg) { status.innerHTML = msg; }
+
+  function post(msg) {
+    try {
+      if (window.webkit && webkit.messageHandlers && webkit.messageHandlers.tuxgenie) {
         webkit.messageHandlers.tuxgenie.postMessage(JSON.stringify(msg));
         return true;
-      }}
-    }} catch (e) {{}}
-    // GTK fallback injects window.tuxgenieSend
-    if (typeof window.tuxgenieSend === 'function') {{
+      }
+    } catch (e) {}
+    if (typeof window.tuxgenieSend === "function") {
       window.tuxgenieSend(msg);
       return true;
-    }}
-    setStatus('<strong>Bridge offline</strong> — use the terminal on the right.');
+    }
+    setStatus("<strong>Bridge offline</strong> — use the terminal on the right.");
     return false;
-  }}
+  }
 
-  function runText(text) {{
-    text = (text || '').trim();
-    if (!text) {{
-      setStatus('<strong>Type something first</strong> — e.g. “my wifi is not working”.');
+  function showTab(name) {
+    if (name === "store-ai") { storeMode = "ai"; name = "store"; }
+    if (name === "store") { /* keep storeMode */ }
+    document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
+    document.querySelectorAll(".tabs button").forEach(b => {
+      b.classList.toggle("active", b.getAttribute("data-tab") === name);
+    });
+    const panel = document.getElementById("tab-" + name);
+    if (panel) panel.classList.add("active");
+    if (name === "store") renderStore();
+    if (name === "myapps") {
+      setStatus("<strong>Scanning</strong> — installed apps…");
+      post({ op: "list-installed" });
+    }
+  }
+
+  function runText(text) {
+    text = (text || "").trim();
+    if (!text) {
+      setStatus("<strong>Type something first</strong> — e.g. “my wifi is not working”.");
       q.focus();
       return;
-    }}
-    setStatus('<strong>Sending</strong> — ' + text.replace(/[<>&]/g, ''));
-    post({{ op: 'run', kind: 'text', payload: text }});
-  }}
+    }
+    setStatus("<strong>Sending</strong> — " + text.replace(/[<>&]/g, ""));
+    post({ op: "run", kind: "text", payload: text });
+  }
 
-  function runAction(a) {{
-    setStatus('<strong>Starting</strong> — ' + a.label + ' (direct, no AI)');
-    if (a.kind === 'text' && !(a.payload || '').trim()) {{
-      q.focus();
-      setStatus('<strong>Type your problem</strong> above, then Ask →');
+  function runAction(a) {
+    if (a.kind === "tab") {
+      if (a.payload === "store-ai") storeMode = "ai";
+      if (a.payload === "store") storeMode = "apps";
+      showTab(a.payload === "store-ai" ? "store" : a.payload);
+      setStatus("<strong>" + a.label + "</strong> — browse and click Install / Remove.");
       return;
-    }}
-    post({{ op: 'run', kind: a.kind || 'kw', payload: a.payload, label: a.label }});
-  }}
+    }
+    setStatus("<strong>Starting</strong> — " + a.label);
+    post({ op: "run", kind: a.kind || "kw", payload: a.payload, label: a.label });
+  }
 
-  ACTIONS.forEach((a, i) => {{
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = 'tile';
-    el.style.setProperty('--accent', a.accent || '#0a7a8a');
-    el.style.setProperty('--i', i);
-    el.innerHTML = '<div class="name"></div><p class="tip"></p><span class="go">Run →</span>';
-    el.querySelector('.name').textContent = a.label;
-    el.querySelector('.tip').textContent = a.tip;
-    el.addEventListener('click', () => runAction(a));
+  // Home tiles
+  const grid = document.getElementById("grid");
+  ACTIONS.forEach((a, i) => {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "tile";
+    el.style.setProperty("--accent", a.accent || "#0a7a8a");
+    el.innerHTML = '<div class="name"></div><p class="tip"></p><span class="go">Open →</span>';
+    el.querySelector(".name").textContent = a.label;
+    el.querySelector(".tip").textContent = a.tip;
+    el.querySelector(".go").textContent = (a.kind === "tab") ? "Browse →" : "Run →";
+    el.addEventListener("click", () => runAction(a));
     grid.appendChild(el);
-  }});
+  });
 
-  document.getElementById('askBtn').addEventListener('click', () => runText(q.value));
-  q.addEventListener('keydown', (e) => {{
-    if (e.key === 'Enter') runText(q.value);
-  }});
-  const site = document.getElementById('siteLink');
-  if (site) {{
-    site.addEventListener('click', (e) => {{
+  function catalogSource() {
+    return storeMode === "ai" ? AI_APPS : STORE_APPS;
+  }
+
+  function uniqueCats(rows) {
+    const seen = [];
+    rows.forEach(r => { if (r.cat && seen.indexOf(r.cat) < 0) seen.push(r.cat); });
+    return seen;
+  }
+
+  function renderStoreChips() {
+    const chips = document.getElementById("storeChips");
+    chips.innerHTML = "";
+    const modeApps = document.createElement("button");
+    modeApps.type = "button";
+    modeApps.textContent = "Apps (" + STORE_APPS.length + ")";
+    modeApps.className = storeMode === "apps" ? "on" : "";
+    modeApps.addEventListener("click", () => { storeMode = "apps"; storeCat = "All"; renderStore(); });
+    chips.appendChild(modeApps);
+    const modeAi = document.createElement("button");
+    modeAi.type = "button";
+    modeAi.textContent = "AI tools (" + AI_APPS.length + ")";
+    modeAi.className = storeMode === "ai" ? "on" : "";
+    modeAi.addEventListener("click", () => { storeMode = "ai"; storeCat = "All"; renderStore(); });
+    chips.appendChild(modeAi);
+
+    const rows = catalogSource();
+    ["All"].concat(uniqueCats(rows)).forEach(cat => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = cat;
+      if (cat === storeCat) b.className = "on";
+      b.addEventListener("click", () => { storeCat = cat; renderStore(); });
+      chips.appendChild(b);
+    });
+  }
+
+  function renderStore() {
+    renderStoreChips();
+    const term = (document.getElementById("storeQ").value || "").trim().toLowerCase();
+    let rows = catalogSource();
+    if (storeCat !== "All") rows = rows.filter(r => r.cat === storeCat);
+    if (term) {
+      rows = rows.filter(r =>
+        r.name.toLowerCase().indexOf(term) >= 0 ||
+        (r.desc || "").toLowerCase().indexOf(term) >= 0 ||
+        (r.cat || "").toLowerCase().indexOf(term) >= 0
+      );
+    }
+    const box = document.getElementById("storeCards");
+    box.innerHTML = "";
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty">No apps match. Try another search.</div>';
+      setStatus("<strong>App Store</strong> — 0 results");
+      return;
+    }
+    rows.forEach(r => {
+      const card = document.createElement("div");
+      card.className = "card";
+      const left = document.createElement("div");
+      const h = document.createElement("h3");
+      h.textContent = r.name;
+      const p = document.createElement("p");
+      p.textContent = r.desc || "";
+      const badges = document.createElement("div");
+      badges.className = "badges";
+      const cat = document.createElement("span");
+      cat.className = "badge cat";
+      cat.textContent = r.cat;
+      badges.appendChild(cat);
+      (r.methods || []).forEach(m => {
+        const b = document.createElement("span");
+        b.className = "badge";
+        b.textContent = m;
+        badges.appendChild(b);
+      });
+      left.appendChild(h); left.appendChild(p); left.appendChild(badges);
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "install";
+      btn.textContent = "Install";
+      btn.addEventListener("click", () => {
+        setStatus("<strong>Install</strong> — " + r.name + " (confirm in terminal →)");
+        post({ op: "install", kind: (r.kind || (storeMode === "ai" ? "ai" : "app")), id: r.id, name: r.name });
+      });
+      actions.appendChild(btn);
+      card.appendChild(left);
+      card.appendChild(actions);
+      box.appendChild(card);
+    });
+    setStatus("<strong>App Store</strong> — " + rows.length + " " + (storeMode === "ai" ? "AI tools" : "apps"));
+  }
+
+  function renderMyApps() {
+    const term = (document.getElementById("myQ").value || "").trim().toLowerCase();
+    let rows = installed.slice();
+    if (term) {
+      rows = rows.filter(r =>
+        (r.name || "").toLowerCase().indexOf(term) >= 0 ||
+        (r.target || "").toLowerCase().indexOf(term) >= 0 ||
+        (r.desc || "").toLowerCase().indexOf(term) >= 0
+      );
+    }
+    const box = document.getElementById("myCards");
+    box.innerHTML = "";
+    if (!rows.length) {
+      box.innerHTML = '<div class="empty">No removable apps found (system packages stay hidden).</div>';
+      return;
+    }
+    rows.forEach(r => {
+      const card = document.createElement("div");
+      card.className = "card";
+      const left = document.createElement("div");
+      const h = document.createElement("h3");
+      h.textContent = r.name;
+      const p = document.createElement("p");
+      p.textContent = r.desc || (r.method + " · " + r.target);
+      const badges = document.createElement("div");
+      badges.className = "badges";
+      const m = document.createElement("span");
+      m.className = "badge";
+      m.textContent = r.method;
+      badges.appendChild(m);
+      left.appendChild(h); left.appendChild(p); left.appendChild(badges);
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "remove";
+      btn.textContent = "Remove";
+      btn.addEventListener("click", () => {
+        const ref = (r.method || "") + ":" + (r.target || "");
+        setStatus("<strong>Remove</strong> — " + r.name + " (confirm in terminal →)");
+        post({ op: "remove", ref: ref, name: r.name });
+      });
+      actions.appendChild(btn);
+      card.appendChild(left);
+      card.appendChild(actions);
+      box.appendChild(card);
+    });
+    setStatus("<strong>My Apps</strong> — " + rows.length + " removable");
+  }
+
+  // Called from Python after scanning
+  window.__setInstalled = function(rows) {
+    installed = Array.isArray(rows) ? rows : [];
+    renderMyApps();
+  };
+
+  document.getElementById("tabs").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-tab]");
+    if (!b) return;
+    showTab(b.getAttribute("data-tab"));
+  });
+  document.getElementById("askBtn").addEventListener("click", () => runText(q.value));
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") runText(q.value); });
+  document.getElementById("storeQ").addEventListener("input", renderStore);
+  document.getElementById("myQ").addEventListener("input", renderMyApps);
+  document.getElementById("refreshInstalled").addEventListener("click", () => {
+    setStatus("<strong>Scanning</strong> — installed apps…");
+    post({ op: "list-installed" });
+  });
+  const site = document.getElementById("siteLink");
+  if (site) {
+    site.addEventListener("click", (e) => {
       e.preventDefault();
-      post({{ op: 'open', payload: 'https://www.tuxgenie.com' }});
-    }});
-  }}
+      post({ op: "open", payload: "https://www.tuxgenie.com" });
+    });
+  }
   q.focus();
 </script>
 </body>
 </html>
 """
+    html = html.replace("__VERSION__", version)
+    html = html.replace("__ACTIONS__", json.dumps(ACTIONS, ensure_ascii=False))
+    html = html.replace("__STORE__", json.dumps(store_apps, ensure_ascii=False))
+    html = html.replace("__AI__", json.dumps(ai_apps, ensure_ascii=False))
+    return html
 
 
 class UnifiedShell:
@@ -390,10 +623,12 @@ class UnifiedShell:
         self.WebKit2 = WebKit2
         self.win = None
         self.term = None
+        self.webview = None
         self._pos_set = False
         self._tg = _resolve_tuxgenie()
         self._feed_ready = False
         self._feed_queue = []
+        self._store_apps, self._ai_apps = _load_store_catalogs()
 
         self.app = Gtk.Application(
             application_id=APP_ID,
@@ -409,7 +644,7 @@ class UnifiedShell:
             self.win.present()
             return
         self.win = self.Gtk.ApplicationWindow(application=app, title="TuxGenie")
-        self.win.set_default_size(1180, 740)
+        self.win.set_default_size(1240, 780)
         for nm in ("tuxgenie", "com.tuxgenie.TuxGenie"):
             try:
                 self.win.set_icon_name(nm)
@@ -423,7 +658,6 @@ class UnifiedShell:
 
         left = self._build_left()
         right = self._build_terminal()
-        # resize=True, shrink=False on both so neither collapses to nothing
         paned.pack1(left, True, False)
         paned.pack2(right, True, False)
         self.win.add(paned)
@@ -435,7 +669,6 @@ class UnifiedShell:
     def _on_size(self, _w, alloc):
         if self._pos_set or alloc.width < 200:
             return
-        # ~60% GUI / ~40% terminal
         try:
             self.paned.set_position(int(alloc.width * 0.60))
             self._pos_set = True
@@ -459,7 +692,7 @@ class UnifiedShell:
         ucm = view.get_user_content_manager()
         ucm.register_script_message_handler("tuxgenie")
         ucm.connect("script-message-received::tuxgenie", self._on_webkit_msg)
-        html = _shell_html(VERSION)
+        html = _shell_html(VERSION, self._store_apps, self._ai_apps)
         view.load_html(html, "file:///tuxgenie-shell/")
         frame = self.Gtk.Frame()
         frame.set_shadow_type(self.Gtk.ShadowType.NONE)
@@ -480,7 +713,6 @@ class UnifiedShell:
             raw = ""
         if not raw:
             try:
-                # Older WebKit: get_value() / GVariant-ish
                 val = message.get_value() if hasattr(message, "get_value") else None
                 if val is not None:
                     raw = str(val)
@@ -493,8 +725,6 @@ class UnifiedShell:
             msg = json.loads(raw) if isinstance(raw, str) else raw
         except Exception:
             return
-        # postMessage sometimes delivers an already-encoded JSON string as the
-        # only value — unwrap one level.
         if isinstance(msg, str):
             try:
                 msg = json.loads(msg)
@@ -504,15 +734,73 @@ class UnifiedShell:
             return
         op = msg.get("op") or "run"
         if op == "open":
-            url = (msg.get("payload") or "").strip()
-            self._open_url(url)
+            self._open_url((msg.get("payload") or "").strip())
+            return
+        if op == "list-installed":
+            self._refresh_installed_async()
+            return
+        if op == "install":
+            kind = (msg.get("kind") or "app").strip().lower()
+            eid = msg.get("id")
+            if eid is None:
+                return
+            cmd = "install-ai %s" % eid if kind == "ai" else "install-app %s" % eid
+            self.feed_line(cmd)
+            return
+        if op == "remove":
+            ref = (msg.get("ref") or "").strip()
+            if ref:
+                self.feed_line("remove-app %s" % ref)
             return
         if op != "run":
             return
         kind = msg.get("kind") or "text"
         payload = (msg.get("payload") or "").strip()
+        if kind == "tab":
+            # Should be handled in JS; ignore if it leaks through
+            return
         if kind in ("kw", "text") and payload:
             self.feed_line(payload)
+
+    def _refresh_installed_async(self):
+        def work():
+            rows = []
+            try:
+                tg = _import_tuxgenie()
+                if tg is not None:
+                    apps = tg._installed_user_apps()
+                    rows = [
+                        {
+                            "id": a.get("id"),
+                            "name": a.get("name"),
+                            "cat": a.get("cat"),
+                            "desc": a.get("desc"),
+                            "method": a.get("method"),
+                            "target": a.get("target"),
+                            "root": bool(a.get("root")),
+                        }
+                        for a in apps
+                    ]
+            except Exception as e:
+                print("tuxgenie-app: installed scan failed:", e, file=sys.stderr)
+            self.GLib.idle_add(self._push_installed_js, rows)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _push_installed_js(self, rows):
+        if self.webview is None:
+            return False
+        payload = json.dumps(rows, ensure_ascii=False)
+        # Escape for JS string in single-quoted call — use JSON.parse on quoted JSON
+        js = "window.__setInstalled && window.__setInstalled(%s);" % payload
+        try:
+            self.webview.run_javascript(js, None, None, None)
+        except Exception:
+            try:
+                self.webview.evaluate_javascript(js, -1, None, None, None, None, None)
+            except Exception as e:
+                print("tuxgenie-app: JS push failed:", e, file=sys.stderr)
+        return False
 
     def _open_url(self, url: str):
         if not url.startswith(("https://", "http://")):
@@ -529,7 +817,7 @@ class UnifiedShell:
             print("tuxgenie-app: open url failed:", e, file=sys.stderr)
 
     def _build_gtk_fallback(self):
-        """Button deck when WebKit is not installed — still split with VTE."""
+        """Button deck when WebKit is missing — Store opens terminal catalogs."""
         Gtk = self.Gtk
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -538,7 +826,6 @@ class UnifiedShell:
         hero.set_margin_start(16)
         hero.set_margin_end(16)
         title = Gtk.Label(label="TuxGenie")
-        title.get_style_context().add_class("title")
         title.set_xalign(0)
         try:
             title.set_markup(
@@ -546,8 +833,11 @@ class UnifiedShell:
             )
         except Exception:
             pass
-        sub = Gtk.Label(label="Linux made easy — live terminal on the right")
+        sub = Gtk.Label(
+            label="Install gir1.2-webkit2-4.1 for the App Store UI — terminal still works"
+        )
         sub.set_xalign(0)
+        sub.set_line_wrap(True)
         hero.pack_start(title, False, False, 0)
         hero.pack_start(sub, False, False, 0)
         outer.pack_start(hero, False, False, 0)
@@ -584,7 +874,7 @@ class UnifiedShell:
             box.set_margin_bottom(8)
             box.set_margin_start(8)
             box.set_margin_end(8)
-            l1 = Gtk.Label(label=a["label"])
+            l1 = Gtk.Label()
             l1.set_xalign(0)
             l1.set_markup("<b>%s</b>" % a["label"].replace("&", "&amp;"))
             l2 = Gtk.Label(label=a["tip"])
@@ -606,8 +896,15 @@ class UnifiedShell:
             self._entry.set_text("")
 
     def _on_action_btn(self, _btn, action):
+        kind = action.get("kind")
         payload = (action.get("payload") or "").strip()
-        if action.get("kind") == "text" and not payload:
+        if kind == "tab":
+            # No WebKit store — fall back to terminal catalog keywords
+            kw = _TAB_FALLBACK_KW.get(payload, "")
+            if kw:
+                self.feed_line(kw)
+            return
+        if kind == "text" and not payload:
             if hasattr(self, "_entry"):
                 self._entry.grab_focus()
             return
@@ -626,7 +923,6 @@ class UnifiedShell:
             self.term.set_scroll_on_output(False)
         except Exception:
             pass
-        # Dark teal terminal palette — matches brand, easy on the eyes
         try:
             rgba = Gdk.RGBA()
             rgba.parse("#0b1520")
@@ -646,7 +942,7 @@ class UnifiedShell:
         try:
             header.set_markup(
                 '  <span foreground="#9fd8de" size="small">'
-                "<b>Live terminal</b> — approve steps here</span>"
+                "<b>Live terminal</b> — approve installs here (y/n)</span>"
             )
         except Exception:
             pass
@@ -697,7 +993,6 @@ class UnifiedShell:
         if err is not None:
             print("tuxgenie-app: could not start tuxgenie:", err.message, file=sys.stderr)
             os._exit(3)
-        # Wait for banner + ❯ prompt before injecting keystrokes from the deck.
         self.GLib.timeout_add(400, self._focus_term)
         self.GLib.timeout_add(1600, self._mark_feed_ready)
 
@@ -717,7 +1012,6 @@ class UnifiedShell:
         return False
 
     def feed_line(self, text: str):
-        """Type a line into the live TuxGenie session (as if the user typed it)."""
         if not text or self.term is None:
             return
         line = text.rstrip("\n")
@@ -729,7 +1023,6 @@ class UnifiedShell:
     def _feed_now(self, text: str):
         data = (text.rstrip("\n") + "\n").encode("utf-8", "replace")
         try:
-            # VTE ≥ 0.52
             self.term.feed_child_binary(data)
         except Exception:
             try:
