@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.90.0"
+VERSION = "6.91.0"
 
 # Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
 ACTIONS = [
@@ -183,7 +183,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .top {
     position: relative; z-index: 2;
     flex: 0 0 auto;
-    padding: 18px 22px 0;
+    padding: 12px 18px 0;
   }
   .brandrow {
     display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
@@ -212,7 +212,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   a.site:hover { color: var(--ember); border-bottom-color: var(--ember); }
 
   .nav {
-    display: flex; gap: 4px; margin-top: 14px;
+    display: flex; gap: 4px; margin-top: 10px;
     border-bottom: 1px solid var(--line);
   }
   .nav button {
@@ -242,10 +242,10 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     to { opacity: 1; transform: none; }
   }
 
-  /* ── HOME ── */
+  /* ── HOME (soft-tighten: compact hero so dials sit closer to Ask) ── */
   .hero {
-    position: relative; margin: 10px 14px 0; border-radius: 18px;
-    overflow: hidden; min-height: 96px;
+    position: relative; margin: 8px 14px 0; border-radius: 16px;
+    overflow: hidden; min-height: 78px;
     color: #fff;
     background: linear-gradient(135deg, var(--tide0) 0%, var(--tide1) 48%, #0b6f7c 100%);
     box-shadow: var(--shadow);
@@ -264,46 +264,46 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     to { transform: translate3d(3%, 2%, 0) rotate(4deg); }
   }
   .hero svg.wave {
-    position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 34px;
-    opacity: .55;
+    position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 28px;
+    opacity: .5;
   }
   .hero .copy {
-    position: relative; z-index: 1; padding: 14px 18px 24px;
+    position: relative; z-index: 1; padding: 12px 16px 20px;
     max-width: 34rem;
   }
   .hero h2 {
-    margin: 0; font-size: clamp(1.1rem, 2.4vw, 1.45rem);
-    font-weight: 700; letter-spacing: -.02em; line-height: 1.2;
+    margin: 0; font-size: clamp(1.05rem, 2.3vw, 1.35rem);
+    font-weight: 700; letter-spacing: -.02em; line-height: 1.15;
   }
   .hero p {
-    margin: 5px 0 0; font-size: clamp(.78rem, 1.6vw, .88rem); opacity: .88; line-height: 1.35;
-    max-width: 28rem;
+    margin: 4px 0 0; font-size: clamp(.74rem, 1.5vw, .84rem); opacity: .88; line-height: 1.3;
+    max-width: 26rem;
   }
   .ember-line {
-    margin-top: 8px; height: 3px; width: 56px; border-radius: 3px;
+    margin-top: 6px; height: 3px; width: 48px; border-radius: 3px;
     background: linear-gradient(90deg, var(--ember), var(--ember2));
     animation: sweep 2.4s var(--ease) infinite alternate;
     transform-origin: left;
   }
   @keyframes sweep {
-    from { width: 48px; opacity: .85; }
-    to { width: 96px; opacity: 1; }
+    from { width: 40px; opacity: .85; }
+    to { width: 84px; opacity: 1; }
   }
 
   .ask {
-    margin: -16px 16px 0; position: relative; z-index: 3;
+    margin: -18px 14px 0; position: relative; z-index: 3;
     background: var(--panel);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
     border: 1px solid rgba(255,255,255,.7);
     border-radius: 16px;
-    padding: 11px 12px 10px;
-    box-shadow: 0 16px 36px rgba(3,40,48,.12);
+    padding: 10px 11px 8px;
+    box-shadow: 0 14px 32px rgba(3,40,48,.12);
   }
   .ask label {
-    display: block; font-size: .7rem; font-weight: 700;
+    display: block; font-size: .68rem; font-weight: 700;
     letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
-    margin: 0 0 7px 4px;
+    margin: 0 0 6px 4px;
   }
   .row { display: flex; gap: 8px; align-items: stretch; }
   .row input {
@@ -331,8 +331,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     50% { box-shadow: 0 10px 26px rgba(255,138,42,.38); }
   }
   .ask-tools {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-    margin-top: 8px; padding: 0 2px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+    margin-top: 6px; padding: 0 2px;
   }
   .health-cta {
     appearance: none; border: 1px solid color-mix(in srgb, var(--tide2) 45%, white);
@@ -353,16 +353,16 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
 
   .sec {
-    padding: 10px 18px 5px; font-size: .68rem; letter-spacing: .12em;
+    padding: 8px 16px 4px; font-size: .66rem; letter-spacing: .12em;
     text-transform: uppercase; color: var(--muted); font-weight: 800;
   }
 
-  /* System pulse — hero dials above Quick actions */
+  /* System pulse — dials nest under Ask; Quick actions get the freed space */
   .pulse-wrap {
     flex: 0 0 auto;
-    padding: 4px 12px 2px;
+    padding: 2px 12px 0;
   }
-  .pulse-wrap .sec { padding: 6px 6px 4px; }
+  .pulse-wrap .sec { padding: 4px 6px 3px; }
   .pulse {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -444,7 +444,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
 
   .pc-strip {
-    appearance: none; width: 100%; margin-top: 8px;
+    appearance: none; width: 100%; margin-top: 6px;
     border: 1px solid var(--line); border-radius: 14px;
     background: rgba(255,255,255,.88);
     padding: 10px 12px; cursor: pointer;
@@ -638,11 +638,11 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   /* Narrow laptops / small window split */
   @media (max-width: 480px) {
-    .top { padding: 12px 12px 0; }
+    .top { padding: 10px 12px 0; }
     .logo { font-size: clamp(1.55rem, 7vw, 2.1rem); }
-    .hero { margin: 8px 10px 0; min-height: 84px; }
-    .hero .copy { padding: 12px 14px 20px; }
-    .ask { margin: -14px 10px 0; padding: 10px; }
+    .hero { margin: 6px 10px 0; min-height: 68px; }
+    .hero .copy { padding: 10px 12px 16px; }
+    .ask { margin: -16px 10px 0; padding: 9px; }
     .row { flex-wrap: wrap; }
     .row button#askBtn { flex: 1 1 auto; min-height: 42px; }
     .dial { width: 64px; height: 64px; }
@@ -659,18 +659,18 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   /* Short laptop screens — keep dials visible, compress chrome */
   @media (max-height: 720px) {
-    .hero { min-height: 72px; }
-    .hero .copy { padding: 10px 14px 18px; }
+    .hero { min-height: 58px; }
+    .hero .copy { padding: 8px 12px 14px; }
     .hero p { display: none; }
-    .ember-line { margin-top: 6px; }
-    .ask { margin-top: -12px; }
+    .ember-line { margin-top: 4px; }
+    .ask { margin-top: -14px; }
     .ask-tools .hint { display: none; }
     .dial { width: clamp(58px, 12vh, 78px); height: clamp(58px, 12vh, 78px); }
-    .sec { padding-top: 6px; }
+    .sec { padding-top: 4px; }
   }
   @media (max-height: 600px) {
     .hero { display: none; }
-    .ask { margin: 8px 12px 0; }
+    .ask { margin: 6px 12px 0; }
   }
 </style>
 </head>
@@ -701,7 +701,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       </svg>
       <div class="copy">
         <h2>Linux, in plain English</h2>
-        <p>Ask anything — or open the App Store. Live terminal on the right keeps every step honest.</p>
+        <p>Ask anything — approve every step in the live terminal.</p>
         <div class="ember-line" aria-hidden="true"></div>
       </div>
     </div>

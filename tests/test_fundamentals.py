@@ -1120,6 +1120,9 @@ class TestUnifiedShell:
         # Responsive breakpoints for laptops / short screens
         assert "max-height: 720px" in html
         assert "min-width: 720px" in html
+        # Soft-tighten: compact hero so dials sit closer to Ask
+        assert "soft-tighten" in html
+        assert "min-height: 78px" in html
 
     def test_gui_system_pulse_shape(self):
         p = tg.gui_system_pulse()
