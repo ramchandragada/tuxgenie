@@ -1103,7 +1103,7 @@ class TestUnifiedShell:
         assert "webkit.messageHandlers.tuxgenie" in html
         assert mod.VERSION in html
         assert "Brave Browser" in html  # catalog embedded
-        # System pulse (bottom) with round dials + dense 2-col quick-action grid
+        # System pulse (above Quick actions): round dials + PC strip + Health CTA
         assert 'id="pulse"' in html
         assert "system-pulse" in html
         assert "window.__setPulse" in html
@@ -1112,8 +1112,14 @@ class TestUnifiedShell:
         assert "PC config" in html
         assert 'class="dial"' in html
         assert "pulseCpuArc" in html and "setDial" in html
-        # This PC sits under Quick actions
-        assert html.find('id="grid"') < html.find('id="pulse"')
+        assert 'id="healthBtn"' in html and "Health scan" in html
+        assert "pc-strip" in html
+        assert "severity" in html  # teal / ember / danger dial states
+        # Dials sit above Quick actions (not a footer strip)
+        assert html.find('id="pulse"') < html.find('id="grid"')
+        # Responsive breakpoints for laptops / short screens
+        assert "max-height: 720px" in html
+        assert "min-width: 720px" in html
 
     def test_gui_system_pulse_shape(self):
         p = tg.gui_system_pulse()

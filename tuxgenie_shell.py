@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.89.0"
+VERSION = "6.90.0"
 
 # Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
 ACTIONS = [
@@ -244,8 +244,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   /* ── HOME ── */
   .hero {
-    position: relative; margin: 12px 16px 0; border-radius: 20px;
-    overflow: hidden; min-height: 118px;
+    position: relative; margin: 10px 14px 0; border-radius: 18px;
+    overflow: hidden; min-height: 96px;
     color: #fff;
     background: linear-gradient(135deg, var(--tide0) 0%, var(--tide1) 48%, #0b6f7c 100%);
     box-shadow: var(--shadow);
@@ -264,51 +264,51 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     to { transform: translate3d(3%, 2%, 0) rotate(4deg); }
   }
   .hero svg.wave {
-    position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 40px;
+    position: absolute; left: 0; right: 0; bottom: -2px; width: 100%; height: 34px;
     opacity: .55;
   }
   .hero .copy {
-    position: relative; z-index: 1; padding: 18px 22px 28px;
+    position: relative; z-index: 1; padding: 14px 18px 24px;
     max-width: 34rem;
   }
   .hero h2 {
-    margin: 0; font-size: clamp(1.2rem, 2.5vw, 1.55rem);
+    margin: 0; font-size: clamp(1.1rem, 2.4vw, 1.45rem);
     font-weight: 700; letter-spacing: -.02em; line-height: 1.2;
   }
   .hero p {
-    margin: 6px 0 0; font-size: .88rem; opacity: .88; line-height: 1.35;
+    margin: 5px 0 0; font-size: clamp(.78rem, 1.6vw, .88rem); opacity: .88; line-height: 1.35;
     max-width: 28rem;
   }
   .ember-line {
-    margin-top: 10px; height: 3px; width: 64px; border-radius: 3px;
+    margin-top: 8px; height: 3px; width: 56px; border-radius: 3px;
     background: linear-gradient(90deg, var(--ember), var(--ember2));
     animation: sweep 2.4s var(--ease) infinite alternate;
     transform-origin: left;
   }
   @keyframes sweep {
-    from { width: 56px; opacity: .85; }
-    to { width: 110px; opacity: 1; }
+    from { width: 48px; opacity: .85; }
+    to { width: 96px; opacity: 1; }
   }
 
   .ask {
-    margin: -18px 20px 0; position: relative; z-index: 3;
+    margin: -16px 16px 0; position: relative; z-index: 3;
     background: var(--panel);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
     border: 1px solid rgba(255,255,255,.7);
-    border-radius: 18px;
-    padding: 12px 14px 10px;
-    box-shadow: 0 18px 40px rgba(3,40,48,.12);
+    border-radius: 16px;
+    padding: 11px 12px 10px;
+    box-shadow: 0 16px 36px rgba(3,40,48,.12);
   }
   .ask label {
-    display: block; font-size: .72rem; font-weight: 700;
+    display: block; font-size: .7rem; font-weight: 700;
     letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
-    margin: 0 0 8px 4px;
+    margin: 0 0 7px 4px;
   }
-  .row { display: flex; gap: 8px; }
+  .row { display: flex; gap: 8px; align-items: stretch; }
   .row input {
-    flex: 1; border: 1px solid var(--line); border-radius: 12px;
-    padding: 13px 14px; font-size: .98rem; background: #fff; color: var(--ink);
+    flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 13px; font-size: clamp(.88rem, 1.8vw, .98rem); background: #fff; color: var(--ink);
     font-family: inherit;
     transition: border-color .2s, box-shadow .2s;
   }
@@ -317,9 +317,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     box-shadow: 0 0 0 3px rgba(14,168,180,.18);
   }
   .row button#askBtn {
-    border: 0; border-radius: 12px; padding: 0 18px;
+    border: 0; border-radius: 12px; padding: 0 16px; flex: 0 0 auto;
     background: linear-gradient(135deg, var(--ember), var(--ember2));
-    color: #fff; font-weight: 800; font-size: .92rem; cursor: pointer;
+    color: #fff; font-weight: 800; font-size: .9rem; cursor: pointer;
     letter-spacing: .01em;
     transition: transform .15s var(--ease), filter .15s;
     animation: breath 2.6s ease-in-out infinite;
@@ -330,101 +330,160 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     0%,100% { box-shadow: 0 8px 18px rgba(232,93,4,.28); }
     50% { box-shadow: 0 10px 26px rgba(255,138,42,.38); }
   }
+  .ask-tools {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+    margin-top: 8px; padding: 0 2px;
+  }
+  .health-cta {
+    appearance: none; border: 1px solid color-mix(in srgb, var(--tide2) 45%, white);
+    background: linear-gradient(135deg, #e8f7f8, #fff);
+    color: var(--tide0); font: inherit; font-weight: 800; font-size: .78rem;
+    padding: 7px 12px; border-radius: 10px; cursor: pointer;
+    letter-spacing: .01em;
+    transition: transform .15s var(--ease), box-shadow .15s, border-color .15s;
+  }
+  .health-cta:hover {
+    transform: translateY(-1px);
+    border-color: var(--tide2);
+    box-shadow: 0 8px 18px rgba(6,90,102,.12);
+  }
+  .health-cta:active { transform: none; }
   .hint {
-    margin: 8px 4px 0; font-size: .74rem; color: var(--muted);
+    margin: 0; font-size: .72rem; color: var(--muted); flex: 1 1 140px;
   }
 
   .sec {
-    padding: 12px 22px 6px; font-size: .7rem; letter-spacing: .12em;
+    padding: 10px 18px 5px; font-size: .68rem; letter-spacing: .12em;
     text-transform: uppercase; color: var(--muted); font-weight: 800;
   }
 
-  /* System pulse — round dials pinned under Quick actions */
+  /* System pulse — hero dials above Quick actions */
   .pulse-wrap {
     flex: 0 0 auto;
-    padding: 0 14px 12px;
-    border-top: 1px solid rgba(6,90,102,.08);
-    background: linear-gradient(180deg, transparent, rgba(255,255,255,.45));
+    padding: 4px 12px 2px;
   }
-  .pulse-wrap .sec { padding: 10px 8px 6px; }
+  .pulse-wrap .sec { padding: 6px 6px 4px; }
   .pulse {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
+    gap: clamp(6px, 1.2vw, 12px);
   }
   .pulse-card {
-    appearance: none; border: 1px solid var(--line); border-radius: 16px;
-    background: rgba(255,255,255,.9);
-    padding: 12px 8px 10px; cursor: pointer; text-align: center;
+    appearance: none; border: 1px solid var(--line); border-radius: 18px;
+    background:
+      radial-gradient(120% 90% at 50% 0%, rgba(30,200,212,.10), transparent 55%),
+      rgba(255,255,255,.92);
+    padding: clamp(10px, 1.6vw, 16px) 8px clamp(8px, 1.2vw, 12px);
+    cursor: pointer; text-align: center;
     font: inherit; color: inherit; min-width: 0;
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    display: flex; flex-direction: column; align-items: center; gap: 5px;
     transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
+    animation: dialIn .55s var(--ease) both;
+  }
+  .pulse-card:nth-child(2) { animation-delay: .06s; }
+  .pulse-card:nth-child(3) { animation-delay: .12s; }
+  @keyframes dialIn {
+    from { opacity: 0; transform: translateY(10px) scale(.96); }
+    to { opacity: 1; transform: none; }
   }
   .pulse-card:hover {
-    transform: translateY(-2px);
-    border-color: color-mix(in srgb, var(--tide2) 45%, white);
-    box-shadow: 0 12px 26px rgba(3,40,48,.12);
+    transform: translateY(-3px);
+    border-color: color-mix(in srgb, var(--tide2) 50%, white);
+    box-shadow: 0 14px 30px rgba(3,40,48,.12);
   }
   .pulse-card:active { transform: none; }
   .pulse-card .k {
-    font-size: .62rem; font-weight: 800; letter-spacing: .1em;
-    text-transform: uppercase; color: var(--muted); margin: 0;
+    font-size: .64rem; font-weight: 800; letter-spacing: .11em;
+    text-transform: uppercase; color: var(--muted); margin: 2px 0 0;
   }
   .pulse-card .s {
-    margin: 0; font-size: .68rem; color: var(--muted); line-height: 1.25;
+    margin: 0; font-size: clamp(.62rem, 1.3vw, .72rem); color: var(--muted); line-height: 1.25;
     max-width: 100%;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .dial {
-    position: relative; width: 72px; height: 72px; flex: 0 0 auto;
+    position: relative;
+    width: clamp(68px, 15vw, 96px);
+    height: clamp(68px, 15vw, 96px);
+    flex: 0 0 auto;
   }
   .dial svg {
     width: 100%; height: 100%; display: block;
     transform: rotate(-90deg);
   }
   .dial .track {
-    fill: none; stroke: #e2eef1; stroke-width: 6.5;
+    fill: none; stroke: #e2eef1; stroke-width: 7;
   }
   .dial .arc {
-    fill: none; stroke: var(--tide2); stroke-width: 6.5;
+    fill: none; stroke: var(--tide2); stroke-width: 7;
     stroke-linecap: round;
     stroke-dasharray: 175.93;
     stroke-dashoffset: 175.93;
-    transition: stroke-dashoffset .55s var(--ease), stroke .25s;
-    filter: drop-shadow(0 0 4px rgba(14,168,180,.28));
+    transition: stroke-dashoffset .6s var(--ease), stroke .25s, filter .25s;
   }
-  .pulse-card.warn .arc { stroke: var(--ember); filter: drop-shadow(0 0 4px rgba(232,93,4,.35)); }
-  .pulse-card.warn .dial-val { color: var(--ember); }
+  .pulse-card.ok .arc {
+    stroke: var(--tide2);
+    filter: drop-shadow(0 0 5px rgba(14,168,180,.32));
+  }
+  .pulse-card.elev .arc {
+    stroke: var(--ember);
+    filter: drop-shadow(0 0 5px rgba(232,93,4,.34));
+  }
+  .pulse-card.crit .arc {
+    stroke: var(--danger);
+    filter: drop-shadow(0 0 5px rgba(178,58,34,.36));
+  }
+  .pulse-card.ok .dial-val { color: var(--tide0); }
+  .pulse-card.elev .dial-val { color: #b34708; }
+  .pulse-card.crit .dial-val { color: var(--danger); }
   .dial-val {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
-    font-size: .95rem; font-weight: 800; letter-spacing: -.03em;
+    font-size: clamp(.88rem, 2.4vw, 1.2rem); font-weight: 800; letter-spacing: -.03em;
     color: var(--ink); pointer-events: none;
   }
-  .pulse-card.pc {
-    grid-column: 1 / -1;
-    flex-direction: row; text-align: left;
-    padding: 12px 14px; gap: 12px;
+
+  .pc-strip {
+    appearance: none; width: 100%; margin-top: 8px;
+    border: 1px solid var(--line); border-radius: 14px;
+    background: rgba(255,255,255,.88);
+    padding: 10px 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+    font: inherit; color: inherit; text-align: left; min-width: 0;
+    transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
   }
-  .pulse-card.pc .pc-badge {
-    width: 48px; height: 48px; border-radius: 50%; flex: 0 0 auto;
-    display: flex; align-items: center; justify-content: center;
-    font-size: .72rem; font-weight: 800; letter-spacing: .04em; color: #fff;
-    background: linear-gradient(145deg, var(--tide1), var(--tide0));
-    box-shadow: 0 6px 16px rgba(6,90,102,.22);
+  .pc-strip:hover {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--tide2) 40%, white);
+    box-shadow: 0 10px 22px rgba(3,40,48,.1);
   }
-  .pulse-card.pc .pc-meta { min-width: 0; flex: 1; }
-  .pulse-card.pc .v {
-    margin: 2px 0 0; font-size: .92rem; font-weight: 800; letter-spacing: -.01em;
-    color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  .pc-strip .pc-dot {
+    width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto;
+    background: linear-gradient(145deg, var(--tide3), var(--tide1));
+    box-shadow: 0 0 0 3px rgba(14,168,180,.15);
   }
-  .pulse-card.pc .go-mini {
-    flex: 0 0 auto; font-size: .68rem; font-weight: 800; color: #fff;
-    background: var(--tide2); padding: 6px 10px; border-radius: 8px;
+  .pc-strip .pc-meta { min-width: 0; flex: 1; }
+  .pc-strip .pc-k {
+    font-size: .6rem; font-weight: 800; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .pc-strip .v {
+    margin: 1px 0 0; font-size: clamp(.82rem, 1.8vw, .95rem); font-weight: 800;
+    letter-spacing: -.01em; color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pc-strip .s {
+    margin: 1px 0 0; font-size: .68rem; color: var(--muted);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pc-strip .pc-go {
+    flex: 0 0 auto; font-size: .7rem; font-weight: 800; color: #fff;
+    background: linear-gradient(135deg, var(--tide1), var(--tide2));
+    padding: 7px 11px; border-radius: 9px; white-space: nowrap;
   }
 
   .grid {
-    flex: 1; overflow: auto; padding: 4px 14px 14px;
+    flex: 1; overflow: auto; padding: 2px 12px 12px;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
@@ -570,11 +629,48 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   @media (min-width: 560px) {
     .cards { grid-template-columns: 1fr 1fr; }
   }
-  @media (max-width: 420px) {
+  /* Wide control deck (large monitors / ultrawide left pane) */
+  @media (min-width: 720px) {
+    .dial { width: 100px; height: 100px; }
+    .dial-val { font-size: 1.22rem; }
+    .pulse-card { padding: 16px 10px 14px; }
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  }
+  /* Narrow laptops / small window split */
+  @media (max-width: 480px) {
+    .top { padding: 12px 12px 0; }
+    .logo { font-size: clamp(1.55rem, 7vw, 2.1rem); }
+    .hero { margin: 8px 10px 0; min-height: 84px; }
+    .hero .copy { padding: 12px 14px 20px; }
+    .ask { margin: -14px 10px 0; padding: 10px; }
+    .row { flex-wrap: wrap; }
+    .row button#askBtn { flex: 1 1 auto; min-height: 42px; }
+    .dial { width: 64px; height: 64px; }
+    .dial-val { font-size: .86rem; }
+    .pulse-card { border-radius: 14px; padding: 8px 4px 8px; gap: 3px; }
+    .pc-strip { padding: 9px 10px; gap: 8px; }
+    .pc-strip .pc-go { padding: 6px 9px; font-size: .66rem; }
+    .grid { padding: 2px 10px 10px; gap: 7px; }
+  }
+  @media (max-width: 360px) {
     .grid { grid-template-columns: 1fr; }
-    .pulse { grid-template-columns: 1fr; }
-    .pulse-card.pc { grid-column: auto; }
-    .hero .copy { padding: 16px 16px 26px; }
+    .pulse { gap: 6px; }
+    .ver .site { display: none; }
+  }
+  /* Short laptop screens — keep dials visible, compress chrome */
+  @media (max-height: 720px) {
+    .hero { min-height: 72px; }
+    .hero .copy { padding: 10px 14px 18px; }
+    .hero p { display: none; }
+    .ember-line { margin-top: 6px; }
+    .ask { margin-top: -12px; }
+    .ask-tools .hint { display: none; }
+    .dial { width: clamp(58px, 12vh, 78px); height: clamp(58px, 12vh, 78px); }
+    .sec { padding-top: 6px; }
+  }
+  @media (max-height: 600px) {
+    .hero { display: none; }
+    .ask { margin: 8px 12px 0; }
   }
 </style>
 </head>
@@ -616,16 +712,16 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
         <input id="q" type="text" placeholder="my wifi is not working" autocomplete="off"/>
         <button id="askBtn" type="button">Ask →</button>
       </div>
-      <p class="hint">Try “install chrome” · “why is it slow?” · or browse the App Store</p>
+      <div class="ask-tools">
+        <button type="button" class="health-cta" id="healthBtn" title="Run a full health check in the live terminal">Health scan →</button>
+        <p class="hint">Try “install chrome” · “why is it slow?” · or browse the App Store</p>
+      </div>
     </div>
 
-    <div class="sec">Quick actions</div>
-    <div class="grid" id="grid"></div>
-
-    <div class="pulse-wrap">
+    <div class="pulse-wrap" id="pulseWrap">
       <div class="sec">This PC</div>
       <div class="pulse" id="pulse" aria-label="System pulse">
-        <button type="button" class="pulse-card" data-pulse="cpu" title="Open health check">
+        <button type="button" class="pulse-card ok" data-pulse="cpu" title="Open health check">
           <div class="dial" aria-hidden="true">
             <svg viewBox="0 0 72 72">
               <circle class="track" cx="36" cy="36" r="28"/>
@@ -636,7 +732,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
           <div class="k">CPU</div>
           <div class="s" id="pulseCpuS">sampling…</div>
         </button>
-        <button type="button" class="pulse-card" data-pulse="mem" title="Open health check">
+        <button type="button" class="pulse-card ok" data-pulse="mem" title="Open health check">
           <div class="dial" aria-hidden="true">
             <svg viewBox="0 0 72 72">
               <circle class="track" cx="36" cy="36" r="28"/>
@@ -647,7 +743,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
           <div class="k">Memory</div>
           <div class="s" id="pulseMemS">used / total</div>
         </button>
-        <button type="button" class="pulse-card" data-pulse="disk" title="Open disk tools">
+        <button type="button" class="pulse-card ok" data-pulse="disk" title="Open disk tools">
           <div class="dial" aria-hidden="true">
             <svg viewBox="0 0 72 72">
               <circle class="track" cx="36" cy="36" r="28"/>
@@ -658,17 +754,20 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
           <div class="k">Disk</div>
           <div class="s" id="pulseDiskS">used / total</div>
         </button>
-        <button type="button" class="pulse-card pc" data-pulse="pc" title="PC configuration">
-          <div class="pc-badge">PC</div>
-          <div class="pc-meta">
-            <div class="k">PC config</div>
-            <div class="v" id="pulsePc">—</div>
-            <div class="s" id="pulsePcS">hardware details →</div>
-          </div>
-          <span class="go-mini">Open →</span>
-        </button>
       </div>
+      <button type="button" class="pc-strip" data-pulse="pc" title="PC configuration">
+        <span class="pc-dot" aria-hidden="true"></span>
+        <span class="pc-meta">
+          <span class="pc-k">PC config</span>
+          <div class="v" id="pulsePc">—</div>
+          <div class="s" id="pulsePcS">hardware details →</div>
+        </span>
+        <span class="pc-go">Details →</span>
+      </button>
     </div>
+
+    <div class="sec">Quick actions</div>
+    <div class="grid" id="grid"></div>
   </section>
 
   <section class="panel" id="tab-store">
@@ -757,13 +856,22 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     return n;
   }
 
+  function severity(pct, warnFlag) {
+    const p = pctClamp(pct);
+    if (warnFlag || p >= 90) return "crit";
+    if (p >= 70) return "elev";
+    return "ok";
+  }
+
   function setDial(arcId, pct, warn) {
     const el = document.getElementById(arcId);
     if (!el) return;
     const p = pctClamp(pct);
     el.style.strokeDashoffset = String(DIAL_C * (1 - p / 100));
     const card = el.closest(".pulse-card");
-    if (card) card.classList.toggle("warn", !!warn);
+    if (!card) return;
+    card.classList.remove("ok", "elev", "crit", "warn");
+    card.classList.add(severity(p, warn));
   }
 
   window.__setPulse = function(p) {
@@ -790,12 +898,13 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     setDial("pulseDiskArc", p.disk_pct, p.disk_warn);
   };
 
-  document.getElementById("pulse").addEventListener("click", (e) => {
-    const card = e.target.closest(".pulse-card[data-pulse]");
+  document.getElementById("pulseWrap").addEventListener("click", (e) => {
+    const card = e.target.closest("[data-pulse]");
     if (!card) return;
     const key = card.getAttribute("data-pulse");
     const kw = pulseActions[key] || key;
-    setStatus("<strong>Starting</strong> — " + (card.querySelector(".k").textContent || kw));
+    const labelEl = card.querySelector(".k, .pc-k");
+    setStatus("<strong>Starting</strong> — " + ((labelEl && labelEl.textContent) || kw));
     post({ op: "run", kind: "kw", payload: kw });
   });
 
@@ -992,6 +1101,10 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     showTab(b.getAttribute("data-tab"));
   });
   document.getElementById("askBtn").addEventListener("click", () => runText(q.value));
+  document.getElementById("healthBtn").addEventListener("click", () => {
+    setStatus("<strong>Starting</strong> — Health scan");
+    post({ op: "run", kind: "kw", payload: "health" });
+  });
   q.addEventListener("keydown", (e) => { if (e.key === "Enter") runText(q.value); });
   document.getElementById("storeQ").addEventListener("input", renderStore);
   document.getElementById("myQ").addEventListener("input", renderMyApps);
