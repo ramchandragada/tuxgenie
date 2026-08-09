@@ -1103,13 +1103,17 @@ class TestUnifiedShell:
         assert "webkit.messageHandlers.tuxgenie" in html
         assert mod.VERSION in html
         assert "Brave Browser" in html  # catalog embedded
-        # System pulse widgets + dense 2-col grid (no gutter-bleed decorations)
+        # System pulse (bottom) with round dials + dense 2-col quick-action grid
         assert 'id="pulse"' in html
         assert "system-pulse" in html
         assert "window.__setPulse" in html
         assert "repeat(2, minmax(0, 1fr))" in html
         assert "data-pulse=\"cpu\"" in html
         assert "PC config" in html
+        assert 'class="dial"' in html
+        assert "pulseCpuArc" in html and "setDial" in html
+        # This PC sits under Quick actions
+        assert html.find('id="grid"') < html.find('id="pulse"')
 
     def test_gui_system_pulse_shape(self):
         p = tg.gui_system_pulse()

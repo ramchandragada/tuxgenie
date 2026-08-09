@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.88.0"
+VERSION = "6.89.0"
 
 # Home quick actions. kind=tab switches Store/My Apps; kw feeds the live CLI.
 ACTIONS = [
@@ -339,49 +339,88 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     text-transform: uppercase; color: var(--muted); font-weight: 800;
   }
 
-  /* System pulse — live PC vitals under Ask */
+  /* System pulse — round dials pinned under Quick actions */
+  .pulse-wrap {
+    flex: 0 0 auto;
+    padding: 0 14px 12px;
+    border-top: 1px solid rgba(6,90,102,.08);
+    background: linear-gradient(180deg, transparent, rgba(255,255,255,.45));
+  }
+  .pulse-wrap .sec { padding: 10px 8px 6px; }
   .pulse {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
-    padding: 10px 16px 0;
   }
   .pulse-card {
-    appearance: none; border: 1px solid var(--line); border-radius: 14px;
-    background: rgba(255,255,255,.86);
-    padding: 10px 12px; cursor: pointer; text-align: left;
+    appearance: none; border: 1px solid var(--line); border-radius: 16px;
+    background: rgba(255,255,255,.9);
+    padding: 12px 8px 10px; cursor: pointer; text-align: center;
     font: inherit; color: inherit; min-width: 0;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
     transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
   }
   .pulse-card:hover {
     transform: translateY(-2px);
     border-color: color-mix(in srgb, var(--tide2) 45%, white);
-    box-shadow: 0 10px 22px rgba(3,40,48,.1);
+    box-shadow: 0 12px 26px rgba(3,40,48,.12);
   }
   .pulse-card:active { transform: none; }
   .pulse-card .k {
-    font-size: .65rem; font-weight: 800; letter-spacing: .1em;
-    text-transform: uppercase; color: var(--muted); margin: 0 0 4px;
-  }
-  .pulse-card .v {
-    font-size: 1.05rem; font-weight: 800; letter-spacing: -.02em;
-    color: var(--ink); margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-size: .62rem; font-weight: 800; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); margin: 0;
   }
   .pulse-card .s {
-    margin: 3px 0 0; font-size: .72rem; color: var(--muted);
+    margin: 0; font-size: .68rem; color: var(--muted); line-height: 1.25;
+    max-width: 100%;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
-  .pulse-card.warn .v { color: var(--ember); }
-  .pulse-card .bar {
-    margin-top: 7px; height: 4px; border-radius: 4px; background: #e2eef1; overflow: hidden;
+  .dial {
+    position: relative; width: 72px; height: 72px; flex: 0 0 auto;
   }
-  .pulse-card .bar > i {
-    display: block; height: 100%; width: 0%; border-radius: 4px;
-    background: linear-gradient(90deg, var(--tide2), var(--tide1));
-    transition: width .45s var(--ease);
+  .dial svg {
+    width: 100%; height: 100%; display: block;
+    transform: rotate(-90deg);
   }
-  .pulse-card.warn .bar > i {
-    background: linear-gradient(90deg, var(--ember), var(--ember2));
+  .dial .track {
+    fill: none; stroke: #e2eef1; stroke-width: 6.5;
+  }
+  .dial .arc {
+    fill: none; stroke: var(--tide2); stroke-width: 6.5;
+    stroke-linecap: round;
+    stroke-dasharray: 175.93;
+    stroke-dashoffset: 175.93;
+    transition: stroke-dashoffset .55s var(--ease), stroke .25s;
+    filter: drop-shadow(0 0 4px rgba(14,168,180,.28));
+  }
+  .pulse-card.warn .arc { stroke: var(--ember); filter: drop-shadow(0 0 4px rgba(232,93,4,.35)); }
+  .pulse-card.warn .dial-val { color: var(--ember); }
+  .dial-val {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .95rem; font-weight: 800; letter-spacing: -.03em;
+    color: var(--ink); pointer-events: none;
+  }
+  .pulse-card.pc {
+    grid-column: 1 / -1;
+    flex-direction: row; text-align: left;
+    padding: 12px 14px; gap: 12px;
+  }
+  .pulse-card.pc .pc-badge {
+    width: 48px; height: 48px; border-radius: 50%; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .72rem; font-weight: 800; letter-spacing: .04em; color: #fff;
+    background: linear-gradient(145deg, var(--tide1), var(--tide0));
+    box-shadow: 0 6px 16px rgba(6,90,102,.22);
+  }
+  .pulse-card.pc .pc-meta { min-width: 0; flex: 1; }
+  .pulse-card.pc .v {
+    margin: 2px 0 0; font-size: .92rem; font-weight: 800; letter-spacing: -.01em;
+    color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pulse-card.pc .go-mini {
+    flex: 0 0 auto; font-size: .68rem; font-weight: 800; color: #fff;
+    background: var(--tide2); padding: 6px 10px; border-radius: 8px;
   }
 
   .grid {
@@ -532,7 +571,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .cards { grid-template-columns: 1fr 1fr; }
   }
   @media (max-width: 420px) {
-    .grid, .pulse { grid-template-columns: 1fr; }
+    .grid { grid-template-columns: 1fr; }
+    .pulse { grid-template-columns: 1fr; }
+    .pulse-card.pc { grid-column: auto; }
     .hero .copy { padding: 16px 16px 26px; }
   }
 </style>
@@ -578,35 +619,56 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       <p class="hint">Try “install chrome” · “why is it slow?” · or browse the App Store</p>
     </div>
 
-    <div class="sec">This PC</div>
-    <div class="pulse" id="pulse" aria-label="System pulse">
-      <button type="button" class="pulse-card" data-pulse="cpu" title="Open health check">
-        <div class="k">CPU</div>
-        <div class="v" id="pulseCpu">—</div>
-        <div class="s" id="pulseCpuS">sampling…</div>
-        <div class="bar"><i id="pulseCpuBar"></i></div>
-      </button>
-      <button type="button" class="pulse-card" data-pulse="mem" title="Open health check">
-        <div class="k">Memory</div>
-        <div class="v" id="pulseMem">—</div>
-        <div class="s" id="pulseMemS">used / total</div>
-        <div class="bar"><i id="pulseMemBar"></i></div>
-      </button>
-      <button type="button" class="pulse-card" data-pulse="disk" title="Open disk tools">
-        <div class="k">Disk</div>
-        <div class="v" id="pulseDisk">—</div>
-        <div class="s" id="pulseDiskS">used / total</div>
-        <div class="bar"><i id="pulseDiskBar"></i></div>
-      </button>
-      <button type="button" class="pulse-card" data-pulse="pc" title="PC configuration">
-        <div class="k">PC config</div>
-        <div class="v" id="pulsePc">—</div>
-        <div class="s" id="pulsePcS">hardware details →</div>
-      </button>
-    </div>
-
     <div class="sec">Quick actions</div>
     <div class="grid" id="grid"></div>
+
+    <div class="pulse-wrap">
+      <div class="sec">This PC</div>
+      <div class="pulse" id="pulse" aria-label="System pulse">
+        <button type="button" class="pulse-card" data-pulse="cpu" title="Open health check">
+          <div class="dial" aria-hidden="true">
+            <svg viewBox="0 0 72 72">
+              <circle class="track" cx="36" cy="36" r="28"/>
+              <circle class="arc" id="pulseCpuArc" cx="36" cy="36" r="28"/>
+            </svg>
+            <div class="dial-val" id="pulseCpu">—</div>
+          </div>
+          <div class="k">CPU</div>
+          <div class="s" id="pulseCpuS">sampling…</div>
+        </button>
+        <button type="button" class="pulse-card" data-pulse="mem" title="Open health check">
+          <div class="dial" aria-hidden="true">
+            <svg viewBox="0 0 72 72">
+              <circle class="track" cx="36" cy="36" r="28"/>
+              <circle class="arc" id="pulseMemArc" cx="36" cy="36" r="28"/>
+            </svg>
+            <div class="dial-val" id="pulseMem">—</div>
+          </div>
+          <div class="k">Memory</div>
+          <div class="s" id="pulseMemS">used / total</div>
+        </button>
+        <button type="button" class="pulse-card" data-pulse="disk" title="Open disk tools">
+          <div class="dial" aria-hidden="true">
+            <svg viewBox="0 0 72 72">
+              <circle class="track" cx="36" cy="36" r="28"/>
+              <circle class="arc" id="pulseDiskArc" cx="36" cy="36" r="28"/>
+            </svg>
+            <div class="dial-val" id="pulseDisk">—</div>
+          </div>
+          <div class="k">Disk</div>
+          <div class="s" id="pulseDiskS">used / total</div>
+        </button>
+        <button type="button" class="pulse-card pc" data-pulse="pc" title="PC configuration">
+          <div class="pc-badge">PC</div>
+          <div class="pc-meta">
+            <div class="k">PC config</div>
+            <div class="v" id="pulsePc">—</div>
+            <div class="s" id="pulsePcS">hardware details →</div>
+          </div>
+          <span class="go-mini">Open →</span>
+        </button>
+      </div>
+    </div>
   </section>
 
   <section class="panel" id="tab-store">
@@ -686,6 +748,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     }
   }
 
+  const DIAL_C = 175.93; // 2π × r28
+
   function pctClamp(n) {
     n = Number(n);
     if (!isFinite(n) || n < 0) return 0;
@@ -693,10 +757,11 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     return n;
   }
 
-  function setBar(id, pct, warn) {
-    const el = document.getElementById(id);
+  function setDial(arcId, pct, warn) {
+    const el = document.getElementById(arcId);
     if (!el) return;
-    el.style.width = pctClamp(pct) + "%";
+    const p = pctClamp(pct);
+    el.style.strokeDashoffset = String(DIAL_C * (1 - p / 100));
     const card = el.closest(".pulse-card");
     if (card) card.classList.toggle("warn", !!warn);
   }
@@ -720,9 +785,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     if (memS) memS.textContent = p.mem_label || "";
     if (diskS) diskS.textContent = p.disk_label || "";
     if (pcS) pcS.textContent = p.pc_label || "hardware details →";
-    setBar("pulseCpuBar", p.cpu_pct, p.cpu_warn);
-    setBar("pulseMemBar", p.mem_pct, p.mem_warn);
-    setBar("pulseDiskBar", p.disk_pct, p.disk_warn);
+    setDial("pulseCpuArc", p.cpu_pct, p.cpu_warn);
+    setDial("pulseMemArc", p.mem_pct, p.mem_warn);
+    setDial("pulseDiskArc", p.disk_pct, p.disk_warn);
   };
 
   document.getElementById("pulse").addEventListener("click", (e) => {
