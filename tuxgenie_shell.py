@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.97.0"
+VERSION = "6.98.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -492,92 +492,75 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   .qa-head {
     display: flex; align-items: baseline; justify-content: space-between;
-    gap: 10px; padding: 8px 16px 2px;
+    gap: 8px; padding: 4px 12px 0;
   }
-  .qa-head .sec { padding: 0; }
+  .qa-head .sec { padding: 0; font-size: .62rem; }
   .qa-head .qa-count {
-    font-size: .68rem; font-weight: 700; color: var(--muted); letter-spacing: .02em;
+    font-size: .62rem; font-weight: 700; color: var(--muted); letter-spacing: .02em;
   }
 
+  /* dense-3col: fit Wave A without scroll on typical laptops */
   .grid {
-    flex: 1; overflow: auto; padding: 2px 12px 14px;
+    flex: 1; overflow: auto; padding: 2px 10px 10px;
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 6px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
     align-content: start;
   }
   .sec-inline {
     grid-column: 1 / -1;
-    display: flex; align-items: center; gap: 10px;
-    margin: 10px 0 1px; padding: 0 2px;
-    font-size: .64rem; letter-spacing: .14em;
+    display: flex; align-items: center; gap: 8px;
+    margin: 6px 0 0; padding: 0 2px;
+    font-size: .58rem; letter-spacing: .12em;
     text-transform: uppercase; color: var(--tide1); font-weight: 800;
   }
-  .sec-inline:first-child { margin-top: 2px; }
+  .sec-inline:first-child { margin-top: 0; }
   .sec-inline::after {
-    content: ""; flex: 1; height: 1px; min-width: 24px;
-    background: linear-gradient(90deg, rgba(6,90,102,.22), transparent 85%);
+    content: ""; flex: 1; height: 1px; min-width: 16px;
+    background: linear-gradient(90deg, rgba(6,90,102,.2), transparent 85%);
   }
-  /* Action rows — DIV + table layout (WebKitGTK blanks <button> children) */
+  /* Compact DIV tiles — accent bar + title + tip (no mark/chevron dead space) */
   .tile {
-    display: table;
+    display: block;
     width: 100%;
-    table-layout: fixed;
-    border-collapse: separate;
-    border-spacing: 0;
     border: 1px solid rgba(7,45,56,.12);
-    border-radius: 12px;
+    border-left: 3px solid var(--accent, #0a8a96);
+    border-radius: 10px;
     background: #ffffff;
     margin: 0;
+    padding: 7px 8px 6px 9px;
     cursor: pointer;
     text-align: left;
     color: #07131a;
     font: inherit;
     box-sizing: border-box;
-    transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
-    animation: tileIn .45s var(--ease) both;
-    animation-delay: calc(var(--i, 0) * 28ms);
+    min-width: 0;
+    transition: transform .15s var(--ease), box-shadow .15s, border-color .15s, background .15s;
+    animation: tileIn .4s var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 22ms);
   }
   @keyframes tileIn {
-    from { opacity: 0; transform: translateY(8px); }
+    from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: none; }
   }
   .tile:hover {
     transform: translateY(-1px);
-    border-color: rgba(10,138,150,.38);
-    box-shadow: 0 10px 22px rgba(3,40,48,.09);
+    border-color: rgba(10,138,150,.35);
+    border-left-color: var(--accent, #0a8a96);
+    box-shadow: 0 8px 18px rgba(3,40,48,.08);
     background: #fbfefe;
   }
   .tile:active { transform: none; }
   .tile:focus { outline: none; }
   .tile:focus-visible {
     outline: 2px solid rgba(10,138,150,.45);
-    outline-offset: 2px;
-  }
-  .tile .mark {
-    display: table-cell;
-    width: 42px;
-    vertical-align: middle;
-    text-align: center;
-    font-size: .62rem;
-    font-weight: 800;
-    letter-spacing: .04em;
-    color: #065a66;
-    background: #e7f4f6;
-    border-right: 1px solid rgba(7,45,56,.08);
-    border-radius: 11px 0 0 11px;
-  }
-  .tile .copy {
-    display: table-cell;
-    vertical-align: middle;
-    padding: 9px 10px;
-    overflow: hidden;
+    outline-offset: 1px;
   }
   .tile .name {
     display: block;
     font-weight: 800;
-    font-size: .86rem;
-    line-height: 1.2;
+    font-size: .78rem;
+    line-height: 1.15;
     margin: 0;
     letter-spacing: -.015em;
     color: #07131a !important;
@@ -588,28 +571,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .tile .tip {
     display: block;
     margin: 2px 0 0;
-    font-size: .68rem;
-    line-height: 1.25;
+    font-size: .62rem;
+    line-height: 1.2;
     color: #5c7380 !important;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .tile .chev {
-    display: table-cell;
-    width: 28px;
-    vertical-align: middle;
-    text-align: center;
-    font-size: .85rem;
-    font-weight: 800;
-    color: #5c7380;
-    background: #f3f7f8;
-    border-left: 1px solid rgba(7,45,56,.06);
-    border-radius: 0 11px 11px 0;
-  }
-  .tile:hover .chev {
-    color: #ffffff;
-    background: #0a8a96;
   }
 
   /* ── STORE / MY APPS ── */
@@ -739,14 +706,18 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   @media (min-width: 560px) {
     .cards { grid-template-columns: 1fr 1fr; }
   }
-  /* Wide control deck (large monitors / ultrawide left pane) */
+  /* Wide control deck — keep 3-col actions, slightly larger dials */
   @media (min-width: 720px) {
-    .dial, .pc-badge-wrap { width: 90px; height: 90px; }
-    .dial-val { font-size: 1.15rem; }
-    .pulse-card { padding: 14px 8px 12px; }
-    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .dial, .pc-badge-wrap { width: 84px; height: 84px; }
+    .dial-val { font-size: 1.08rem; }
+    .pulse-card { padding: 12px 8px 10px; }
+    .grid { gap: 6px; }
   }
-  /* Narrow: 2×2 so four cards stay readable */
+  /* Mid panes: 2-col actions so labels stay readable */
+  @media (max-width: 640px) {
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  /* Narrow: 2×2 pulse */
   @media (max-width: 560px) {
     .pulse { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
@@ -759,30 +730,45 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .ask { margin: -16px 10px 0; padding: 9px; }
     .row { flex-wrap: wrap; }
     .row button#askBtn { flex: 1 1 auto; min-height: 42px; }
-    .dial, .pc-badge-wrap { width: 62px; height: 62px; }
-    .dial-val { font-size: .84rem; }
-    .pulse-card { border-radius: 14px; padding: 8px 4px 8px; gap: 3px; }
-    .grid { padding: 2px 10px 10px; gap: 7px; }
+    .dial, .pc-badge-wrap { width: 58px; height: 58px; }
+    .dial-val { font-size: .8rem; }
+    .pulse-card { border-radius: 12px; padding: 7px 4px 7px; gap: 2px; }
+    .grid { padding: 2px 8px 8px; gap: 5px; }
+    .tile { padding: 6px 7px; }
+    .tile .name { font-size: .74rem; }
   }
   @media (max-width: 360px) {
     .grid { grid-template-columns: 1fr; }
     .pulse { gap: 6px; }
     .ver .site { display: none; }
   }
-  /* Short laptop screens — keep dials visible, compress chrome */
-  @media (max-height: 720px) {
-    .hero { min-height: 58px; }
-    .hero .copy { padding: 8px 12px 14px; }
+  /* Short laptop screens — compress so Quick actions need little/no scroll */
+  @media (max-height: 820px) {
+    .hero { min-height: 64px; }
+    .hero .copy { padding: 10px 14px 16px; }
     .hero p { display: none; }
-    .ember-line { margin-top: 4px; }
-    .ask { margin-top: -14px; }
     .ask-tools .hint { display: none; }
-    .dial, .pc-badge-wrap { width: clamp(52px, 11vh, 72px); height: clamp(52px, 11vh, 72px); }
-    .sec { padding-top: 4px; }
+    .dial, .pc-badge-wrap { width: clamp(48px, 9vh, 70px); height: clamp(48px, 9vh, 70px); }
+    .sec-inline { margin-top: 4px; }
+    .tile { padding: 6px 7px 5px 8px; }
+  }
+  @media (max-height: 720px) {
+    .hero { min-height: 52px; }
+    .hero .copy { padding: 8px 12px 12px; }
+    .ember-line { margin-top: 4px; }
+    .ask { margin-top: -12px; padding: 8px 10px 7px; }
+    .tile .tip { display: none; } /* title + tooltip title= still available */
+    .qa-head { padding-top: 2px; }
+    .pulse-wrap { padding-top: 0; }
+    .sec { padding-top: 2px; padding-bottom: 2px; }
+    .grid { gap: 4px; padding-bottom: 8px; }
   }
   @media (max-height: 600px) {
     .hero { display: none; }
-    .ask { margin: 6px 12px 0; }
+    .ask { margin: 6px 10px 0; }
+    .pulse-card .s { display: none; }
+    .dial, .pc-badge-wrap { width: 44px; height: 44px; }
+    .dial-val { font-size: .72rem; }
   }
 </style>
 </head>
@@ -1056,25 +1042,6 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     post({ op: "run", kind: a.kind || "kw", payload: a.payload, label: a.label });
   }
 
-  function tileMark(label) {
-    const parts = String(label || "").replace(/[^A-Za-z0-9 /&+-]/g, " ").trim().split(/[ /]+/).filter(Boolean);
-    if (!parts.length) return "**";
-    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-    return (parts[0][0] + parts[1][0]).toUpperCase();
-  }
-
-  function accentTint(hex) {
-    hex = String(hex || "#0a8a96").replace("#", "");
-    if (hex.length !== 6) return { fg: "#065a66", bg: "#e7f4f6" };
-    const r = parseInt(hex.slice(0, 2), 16);
-    const g = parseInt(hex.slice(2, 4), 16);
-    const b = parseInt(hex.slice(4, 6), 16);
-    return {
-      fg: "#" + hex,
-      bg: "rgba(" + r + "," + g + "," + b + ",0.14)"
-    };
-  }
-
   const grid = document.getElementById("grid");
   let tileI = 0;
   ACTIONS.forEach((a) => {
@@ -1091,34 +1058,17 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     el.setAttribute("role", "button");
     el.setAttribute("tabindex", "0");
     el.style.setProperty("--i", String(tileI++));
+    el.style.setProperty("--accent", a.accent || "#0a8a96");
 
-    const mark = document.createElement("div");
-    mark.className = "mark";
-    mark.setAttribute("aria-hidden", "true");
-    mark.appendChild(document.createTextNode(tileMark(a.label)));
-    const tint = accentTint(a.accent);
-    mark.style.color = tint.fg;
-    mark.style.background = tint.bg;
-
-    const copy = document.createElement("div");
-    copy.className = "copy";
     const name = document.createElement("div");
     name.className = "name";
     name.appendChild(document.createTextNode(a.label || ""));
     const tip = document.createElement("div");
     tip.className = "tip";
     tip.appendChild(document.createTextNode(a.tip || ""));
-    copy.appendChild(name);
-    copy.appendChild(tip);
+    el.appendChild(name);
+    el.appendChild(tip);
 
-    const chev = document.createElement("div");
-    chev.className = "chev";
-    chev.setAttribute("aria-hidden", "true");
-    chev.appendChild(document.createTextNode("\u2192"));
-
-    el.appendChild(mark);
-    el.appendChild(copy);
-    el.appendChild(chev);
     el.setAttribute("title", a.tip || a.label || "");
     el.addEventListener("click", () => runAction(a));
     el.addEventListener("keydown", (ev) => {
