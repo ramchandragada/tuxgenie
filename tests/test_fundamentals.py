@@ -1124,8 +1124,9 @@ class TestUnifiedShell:
         assert 'id="pulse"' in html
         assert "system-pulse" in html
         assert "window.__setPulse" in html
-        assert "repeat(3, minmax(0, 1fr))" in html  # dense-3col Quick actions
-        assert "chip-tiles" in html
+        assert "compact-chips" in html
+        assert "flex-wrap: wrap" in html
+        assert "max-width: 11.5rem" in html  # chips hug labels, not full column bars
         assert "data-pulse=\"cpu\"" in html
         assert "PC config" in html
         assert 'class="dial"' in html
@@ -1152,7 +1153,6 @@ class TestUnifiedShell:
         assert "max-height: 720px" in html
         assert "max-height: 900px" in html
         assert "min-width: 720px" in html
-        assert "max-width: 640px" in html  # 2-col actions on mid panes
         assert "max-width: 560px" in html  # 2×2 pulse on narrow
         # Soft-tighten: compact hero so dials sit closer to Ask
         assert "soft-tighten" in html

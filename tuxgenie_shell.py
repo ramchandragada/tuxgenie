@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.99.0"
+VERSION = "7.0.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -492,75 +492,93 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   .qa-head {
     display: flex; align-items: baseline; justify-content: space-between;
-    gap: 8px; padding: 2px 10px 0;
+    gap: 8px; padding: 2px 12px 0;
   }
   .qa-head .sec { padding: 0; font-size: .58rem; }
   .qa-head .qa-count {
     font-size: .58rem; font-weight: 700; color: var(--muted); letter-spacing: .02em;
   }
 
-  /* chip-tiles: title-only 3-col chips; tips live in native tooltips (title=) */
+  /* compact-chips: content-width pills (not full-column bars); tip = title tooltip */
   .grid {
-    flex: 1; overflow: auto; padding: 2px 10px 8px;
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 4px;
-    align-content: start;
+    flex: 1; overflow: auto; padding: 4px 12px 10px;
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-flex-wrap: wrap; flex-wrap: wrap;
+    -webkit-align-content: flex-start; align-content: flex-start;
+    gap: 7px;
   }
   .sec-inline {
-    grid-column: 1 / -1;
-    display: flex; align-items: center; gap: 6px;
-    margin: 4px 0 0; padding: 0 2px;
-    font-size: .55rem; letter-spacing: .11em;
+    -webkit-flex: 0 0 100%; flex: 0 0 100%;
+    width: 100%;
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+    gap: 8px;
+    margin: 6px 0 1px; padding: 0 2px;
+    font-size: .55rem; letter-spacing: .12em;
     text-transform: uppercase; color: var(--tide1); font-weight: 800;
   }
   .sec-inline:first-child { margin-top: 0; }
   .sec-inline::after {
-    content: ""; flex: 1; height: 1px; min-width: 12px;
-    background: linear-gradient(90deg, rgba(6,90,102,.2), transparent 85%);
+    content: ""; -webkit-box-flex: 1; -webkit-flex: 1; flex: 1;
+    height: 1px; min-width: 12px;
+    background: linear-gradient(90deg, rgba(6,90,102,.22), transparent 88%);
   }
-  /* Small title-only chips — description only via hover tooltip */
+  /* Short, modern chips — width hugs the label */
   .tile {
-    display: block;
-    width: 100%;
-    border: 1px solid rgba(7,45,56,.12);
-    border-left: 3px solid var(--accent, #0a8a96);
-    border-radius: 8px;
+    display: inline-block;
+    -webkit-flex: 0 0 auto; flex: 0 0 auto;
+    width: auto;
+    max-width: 11.5rem;
+    border: 1px solid rgba(7,45,56,.10);
+    border-radius: 12px;
     background: #ffffff;
     margin: 0;
-    padding: 6px 8px;
+    padding: 7px 14px 7px 12px;
     cursor: pointer;
     text-align: left;
     color: #07131a;
     font: inherit;
     box-sizing: border-box;
-    min-width: 0;
-    transition: transform .15s var(--ease), box-shadow .15s, border-color .15s, background .15s;
+    position: relative;
+    vertical-align: top;
+    box-shadow: 0 1px 0 rgba(3,40,48,.04);
+    transition: transform .16s var(--ease), box-shadow .16s, border-color .16s,
+      background .16s, filter .16s;
     animation: tileIn .35s var(--ease) both;
-    animation-delay: calc(var(--i, 0) * 18ms);
+    animation-delay: calc(var(--i, 0) * 16ms);
+  }
+  .tile::before {
+    content: "";
+    position: absolute;
+    left: 8px; top: 50%;
+    width: 6px; height: 6px;
+    margin-top: -3px;
+    border-radius: 50%;
+    background: var(--accent, #0a8a96);
+    box-shadow: 0 0 0 3px rgba(14,168,180,.12);
   }
   @keyframes tileIn {
-    from { opacity: 0; transform: translateY(4px); }
+    from { opacity: 0; transform: translateY(5px) scale(.98); }
     to { opacity: 1; transform: none; }
   }
   .tile:hover {
-    transform: translateY(-1px);
-    border-color: rgba(10,138,150,.35);
-    border-left-color: var(--accent, #0a8a96);
-    box-shadow: 0 6px 14px rgba(3,40,48,.08);
-    background: #fbfefe;
+    transform: translateY(-2px);
+    border-color: rgba(10,138,150,.28);
+    box-shadow: 0 10px 22px rgba(3,40,48,.10);
+    filter: brightness(1.01);
   }
-  .tile:active { transform: none; }
+  .tile:active { transform: translateY(0); }
   .tile:focus { outline: none; }
   .tile:focus-visible {
     outline: 2px solid rgba(10,138,150,.45);
-    outline-offset: 1px;
+    outline-offset: 2px;
   }
   .tile .name {
     display: block;
+    padding-left: 12px;
     font-weight: 800;
-    font-size: .74rem;
-    line-height: 1.15;
+    font-size: .73rem;
+    line-height: 1.2;
     margin: 0;
     letter-spacing: -.015em;
     color: #07131a !important;
@@ -696,16 +714,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   @media (min-width: 560px) {
     .cards { grid-template-columns: 1fr 1fr; }
   }
-  /* Wide control deck — keep 3-col chip actions */
+  /* Wide control deck */
   @media (min-width: 720px) {
     .dial, .pc-badge-wrap { width: 72px; height: 72px; }
     .dial-val { font-size: .98rem; }
     .pulse-card { padding: 8px 6px 7px; }
-    .grid { gap: 4px; }
-  }
-  /* Mid panes: 2-col actions so labels stay readable */
-  @media (max-width: 640px) {
-    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid { gap: 8px; }
   }
   /* Narrow: 2×2 pulse */
   @media (max-width: 560px) {
@@ -723,12 +737,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .dial, .pc-badge-wrap { width: 52px; height: 52px; }
     .dial-val { font-size: .76rem; }
     .pulse-card { border-radius: 12px; padding: 6px 3px 6px; gap: 2px; }
-    .grid { padding: 2px 8px 6px; gap: 3px; }
-    .tile { padding: 5px 7px; }
+    .grid { padding: 2px 8px 6px; gap: 6px; }
+    .tile { padding: 6px 11px 6px 10px; max-width: 10.5rem; }
     .tile .name { font-size: .7rem; }
   }
   @media (max-width: 360px) {
-    .grid { grid-template-columns: 1fr; }
+    .tile { max-width: 100%; }
     .pulse { gap: 5px; }
     .ver .site { display: none; }
   }
@@ -743,7 +757,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .hero { min-height: 52px; }
     .hero .copy { padding: 8px 12px 14px; }
     .sec-inline { margin-top: 3px; }
-    .tile { padding: 5px 7px; }
+    .tile { padding: 6px 12px 6px 10px; }
     .qa-head { padding-top: 0; }
   }
   @media (max-height: 720px) {
@@ -754,7 +768,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .health-cta { padding: 5px 10px; font-size: .72rem; }
     .pulse-wrap .sec, .qa-head .sec { font-size: .52rem; }
     .sec { padding-top: 2px; padding-bottom: 1px; }
-    .grid { gap: 3px; padding-bottom: 6px; }
+    .grid { gap: 6px; padding-bottom: 6px; }
   }
   @media (max-height: 600px) {
     .hero { display: none; }
@@ -1045,13 +1059,24 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       return;
     }
     // DIV not <button>: WebKitGTK often paints blank white buttons
-    // Title-only chip — description is native tooltip (title=), never shown under label
+    // Compact content-width chip — tip only via native title tooltip
     const el = document.createElement("div");
     el.className = "tile";
     el.setAttribute("role", "button");
     el.setAttribute("tabindex", "0");
     el.style.setProperty("--i", String(tileI++));
-    el.style.setProperty("--accent", a.accent || "#0a8a96");
+    const accent = a.accent || "#0a8a96";
+    el.style.setProperty("--accent", accent);
+    try {
+      const hex = String(accent).replace("#", "");
+      if (hex.length === 6) {
+        const r = parseInt(hex.slice(0, 2), 16);
+        const g = parseInt(hex.slice(2, 4), 16);
+        const b = parseInt(hex.slice(4, 6), 16);
+        el.style.background = "linear-gradient(180deg, #ffffff 0%, rgba(" + r + "," + g + "," + b + ",0.10) 100%)";
+        el.style.borderColor = "rgba(" + r + "," + g + "," + b + ",0.22)";
+      }
+    } catch (e) {}
 
     const name = document.createElement("div");
     name.className = "name";
