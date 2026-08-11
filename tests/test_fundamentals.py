@@ -1125,7 +1125,7 @@ class TestUnifiedShell:
         assert "system-pulse" in html
         assert "window.__setPulse" in html
         assert "repeat(3, minmax(0, 1fr))" in html  # dense-3col Quick actions
-        assert "dense-3col" in html
+        assert "chip-tiles" in html
         assert "data-pulse=\"cpu\"" in html
         assert "PC config" in html
         assert 'class="dial"' in html
@@ -1138,7 +1138,9 @@ class TestUnifiedShell:
         assert "sec-inline" in html  # Quick action section headers
         assert "Suggest a setup" in html and "Webcam fix" in html
         assert "qa-head" in html
-        assert "tileMark" not in html and ".chev" not in html  # mark/chev dead space removed
+        assert "tileMark" not in html and ".chev" not in html
+        assert 'className = "tip"' not in html  # tips only via title= tooltip
+        assert 'setAttribute("title"' in html
         # DIV tiles — WebKitGTK blanks <button> children (role set in JS)
         assert 'setAttribute("role", "button")' in html
         assert 'createElement("div")' in html
@@ -1148,11 +1150,10 @@ class TestUnifiedShell:
         assert html.find('id="pulse"') < html.find('id="grid"')
         # Responsive breakpoints for laptops / short screens
         assert "max-height: 720px" in html
-        assert "max-height: 820px" in html
+        assert "max-height: 900px" in html
         assert "min-width: 720px" in html
         assert "max-width: 640px" in html  # 2-col actions on mid panes
         assert "max-width: 560px" in html  # 2×2 pulse on narrow
-        assert ".tile .tip { display: none; }" in html  # short-screen densify
         # Soft-tighten: compact hero so dials sit closer to Ask
         assert "soft-tighten" in html
         assert "min-height: 78px" in html

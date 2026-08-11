@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "6.98.0"
+VERSION = "6.99.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -432,8 +432,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   .dial, .pc-badge-wrap {
     position: relative;
-    width: clamp(56px, 11vw, 86px);
-    height: clamp(56px, 11vw, 86px);
+    width: clamp(52px, 10vw, 72px);
+    height: clamp(52px, 10vw, 72px);
     flex: 0 0 auto;
   }
   .dial svg {
@@ -492,43 +492,43 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   .qa-head {
     display: flex; align-items: baseline; justify-content: space-between;
-    gap: 8px; padding: 4px 12px 0;
+    gap: 8px; padding: 2px 10px 0;
   }
-  .qa-head .sec { padding: 0; font-size: .62rem; }
+  .qa-head .sec { padding: 0; font-size: .58rem; }
   .qa-head .qa-count {
-    font-size: .62rem; font-weight: 700; color: var(--muted); letter-spacing: .02em;
+    font-size: .58rem; font-weight: 700; color: var(--muted); letter-spacing: .02em;
   }
 
-  /* dense-3col: fit Wave A without scroll on typical laptops */
+  /* chip-tiles: title-only 3-col chips; tips live in native tooltips (title=) */
   .grid {
-    flex: 1; overflow: auto; padding: 2px 10px 10px;
+    flex: 1; overflow: auto; padding: 2px 10px 8px;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 5px;
+    gap: 4px;
     align-content: start;
   }
   .sec-inline {
     grid-column: 1 / -1;
-    display: flex; align-items: center; gap: 8px;
-    margin: 6px 0 0; padding: 0 2px;
-    font-size: .58rem; letter-spacing: .12em;
+    display: flex; align-items: center; gap: 6px;
+    margin: 4px 0 0; padding: 0 2px;
+    font-size: .55rem; letter-spacing: .11em;
     text-transform: uppercase; color: var(--tide1); font-weight: 800;
   }
   .sec-inline:first-child { margin-top: 0; }
   .sec-inline::after {
-    content: ""; flex: 1; height: 1px; min-width: 16px;
+    content: ""; flex: 1; height: 1px; min-width: 12px;
     background: linear-gradient(90deg, rgba(6,90,102,.2), transparent 85%);
   }
-  /* Compact DIV tiles — accent bar + title + tip (no mark/chevron dead space) */
+  /* Small title-only chips — description only via hover tooltip */
   .tile {
     display: block;
     width: 100%;
     border: 1px solid rgba(7,45,56,.12);
     border-left: 3px solid var(--accent, #0a8a96);
-    border-radius: 10px;
+    border-radius: 8px;
     background: #ffffff;
     margin: 0;
-    padding: 7px 8px 6px 9px;
+    padding: 6px 8px;
     cursor: pointer;
     text-align: left;
     color: #07131a;
@@ -536,18 +536,18 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     box-sizing: border-box;
     min-width: 0;
     transition: transform .15s var(--ease), box-shadow .15s, border-color .15s, background .15s;
-    animation: tileIn .4s var(--ease) both;
-    animation-delay: calc(var(--i, 0) * 22ms);
+    animation: tileIn .35s var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 18ms);
   }
   @keyframes tileIn {
-    from { opacity: 0; transform: translateY(6px); }
+    from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: none; }
   }
   .tile:hover {
     transform: translateY(-1px);
     border-color: rgba(10,138,150,.35);
     border-left-color: var(--accent, #0a8a96);
-    box-shadow: 0 8px 18px rgba(3,40,48,.08);
+    box-shadow: 0 6px 14px rgba(3,40,48,.08);
     background: #fbfefe;
   }
   .tile:active { transform: none; }
@@ -559,21 +559,11 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .tile .name {
     display: block;
     font-weight: 800;
-    font-size: .78rem;
+    font-size: .74rem;
     line-height: 1.15;
     margin: 0;
     letter-spacing: -.015em;
     color: #07131a !important;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tile .tip {
-    display: block;
-    margin: 2px 0 0;
-    font-size: .62rem;
-    line-height: 1.2;
-    color: #5c7380 !important;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -706,12 +696,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   @media (min-width: 560px) {
     .cards { grid-template-columns: 1fr 1fr; }
   }
-  /* Wide control deck — keep 3-col actions, slightly larger dials */
+  /* Wide control deck — keep 3-col chip actions */
   @media (min-width: 720px) {
-    .dial, .pc-badge-wrap { width: 84px; height: 84px; }
-    .dial-val { font-size: 1.08rem; }
-    .pulse-card { padding: 12px 8px 10px; }
-    .grid { gap: 6px; }
+    .dial, .pc-badge-wrap { width: 72px; height: 72px; }
+    .dial-val { font-size: .98rem; }
+    .pulse-card { padding: 8px 6px 7px; }
+    .grid { gap: 4px; }
   }
   /* Mid panes: 2-col actions so labels stay readable */
   @media (max-width: 640px) {
@@ -723,52 +713,54 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   /* Narrow laptops / small window split */
   @media (max-width: 480px) {
-    .top { padding: 10px 12px 0; }
-    .logo { font-size: clamp(1.55rem, 7vw, 2.1rem); }
-    .hero { margin: 6px 10px 0; min-height: 68px; }
-    .hero .copy { padding: 10px 12px 16px; }
-    .ask { margin: -16px 10px 0; padding: 9px; }
+    .top { padding: 8px 10px 0; }
+    .logo { font-size: clamp(1.45rem, 7vw, 2rem); }
+    .hero { margin: 6px 10px 0; min-height: 58px; }
+    .hero .copy { padding: 8px 12px 14px; }
+    .ask { margin: -14px 10px 0; padding: 8px; }
     .row { flex-wrap: wrap; }
-    .row button#askBtn { flex: 1 1 auto; min-height: 42px; }
-    .dial, .pc-badge-wrap { width: 58px; height: 58px; }
-    .dial-val { font-size: .8rem; }
-    .pulse-card { border-radius: 12px; padding: 7px 4px 7px; gap: 2px; }
-    .grid { padding: 2px 8px 8px; gap: 5px; }
-    .tile { padding: 6px 7px; }
-    .tile .name { font-size: .74rem; }
+    .row button#askBtn { flex: 1 1 auto; min-height: 40px; }
+    .dial, .pc-badge-wrap { width: 52px; height: 52px; }
+    .dial-val { font-size: .76rem; }
+    .pulse-card { border-radius: 12px; padding: 6px 3px 6px; gap: 2px; }
+    .grid { padding: 2px 8px 6px; gap: 3px; }
+    .tile { padding: 5px 7px; }
+    .tile .name { font-size: .7rem; }
   }
   @media (max-width: 360px) {
     .grid { grid-template-columns: 1fr; }
-    .pulse { gap: 6px; }
+    .pulse { gap: 5px; }
     .ver .site { display: none; }
   }
-  /* Short laptop screens — compress so Quick actions need little/no scroll */
-  @media (max-height: 820px) {
-    .hero { min-height: 64px; }
-    .hero .copy { padding: 10px 14px 16px; }
+  /* Fit Home without scrolling on typical / short laptops */
+  @media (max-height: 900px) {
     .hero p { display: none; }
     .ask-tools .hint { display: none; }
-    .dial, .pc-badge-wrap { width: clamp(48px, 9vh, 70px); height: clamp(48px, 9vh, 70px); }
-    .sec-inline { margin-top: 4px; }
-    .tile { padding: 6px 7px 5px 8px; }
+    .pulse-card .s { display: none; }
+    .dial, .pc-badge-wrap { width: clamp(46px, 8vh, 64px); height: clamp(46px, 8vh, 64px); }
+  }
+  @media (max-height: 820px) {
+    .hero { min-height: 52px; }
+    .hero .copy { padding: 8px 12px 14px; }
+    .sec-inline { margin-top: 3px; }
+    .tile { padding: 5px 7px; }
+    .qa-head { padding-top: 0; }
   }
   @media (max-height: 720px) {
-    .hero { min-height: 52px; }
-    .hero .copy { padding: 8px 12px 12px; }
-    .ember-line { margin-top: 4px; }
-    .ask { margin-top: -12px; padding: 8px 10px 7px; }
-    .tile .tip { display: none; } /* title + tooltip title= still available */
-    .qa-head { padding-top: 2px; }
-    .pulse-wrap { padding-top: 0; }
-    .sec { padding-top: 2px; padding-bottom: 2px; }
-    .grid { gap: 4px; padding-bottom: 8px; }
+    .hero { min-height: 44px; }
+    .hero .copy { padding: 6px 12px 10px; }
+    .ember-line { margin-top: 3px; display: none; }
+    .ask { margin-top: -10px; padding: 7px 9px 6px; }
+    .health-cta { padding: 5px 10px; font-size: .72rem; }
+    .pulse-wrap .sec, .qa-head .sec { font-size: .52rem; }
+    .sec { padding-top: 2px; padding-bottom: 1px; }
+    .grid { gap: 3px; padding-bottom: 6px; }
   }
   @media (max-height: 600px) {
     .hero { display: none; }
     .ask { margin: 6px 10px 0; }
-    .pulse-card .s { display: none; }
-    .dial, .pc-badge-wrap { width: 44px; height: 44px; }
-    .dial-val { font-size: .72rem; }
+    .dial, .pc-badge-wrap { width: 40px; height: 40px; }
+    .dial-val { font-size: .68rem; }
   }
 </style>
 </head>
@@ -1053,6 +1045,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       return;
     }
     // DIV not <button>: WebKitGTK often paints blank white buttons
+    // Title-only chip — description is native tooltip (title=), never shown under label
     const el = document.createElement("div");
     el.className = "tile";
     el.setAttribute("role", "button");
@@ -1063,11 +1056,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     const name = document.createElement("div");
     name.className = "name";
     name.appendChild(document.createTextNode(a.label || ""));
-    const tip = document.createElement("div");
-    tip.className = "tip";
-    tip.appendChild(document.createTextNode(a.tip || ""));
     el.appendChild(name);
-    el.appendChild(tip);
 
     el.setAttribute("title", a.tip || a.label || "");
     el.addEventListener("click", () => runAction(a));
