@@ -108,8 +108,8 @@ finish the task on Claude — paid, so only after an explicit "yes"
 
 ## Unified Shell (flagship desktop)
 
-- `tuxgenie-app` / `tuxgenie --shell` — one window: ~30% WebKit (or GTK) control
-  deck + ~70% live VTE running TuxGenie. Clicks feed the existing PTY (no new
+- `tuxgenie-app` / `tuxgenie --shell` — one window: ~40% WebKit (or GTK) control
+  deck + ~60% live VTE running TuxGenie. Clicks feed the existing PTY (no new
   terminals). Source: `tuxgenie_shell.py`.
 - Desktop launcher (`tuxgenie-gui`) order: **Unified Shell → Tk `--gui` → plain
   terminal**. Exit 3 = GTK/VTE missing; exit 2 = Tk missing.
@@ -127,7 +127,7 @@ finish the task on Claude — paid, so only after an explicit "yes"
   right-hand VTE. Do not reimplement install logic in the shell.
 - **Shell visual design:** brand-first luminous teal + ember (no purple / no CDN
   fonts). Home hero + ask CTA + quick actions; Store/My Apps are interactive
-  panels. Keep the 70% VTE chrome honest — the deck is the compact control.
+  panels. Keep the 60% VTE chrome honest — the deck is the compact control.
 - **Catalog uniqueness:** every `APP_CATALOG` name/id must be unique. When adding
   alternatives (Vesktop vs Discord, VSCodium vs VS Code), use distinct names and
   descs so users are not confused. Prefer Flatpak ids verified on Flathub.
