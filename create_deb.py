@@ -27,11 +27,11 @@ def _generate_tuxgenie_icon(size):
     Draw the TuxGenie icon at any size using only Python stdlib.
 
     Design (scales with 'size', master grid is 64x64):
-      - Vibrant blue-to-indigo gradient circle background
-      - Large centred Tux penguin (black body, white belly, orange beak/feet)
+      - Teal squircle background (brand: #0f766e → #062830)
+      - Centred Tux penguin (black body, white belly, ember-orange beak/feet)
       - Classic eye detail (white patches → black pupils → white shine)
       - Wings as side flippers
-      - Small gold star sparkle top-right (48px+)
+      - Small ember sparkle top-right (48px+)
     """
     img = [[[0, 0, 0, 0] for _ in range(size)] for _ in range(size)]
     S  = size / 64.0
@@ -84,15 +84,21 @@ def _generate_tuxgenie_icon(size):
                     af = max(0.0, min(1.0, (1 - d) * max(rx, ry) + 0.5))
                     _blend(ix, iy, r, g, b, int(a * af))
 
-    # ── 1. Blue gradient background circle ───────────────────────────────────
-    bg_r = size / 2 - 0.5
+    # ── 1. Teal gradient squircle background ─────────────────────────────────
     for y in range(size):
         for x in range(size):
-            if (x - MX)**2 + (y - MY)**2 <= bg_r**2:
-                t  = (x + y) / (size * 2.0)
-                rr = int(22  + t * 18)
-                gg = int(100 + t * 22)
-                bb = int(215 + t * 22)
+            # rounded-rect clip (squircle-ish via corner radius)
+            cx = min(x, size - 1 - x)
+            cy = min(y, size - 1 - y)
+            cr = int(size * 0.22)
+            inside = True
+            if cx < cr and cy < cr:
+                inside = (cx - cr)**2 + (cy - cr)**2 <= cr**2
+            if inside:
+                t = (x + y) / (size * 2.0)
+                rr = int(6   + t * 8)
+                gg = int(88  + t * 18)
+                bb = int(102 + t * 28)
                 img[y][x] = [rr, gg, bb, 255]
 
     # ── Penguin geometry (64px master grid) ──────────────────────────────────
@@ -138,7 +144,7 @@ def _generate_tuxgenie_icon(size):
         ellipse(FL_X, FL_Y, 5*S, 2.5*S, 255, 145, 0)
         ellipse(FR_X, FR_Y, 5*S, 2.5*S, 255, 145, 0)
 
-    # ── 10. Gold sparkle top-right (48px+) ───────────────────────────────────
+    # ── 10. Ember sparkle top-right (48px+) ──────────────────────────────────
     if size >= 48:
         scx = MX + 17*S
         scy = MY - 19*S
@@ -148,14 +154,17 @@ def _generate_tuxgenie_icon(size):
             length = sr if ai % 2 == 0 else sr * 0.45
             ri_f   = 0.5
             while ri_f <= length:
-                _set(int(scx + ri_f*math.cos(ang)), int(scy + ri_f*math.sin(ang)), 255, 220, 60)
+                _set(int(scx + ri_f*math.cos(ang)), int(scy + ri_f*math.sin(ang)), 255, 138, 42)
                 ri_f += 0.5
-        disk(scx, scy, max(1.5, 1.4*S), 255, 240, 100)
+        disk(scx, scy, max(1.5, 1.4*S), 255, 180, 80)
 
-    # ── 11. Clip to circle ────────────────────────────────────────────────────
+    # ── 11. Clip to squircle ─────────────────────────────────────────────────
+    cr = int(size * 0.22)
     for y in range(size):
         for x in range(size):
-            if (x - MX)**2 + (y - MY)**2 > (size/2)**2:
+            cx = min(x, size - 1 - x)
+            cy = min(y, size - 1 - y)
+            if cx < cr and cy < cr and (cx - cr)**2 + (cy - cr)**2 > cr**2:
                 img[y][x] = [0, 0, 0, 0]
 
     # ── 12. Encode as PNG (RGBA 8-bit) ───────────────────────────────────────
