@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.3.0"
+__version__ = "7.3.1"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -8301,7 +8301,99 @@ Additional instructions for DISPLAY FIX mode:
     fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
 
 # ── FEATURE: Self-Update ──────────────────────────────────────────────────────
-_UPDATE_URL = "https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest"
+_UPDATE_URL = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
+_RELEASES_URL = f"https://api.github.com/repos/{_GITHUB_REPO}/releases?per_page=20"
+
+
+def _parse_release_tag(tag: str) -> str:
+    """Normalize a GitHub release tag to a bare semver (7.3.0)."""
+    t = (tag or "").strip()
+    if t.lower().startswith("v"):
+        t = t[1:]
+    return t.strip()
+
+
+def _github_api_headers() -> dict:
+    return {
+        "User-Agent": f"TuxGenie/{__version__} (+https://github.com/{_GITHUB_REPO})",
+        "Accept": "application/vnd.github+json",
+        "Cache-Control": "no-cache",
+    }
+
+
+def _deb_asset_from_release(data: dict):
+    """Return (deb_url, deb_name, deb_digest) from a release JSON object."""
+    for asset in data.get("assets", []):
+        if asset.get("name", "").endswith("_all.deb"):
+            return asset["browser_download_url"], asset["name"], asset.get("digest")
+    return None, None, None
+
+
+def _release_is_public(rel: dict) -> bool:
+    return bool(rel) and not rel.get("draft") and not rel.get("prerelease")
+
+
+def _best_release(*candidates):
+    """Pick the newest semver among release JSON objects."""
+    best = None
+    best_v = ()
+    for rel in candidates:
+        if not _release_is_public(rel):
+            continue
+        tag = _parse_release_tag(rel.get("tag_name", ""))
+        if not tag:
+            continue
+        v = _ver(tag)
+        if v > best_v:
+            best_v = v
+            best = rel
+    return best
+
+
+def _fetch_newest_github_release(timeout=10):
+    """Find the newest published release on GitHub.
+
+    Uses BOTH /releases (recent list) and /releases/latest. During the ~1 min
+    after a CI publish, /latest can still point at the previous tag while the
+    new release is already in the list — scanning both avoids false 'up to date'.
+    Returns dict(tag, notes, deb_url, deb_name, deb_digest) or None.
+    """
+    headers = _github_api_headers()
+    found = []
+
+    def _get(url):
+        bust = f"{url}{'&' if '?' in url else '?'}_={int(time.time())}"
+        req = urllib.request.Request(bust, headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+
+    try:
+        batch = _get(_RELEASES_URL)
+        if isinstance(batch, list):
+            found.extend(batch)
+    except Exception:
+        pass
+
+    try:
+        latest = _get(_UPDATE_URL)
+        if isinstance(latest, dict):
+            found.append(latest)
+    except Exception:
+        pass
+
+    rel = _best_release(*found)
+    if not rel:
+        return None
+
+    deb_url, deb_name, deb_digest = _deb_asset_from_release(rel)
+    return {
+        "tag": _parse_release_tag(rel.get("tag_name", "")),
+        "notes": _strip_md((rel.get("body") or "")[:400].strip()),
+        "deb_url": deb_url,
+        "deb_name": deb_name,
+        "deb_digest": deb_digest,
+    }
+
 
 def feat_self_update():
     """Check for a newer TuxGenie release and install it automatically."""
@@ -8310,28 +8402,29 @@ def feat_self_update():
     print(f"  {DIM}Checking for updates…{R}", flush=True)
 
     try:
-        req = urllib.request.Request(
-            _UPDATE_URL, headers={"User-Agent": f"TuxGenie/{__version__}"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-
-        latest = data.get("tag_name", "").lstrip("v").strip()
-        notes  = _strip_md((data.get("body") or "")[:400].strip())
-        deb_url = deb_name = deb_digest = None
-        for asset in data.get("assets", []):
-            if asset.get("name", "").endswith("_all.deb"):
-                deb_url    = asset["browser_download_url"]
-                deb_name   = asset["name"]
-                deb_digest = asset.get("digest")   # "sha256:..." from GitHub
-                break
-
-        if not latest:
+        info_rel = _fetch_newest_github_release(timeout=10)
+        if not info_rel or not info_rel.get("tag"):
             warn("Could not read version from server."); return
 
+        latest = info_rel["tag"]
+        notes = info_rel.get("notes", "")
+        deb_url = info_rel.get("deb_url")
+        deb_name = info_rel.get("deb_name")
+        deb_digest = info_rel.get("deb_digest")
+
         if _ver(latest) <= _ver(__version__):
-            ok(f"You are already on the latest version (v{__version__}). Nothing to do!")
-            # Clear cache so startup check doesn't nag
-            _save_update_cache({"last_check": time.time(), "latest": latest})
+            ok(f"You are on the newest release — v{__version__} "
+               f"(GitHub latest: v{latest}).")
+            if _ver(latest) == _ver(__version__):
+                print(f"  {DIM}If you expected a newer build, it may still be "
+                      f"publishing — wait ~1 minute and try [u] again.{R}")
+            # Short TTL when up-to-date so a just-published release is found quickly
+            _save_update_cache({
+                "last_check": time.time(), "latest": latest,
+                "deb_url": deb_url, "deb_name": deb_name,
+                "deb_digest": deb_digest, "notes": notes,
+                "up_to_date": True,
+            })
             return
 
         print(f"\n  {GREEN}{BOLD}New version available: v{latest}{R}")
@@ -8340,7 +8433,7 @@ def feat_self_update():
 
         if not deb_url:
             warn("No .deb found in the release — please update manually.")
-            info(f"Download: {BLUE}{BOLD}www.tuxgenie.com{R}  or  https://github.com/ramchandragada/tuxgenie/releases/latest")
+            info(f"Download: {BLUE}{BOLD}www.tuxgenie.com{R}  or  https://github.com/{_GITHUB_REPO}/releases/latest")
             return
 
         try:
@@ -8695,45 +8788,35 @@ def startup_update_check():
     - 2+ minor versions behind → force update (red banner, blocks until updated)
     - Offline → skip silently, never block the user
     """
-    # Check cache — only hit the network once every 4 hours
     cache = _load_update_cache()
     last_check = cache.get("last_check", 0)
     now = time.time()
-    cache_ttl = 14400  # 4 hours — catches new releases quickly without hammering API
+    # When we last saw 'up to date', recheck sooner — new releases publish ~1 min after push
+    cache_ttl = 900 if cache.get("up_to_date") else 14400  # 15 min vs 4 h
 
     if now - last_check < cache_ttl and cache.get("latest"):
-        # Use cached result
         latest     = cache["latest"]
         deb_url    = cache.get("deb_url")
         deb_name   = cache.get("deb_name")
         deb_digest = cache.get("deb_digest")
         notes      = cache.get("notes", "")
     else:
-        # Fetch from GitHub (with short timeout to not slow startup)
         try:
-            req = urllib.request.Request(
-                _UPDATE_URL,
-                headers={"User-Agent": f"TuxGenie/{__version__}"}
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-            latest = data.get("tag_name", "").lstrip("v").strip()
-            notes  = _strip_md((data.get("body") or "")[:300].strip())
-            deb_url = deb_name = deb_digest = None
-            for asset in data.get("assets", []):
-                if asset.get("name", "").endswith("_all.deb"):
-                    deb_url    = asset["browser_download_url"]
-                    deb_name   = asset["name"]
-                    deb_digest = asset.get("digest")   # "sha256:..." from GitHub
-                    break
-            # Save to cache
+            info_rel = _fetch_newest_github_release(timeout=5)
+            if not info_rel or not info_rel.get("tag"):
+                return
+            latest = info_rel["tag"]
+            notes  = info_rel.get("notes", "")
+            deb_url = info_rel.get("deb_url")
+            deb_name = info_rel.get("deb_name")
+            deb_digest = info_rel.get("deb_digest")
             _save_update_cache({
                 "last_check": now, "latest": latest,
                 "deb_url": deb_url, "deb_name": deb_name,
                 "deb_digest": deb_digest, "notes": notes,
+                "up_to_date": _ver(latest) <= _ver(__version__),
             })
         except Exception:
-            # Offline or server error — skip silently, never block the user
             return
 
     if not latest:

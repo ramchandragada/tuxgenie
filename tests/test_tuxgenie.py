@@ -142,6 +142,20 @@ class TestVersionGap:
         assert tg._ver("5.80.0-rc1") == (5, 80, 0)  # not (0,) — would hide updates
         assert tg._ver("5.80.0-rc1") > tg._ver("5.79.0")
 
+    def test_parse_release_tag(self):
+        assert tg._parse_release_tag("v7.3.0") == "7.3.0"
+        assert tg._parse_release_tag("7.3.0") == "7.3.0"
+        assert tg._parse_release_tag("  V7.3.1  ") == "7.3.1"
+
+    def test_best_release_picks_newest_when_latest_lags(self):
+        """Regression: /latest can trail the releases list right after CI publish."""
+        older = {"tag_name": "v7.2.0", "draft": False, "prerelease": False, "assets": []}
+        newer = {"tag_name": "v7.3.0", "draft": False, "prerelease": False, "assets": []}
+        pick = tg._best_release(older, newer)
+        assert tg._parse_release_tag(pick["tag_name"]) == "7.3.0"
+        pick2 = tg._best_release(newer, older)
+        assert tg._parse_release_tag(pick2["tag_name"]) == "7.3.0"
+
 
 # ── Update download verification ─────────────────────────────────────────────
 
