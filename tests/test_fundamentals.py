@@ -1157,6 +1157,10 @@ class TestUnifiedShell:
         # Soft-tighten: compact hero so dials sit closer to Ask
         assert "soft-tighten" in html
         assert "min-height: 78px" in html
+        # Pane split: compact GUI (~30%) / live terminal (~70%)
+        src = open(path).read()
+        assert "alloc.width * 0.30" in src
+        assert "alloc.width * 0.60" not in src
 
     def test_gui_system_pulse_shape(self):
         p = tg.gui_system_pulse()

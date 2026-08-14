@@ -3,7 +3,7 @@
 """
 TuxGenie Unified Shell — flagship desktop app.
 
-  ~60% modern control deck (WebKitGTK)  |  ~40% live VTE terminal
+  ~30% modern control deck (WebKitGTK)  |  ~70% live VTE terminal
 
 Tabs: Home (ask + quick actions) · App Store · My Apps.
 Install/Remove clicks feed the live TuxGenie session on the right
@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.0.0"
+VERSION = "7.1.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -1344,7 +1344,8 @@ class UnifiedShell:
 
         left = self._build_left()
         right = self._build_terminal()
-        paned.pack1(left, True, False)
+        # GUI stays compact; extra window width goes to the live terminal.
+        paned.pack1(left, False, True)
         paned.pack2(right, True, False)
         self.win.add(paned)
         self.win.connect("size-allocate", self._on_size)
@@ -1356,7 +1357,7 @@ class UnifiedShell:
         if self._pos_set or alloc.width < 200:
             return
         try:
-            self.paned.set_position(int(alloc.width * 0.60))
+            self.paned.set_position(int(alloc.width * 0.30))
             self._pos_set = True
         except Exception:
             pass
