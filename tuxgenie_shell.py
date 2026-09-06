@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.6.0"
+VERSION = "7.7.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -541,80 +541,88 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   .qa-head {
     display: flex; align-items: baseline; justify-content: space-between;
-    gap: 8px; padding: 2px 12px 0;
+    gap: 8px; padding: 8px 14px 2px;
   }
-  .qa-head .sec { padding: 0; font-size: .58rem; }
+  .qa-head .sec { padding: 0; font-size: .7rem; color: var(--ink2); }
   .qa-head .qa-count {
-    font-size: .58rem; font-weight: 700; color: var(--muted); letter-spacing: .02em;
+    font-size: .68rem; font-weight: 700; color: var(--muted); letter-spacing: .01em;
   }
 
-  /* compact-chips: content-width pills (not full-column bars); tip = title tooltip */
+  /* action-cards: flat 2-col tiles (Zorin / WebKitGTK — no native glossy chrome) */
   .grid {
-    flex: 1; overflow: auto; padding: 4px 12px 10px;
+    flex: 1; overflow: auto; padding: 2px 12px 14px;
     display: -webkit-box; display: -webkit-flex; display: flex;
-    -webkit-flex-wrap: wrap; flex-wrap: wrap;
+    -webkit-flex-direction: column; flex-direction: column;
     -webkit-align-content: flex-start; align-content: flex-start;
-    gap: 7px;
+    gap: 12px;
+  }
+  .qa-block { width: 100%; }
+  .qa-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
   }
   .sec-inline {
-    -webkit-flex: 0 0 100%; flex: 0 0 100%;
     width: 100%;
     display: -webkit-box; display: -webkit-flex; display: flex;
     -webkit-box-align: center; -webkit-align-items: center; align-items: center;
-    gap: 8px;
-    margin: 6px 0 1px; padding: 0 2px;
-    font-size: .55rem; letter-spacing: .12em;
+    gap: 10px;
+    margin: 0 0 7px; padding: 0 2px;
+    font-size: .68rem; letter-spacing: .1em;
     text-transform: uppercase; color: var(--tide1); font-weight: 800;
   }
-  .sec-inline:first-child { margin-top: 0; }
   .sec-inline::after {
     content: ""; -webkit-box-flex: 1; -webkit-flex: 1; flex: 1;
     height: 1px; min-width: 12px;
     background: linear-gradient(90deg, rgba(6,90,102,.22), transparent 88%);
   }
-  /* Short, modern chips — width hugs the label */
+  /* Flat action card — match This PC tiles; never paint a glossy pill */
   .tile {
-    display: inline-block;
-    -webkit-flex: 0 0 auto; flex: 0 0 auto;
-    width: auto;
-    max-width: 11.5rem;
-    border: 1px solid rgba(7,45,56,.10);
-    border-radius: 12px;
-    background: #ffffff;
+    -webkit-appearance: none; appearance: none;
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-align: start; -webkit-align-items: flex-start; align-items: flex-start;
+    gap: 10px;
+    width: 100%;
+    max-width: none;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--card-bg);
+    background-image: none;
     margin: 0;
-    padding: 7px 14px 7px 12px;
+    padding: 11px 12px;
     cursor: pointer;
     text-align: left;
-    color: #07131a;
+    color: var(--ink);
     font: inherit;
     box-sizing: border-box;
     position: relative;
-    vertical-align: top;
-    box-shadow: 0 1px 0 rgba(3,40,48,.04);
+    box-shadow: none;
     transition: transform .16s var(--ease), box-shadow .16s, border-color .16s,
-      background .16s, filter .16s;
+      background .16s;
     animation: tileIn .35s var(--ease) both;
     animation-delay: calc(var(--i, 0) * 16ms);
   }
-  .tile::before {
-    content: "";
-    position: absolute;
-    left: 8px; top: 50%;
-    width: 6px; height: 6px;
-    margin-top: -3px;
-    border-radius: 50%;
-    background: var(--accent, #0a8a96);
-    box-shadow: 0 0 0 3px rgba(14,168,180,.12);
+  .tile .ico {
+    -webkit-flex: 0 0 34px; flex: 0 0 34px;
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+    -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center;
+    background: var(--ico-bg, rgba(14,168,180,.12));
+    color: var(--accent, #0a8a96);
   }
+  .tile .ico svg { width: 18px; height: 18px; display: block; }
+  .tile .meta { min-width: 0; -webkit-box-flex: 1; -webkit-flex: 1; flex: 1; }
   @keyframes tileIn {
     from { opacity: 0; transform: translateY(5px) scale(.98); }
     to { opacity: 1; transform: none; }
   }
   .tile:hover {
     transform: translateY(-2px);
-    border-color: rgba(10,138,150,.28);
-    box-shadow: 0 10px 22px rgba(3,40,48,.10);
-    filter: brightness(1.01);
+    border-color: rgba(10,138,150,.34);
+    box-shadow: 0 10px 22px rgba(3,40,48,.08);
+    background: var(--paper);
   }
   .tile:active { transform: translateY(0); }
   .tile:focus { outline: none; }
@@ -624,16 +632,22 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   .tile .name {
     display: block;
-    padding-left: 12px;
+    padding-left: 0;
     font-weight: 800;
-    font-size: .73rem;
-    line-height: 1.2;
+    font-size: .84rem;
+    line-height: 1.25;
     margin: 0;
-    letter-spacing: -.015em;
-    color: #07131a !important;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    letter-spacing: -.02em;
+    color: var(--ink);
+    white-space: normal;
+  }
+  .tile .tip {
+    display: block;
+    margin: 3px 0 0;
+    font-size: .7rem;
+    line-height: 1.35;
+    font-weight: 600;
+    color: var(--muted);
   }
 
   /* ── STORE / MY APPS ── */
@@ -777,7 +791,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .dial, .pc-badge-wrap { width: 72px; height: 72px; }
     .dial-val { font-size: .98rem; }
     .pulse-card { padding: 8px 6px 7px; }
-    .grid { gap: 8px; }
+    .qa-row { gap: 10px; }
+    .tile { padding: 12px 13px; }
   }
   /* Narrow: 2×2 pulse */
   @media (max-width: 560px) {
@@ -795,12 +810,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .dial, .pc-badge-wrap { width: 52px; height: 52px; }
     .dial-val { font-size: .76rem; }
     .pulse-card { border-radius: 12px; padding: 6px 3px 6px; gap: 2px; }
-    .grid { padding: 2px 8px 6px; gap: 6px; }
-    .tile { padding: 6px 11px 6px 10px; max-width: 10.5rem; }
-    .tile .name { font-size: .7rem; }
+    .grid { padding: 2px 8px 8px; gap: 10px; }
+    .qa-row { grid-template-columns: 1fr; gap: 7px; }
+    .tile { padding: 10px 11px; }
+    .tile .name { font-size: .8rem; }
   }
   @media (max-width: 360px) {
-    .tile { max-width: 100%; }
     .pulse { gap: 5px; }
     .ver .site { display: none; }
   }
@@ -814,9 +829,10 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   @media (max-height: 820px) {
     .hero { min-height: 52px; }
     .hero .copy { padding: 8px 12px 14px; }
-    .sec-inline { margin-top: 3px; }
-    .tile { padding: 6px 12px 6px 10px; }
-    .qa-head { padding-top: 0; }
+    .sec-inline { margin-bottom: 5px; }
+    .tile { padding: 9px 10px; }
+    .tile .tip { display: none; }
+    .qa-head { padding-top: 4px; }
   }
   @media (max-height: 720px) {
     .hero { min-height: 44px; }
@@ -824,9 +840,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .ember-line { margin-top: 3px; display: none; }
     .ask { margin-top: -10px; padding: 7px 9px 6px; }
     .health-cta { padding: 5px 10px; font-size: .72rem; }
-    .pulse-wrap .sec, .qa-head .sec { font-size: .52rem; }
+    .pulse-wrap .sec { font-size: .58rem; }
+    .qa-head .sec { font-size: .64rem; }
     .sec { padding-top: 2px; padding-bottom: 1px; }
-    .grid { gap: 6px; padding-bottom: 6px; }
+    .grid { gap: 8px; padding-bottom: 8px; }
+    .qa-row { gap: 6px; }
+    .tile .ico { width: 30px; height: 30px; -webkit-flex-basis: 30px; flex-basis: 30px; }
   }
   @media (max-height: 600px) {
     .hero { display: none; }
@@ -863,8 +882,14 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
         linear-gradient(168deg, #0d1a20 0%, #0b161b 48%, #081318 100%);
     }
     .ask { background: #15242b; border-color: rgba(180,220,230,.14); }
-    .tile { background: #15242b; border-color: rgba(180,220,230,.14); }
-    .tile .name { color: #e8f4f7 !important; }
+    .tile {
+      background: rgba(21,36,43,.94);
+      background-image: none;
+      border-color: rgba(180,220,230,.14);
+    }
+    .tile:hover { background: #1a2c32; }
+    .tile .name { color: #e8f4f7; }
+    .tile .tip { color: #8aa3ad; }
     .btn-ghost { background: #15242b; color: var(--ink2); }
     .pulse-card {
       background:
@@ -1164,40 +1189,75 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     post({ op: "run", kind: a.kind || "kw", payload: a.payload, label: a.label });
   }
 
-  const grid = document.getElementById("grid");
-  let tileI = 0;
-  ACTIONS.forEach((a) => {
-    if (a.kind === "sec") {
-      const sec = document.createElement("div");
-      sec.className = "sec-inline";
-      sec.appendChild(document.createTextNode(a.label || ""));
-      grid.appendChild(sec);
-      return;
-    }
+  const ICONS = {
+    fix: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+    health: "M22 12h-4l-3 9L9 3l-3 9H2",
+    network: "M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01",
+    sound: "M11 5L6 9H2v6h4l5 4V5zM19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07",
+    display: "M8 3h8a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3zM8 21h8M12 17v4",
+    bluetooth: "M6.5 6.5l11 11L12 22V2l5.5 4.5-11 11",
+    printer: "M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z",
+    webcam: "M23 7l-7 5 7 5V7zM3 5h11a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z",
+    drivers: "M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83",
+    apps: "M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z",
+    updates: "M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5",
+    selfupd: "M12 19V5M5 12l7-7 7 7",
+    cloud: "M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z",
+    security: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+    backup: "M21 8v13H3V8M1 3h22v5H1zM10 12h4",
+    perf: "M13 2L3 14h9l-1 8 10-12h-9l1-8z",
+    disk: "M22 12H2M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11zM6 16h.01M10 16h.01",
+    battery: "M17 6H3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zM23 13v-2",
+    gaming: "M6 12h4M8 10v4M15 13h.01M18 11h.01M2 8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z",
+    suggest: "M12 2a7 7 0 0 1 4 12.7V17H8v-2.3A7 7 0 0 1 12 2zM9 21h6",
+    settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.7.9 1.2 1.6 1.3H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z",
+    menu: "M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01",
+    complete: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+    tweaks: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6",
+    extensions: "M12 2l3 7 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z",
+    dsettings: "M3 4h18v12H3zM8 20h8M12 16v4"
+  };
+
+  function accentRgb(hex) {
+    hex = String(hex || "").replace("#", "");
+    if (hex.length !== 6) return null;
+    return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+  }
+
+  function makeActionTile(a, i) {
     // DIV not <button>: WebKitGTK often paints blank white buttons
-    // Compact content-width chip — tip only via native title tooltip
     const el = document.createElement("div");
     el.className = "tile";
     el.setAttribute("role", "button");
     el.setAttribute("tabindex", "0");
-    el.style.setProperty("--i", String(tileI++));
+    el.style.setProperty("--i", String(i));
     const accent = a.accent || "#0a8a96";
     el.style.setProperty("--accent", accent);
-    try {
-      const hex = String(accent).replace("#", "");
-      if (hex.length === 6) {
-        const r = parseInt(hex.slice(0, 2), 16);
-        const g = parseInt(hex.slice(2, 4), 16);
-        const b = parseInt(hex.slice(4, 6), 16);
-        el.style.background = "linear-gradient(180deg, #ffffff 0%, rgba(" + r + "," + g + "," + b + ",0.10) 100%)";
-        el.style.borderColor = "rgba(" + r + "," + g + "," + b + ",0.22)";
-      }
-    } catch (e) {}
+    const rgb = accentRgb(accent);
+    if (rgb) {
+      el.style.setProperty("--ico-bg", "rgba(" + rgb[0] + "," + rgb[1] + "," + rgb[2] + ",0.16)");
+    }
 
+    const ico = document.createElement("div");
+    ico.className = "ico";
+    ico.setAttribute("aria-hidden", "true");
+    const path = ICONS[a.id] || ICONS.fix;
+    ico.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="' + path + '"/></svg>';
+    el.appendChild(ico);
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
     const name = document.createElement("div");
     name.className = "name";
     name.appendChild(document.createTextNode(a.label || ""));
-    el.appendChild(name);
+    meta.appendChild(name);
+    if (a.tip) {
+      const tip = document.createElement("div");
+      tip.className = "tip";
+      tip.appendChild(document.createTextNode(a.tip));
+      meta.appendChild(tip);
+    }
+    el.appendChild(meta);
 
     el.setAttribute("title", a.tip || a.label || "");
     el.addEventListener("click", () => runAction(a));
@@ -1207,7 +1267,32 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
         runAction(a);
       }
     });
-    grid.appendChild(el);
+    return el;
+  }
+
+  const grid = document.getElementById("grid");
+  let tileI = 0;
+  let row = null;
+  ACTIONS.forEach((a) => {
+    if (a.kind === "sec") {
+      const block = document.createElement("div");
+      block.className = "qa-block";
+      const sec = document.createElement("div");
+      sec.className = "sec-inline";
+      sec.appendChild(document.createTextNode(a.label || ""));
+      block.appendChild(sec);
+      row = document.createElement("div");
+      row.className = "qa-row";
+      block.appendChild(row);
+      grid.appendChild(block);
+      return;
+    }
+    if (!row) {
+      row = document.createElement("div");
+      row.className = "qa-row";
+      grid.appendChild(row);
+    }
+    row.appendChild(makeActionTile(a, tileI++));
   });
   const qaCount = document.getElementById("qaCount");
   if (qaCount) qaCount.textContent = tileI + " shortcuts";

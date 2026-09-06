@@ -1182,6 +1182,11 @@ class TestUnifiedShell:
                 assert a["payload"] in kws or a["payload"] in ("u", "s", "menu"), a
             else:
                 assert a["payload"] in ("store", "myapps", "store-ai"), a
+        html = mod._shell_html(mod.VERSION, [], [])
+        for a in mod.ACTIONS:
+            if a.get("kind") == "sec":
+                continue
+            assert (a["id"] + ":") in html, a["id"]  # SVG icon key in ICONS
 
     def test_shell_html_is_self_contained(self):
         path = os.path.join(ROOT, "tuxgenie_shell.py")
@@ -1214,9 +1219,11 @@ class TestUnifiedShell:
         assert 'id="pulse"' in html
         assert "system-pulse" in html
         assert "window.__setPulse" in html
-        assert "compact-chips" in html
+        assert "action-cards" in html
         assert "flex-wrap: wrap" in html
-        assert "max-width: 11.5rem" in html  # chips hug labels, not full column bars
+        assert "qa-row" in html
+        assert "grid-template-columns: 1fr 1fr" in html
+        assert "max-width: 11.5rem" not in html  # no more cramped glossy pills
         assert "data-pulse=\"cpu\"" in html
         assert "PC config" in html
         assert 'class="dial"' in html
@@ -1230,7 +1237,11 @@ class TestUnifiedShell:
         assert "Suggest a setup" in html and "Webcam fix" in html
         assert "qa-head" in html
         assert "tileMark" not in html and ".chev" not in html
-        assert 'className = "tip"' not in html  # tips only via title= tooltip
+        assert 'className = "tip"' in html  # readable subtitle on each card
+        assert 'className = "ico"' in html
+        assert "makeActionTile" in html
+        assert "linear-gradient(180deg, #ffffff" not in html  # no glossy white pills
+        assert "-webkit-appearance: none" in html
         assert 'setAttribute("title"' in html
         # DIV tiles — WebKitGTK blanks <button> children (role set in JS)
         assert 'setAttribute("role", "button")' in html
