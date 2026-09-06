@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.3.1"
+VERSION = "7.4.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -47,7 +47,7 @@ ACTIONS = [
      "kind": "kw", "payload": "drivers", "accent": "#0f6f8c"},
 
     {"kind": "sec", "label": "Install & update"},
-    {"id": "apps", "label": "App Store", "tip": "Browse & install 220+ apps",
+    {"id": "apps", "label": "App Store", "tip": "Browse & install apps from the catalog",
      "kind": "tab", "payload": "store", "accent": "#d4620f"},
     {"id": "updates", "label": "System updates", "tip": "Check and install OS updates",
      "kind": "kw", "payload": "updates", "accent": "#0d6e8c"},
@@ -181,11 +181,17 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     --danger: #b23a22;
     --shadow: 0 24px 60px rgba(3,40,48,.14);
     --ease: cubic-bezier(.22,.9,.24,1);
+    --chip-bg: rgba(255,255,255,.88);
+    --card-bg: rgba(255,255,255,.90);
+    --input-bg: #fff;
   }
   * { box-sizing: border-box; }
   html, body {
     margin: 0; height: 100%;
-    font-family: "Ubuntu", "Cantarell", "Noto Sans", "Source Sans 3", "DejaVu Sans", sans-serif;
+    font-family: "Ubuntu Sans", "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
     color: var(--ink);
     background: var(--fog);
     overflow: hidden;
@@ -220,9 +226,15 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     font-size: clamp(2rem, 4.2vw, 2.7rem);
     font-weight: 800; letter-spacing: -.04em; line-height: .95;
     margin: 0;
-    background: linear-gradient(115deg, var(--tide0) 10%, var(--tide2) 55%, var(--tide1) 100%);
-    -webkit-background-clip: text; background-clip: text; color: transparent;
+    color: var(--tide0);
     animation: brandIn .7s var(--ease) both;
+  }
+  @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+    .logo {
+      background: linear-gradient(115deg, var(--tide0) 10%, var(--tide2) 55%, var(--tide1) 100%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent; color: transparent;
+    }
   }
   @keyframes brandIn {
     from { opacity: 0; transform: translateY(10px); letter-spacing: .04em; }
@@ -243,22 +255,26 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     display: flex; gap: 4px; margin-top: 10px;
     border-bottom: 1px solid var(--line);
   }
-  .nav button {
+  .nav .nav-tab {
     appearance: none; border: 0; background: transparent; cursor: pointer;
     font: inherit; font-weight: 700; font-size: .86rem; color: var(--muted);
     padding: 10px 14px 12px; position: relative;
     transition: color .2s;
   }
-  .nav button::after {
+  .nav .nav-tab::after {
     content: ""; position: absolute; left: 14px; right: 14px; bottom: -1px; height: 3px;
     border-radius: 3px 3px 0 0;
     background: linear-gradient(90deg, var(--ember), var(--ember2));
     transform: scaleX(0); transform-origin: left;
     transition: transform .28s var(--ease);
   }
-  .nav button:hover { color: var(--ink2); }
-  .nav button.active { color: var(--ink); }
-  .nav button.active::after { transform: scaleX(1); }
+  .nav .nav-tab:hover { color: var(--ink2); }
+  .nav .nav-tab.active { color: var(--ink); }
+  .nav .nav-tab.active::after { transform: scaleX(1); }
+  .nav .nav-tab:focus { outline: none; }
+  .nav .nav-tab:focus-visible {
+    outline: 2px solid rgba(10,138,150,.45); outline-offset: 2px;
+  }
 
   .panel {
     display: none; flex: 1; min-height: 0; flex-direction: column;
@@ -320,13 +336,18 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   .ask {
     margin: -18px 14px 0; position: relative; z-index: 3;
-    background: var(--panel);
-    backdrop-filter: blur(14px);
-    -webkit-backdrop-filter: blur(14px);
+    background: #f7fbfc;
     border: 1px solid rgba(255,255,255,.7);
     border-radius: 16px;
     padding: 10px 11px 8px;
     box-shadow: 0 14px 32px rgba(3,40,48,.12);
+  }
+  @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    .ask {
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
   }
   .ask label {
     display: block; font-size: .68rem; font-weight: 700;
@@ -336,7 +357,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .row { display: flex; gap: 8px; align-items: stretch; }
   .row input {
     flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 12px;
-    padding: 12px 13px; font-size: clamp(.88rem, 1.8vw, .98rem); background: #fff; color: var(--ink);
+    padding: 12px 13px; font-size: clamp(.88rem, 1.8vw, .98rem); background: var(--input-bg); color: var(--ink);
     font-family: inherit;
     transition: border-color .2s, box-shadow .2s;
   }
@@ -344,16 +365,21 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     outline: none; border-color: var(--tide2);
     box-shadow: 0 0 0 3px rgba(14,168,180,.18);
   }
-  .row button#askBtn {
+  .row #askBtn {
     border: 0; border-radius: 12px; padding: 0 16px; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center;
     background: linear-gradient(135deg, var(--ember), var(--ember2));
     color: #fff; font-weight: 800; font-size: .9rem; cursor: pointer;
     letter-spacing: .01em;
     transition: transform .15s var(--ease), filter .15s;
     animation: breath 2.6s ease-in-out infinite;
   }
-  .row button#askBtn:hover { filter: brightness(1.05); transform: translateY(-1px); }
-  .row button#askBtn:active { transform: translateY(1px); }
+  .row #askBtn:hover { filter: brightness(1.05); transform: translateY(-1px); }
+  .row #askBtn:active { transform: translateY(1px); }
+  .row #askBtn:focus { outline: none; }
+  .row #askBtn:focus-visible {
+    outline: 2px solid rgba(232,93,4,.45); outline-offset: 2px;
+  }
   @keyframes breath {
     0%,100% { box-shadow: 0 8px 18px rgba(232,93,4,.28); }
     50% { box-shadow: 0 10px 26px rgba(255,138,42,.38); }
@@ -363,7 +389,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     margin-top: 6px; padding: 0 2px;
   }
   .health-cta {
-    appearance: none; border: 1px solid color-mix(in srgb, var(--tide2) 45%, white);
+    appearance: none; border: 1px solid rgba(14,168,180,.42);
     background: linear-gradient(135deg, #e8f7f8, #fff);
     color: var(--tide0); font: inherit; font-weight: 800; font-size: .78rem;
     padding: 7px 12px; border-radius: 10px; cursor: pointer;
@@ -417,7 +443,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   .pulse-card:hover {
     transform: translateY(-3px);
-    border-color: color-mix(in srgb, var(--tide2) 50%, white);
+    border-color: rgba(10,138,150,.48);
     box-shadow: 0 14px 30px rgba(3,40,48,.12);
   }
   .pulse-card:active { transform: none; }
@@ -602,7 +628,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .store-bar input {
     flex: 1 1 180px; min-width: 140px;
     border: 1px solid var(--line); border-radius: 12px;
-    padding: 11px 14px; font-size: .92rem; background: #fff;
+    padding: 11px 14px; font-size: .92rem; background: var(--input-bg);
     font-family: inherit;
   }
   .store-bar input:focus {
@@ -624,14 +650,18 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto;
     padding: 0 16px 10px; scrollbar-width: thin;
   }
-  .chips button {
-    flex: 0 0 auto; border: 1px solid var(--line); background: rgba(255,255,255,.85);
+  .chips .chip {
+    flex: 0 0 auto; border: 1px solid var(--line); background: var(--chip-bg);
     border-radius: 10px; padding: 7px 12px; font-size: .74rem;
     font-weight: 700; cursor: pointer; color: var(--ink2); white-space: nowrap;
     font-family: inherit; transition: background .15s, color .15s, border-color .15s;
   }
-  .chips button.on {
+  .chips .chip.on {
     background: var(--tide0); color: #fff; border-color: var(--tide0);
+  }
+  .chips .chip:focus { outline: none; }
+  .chips .chip:focus-visible {
+    outline: 2px solid rgba(10,138,150,.45); outline-offset: 2px;
   }
   .cards {
     flex: 1; overflow: auto; padding: 2px 14px 18px;
@@ -641,7 +671,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .card {
     display: grid; grid-template-columns: 1fr auto; gap: 8px 14px;
     border: 1px solid var(--line); border-radius: 16px;
-    background: rgba(255,255,255,.86);
+    background: var(--card-bg);
     padding: 14px 14px 14px 16px;
     align-items: center;
     transition: transform .18s var(--ease), box-shadow .18s;
@@ -660,15 +690,20 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   .badge.cat { background: #fff1e6; color: #9a3f08; }
   .card .actions { display: flex; flex-direction: column; gap: 6px; }
-  .card button {
+  .card .act {
     border: 0; border-radius: 10px; padding: 9px 14px; font-weight: 800;
     font-size: .78rem; cursor: pointer; white-space: nowrap; font-family: inherit;
+    text-align: center;
   }
-  .card button.install {
+  .card .act.install {
     background: linear-gradient(135deg, var(--tide1), var(--tide3)); color: #fff;
   }
-  .card button.remove {
+  .card .act.remove {
     background: linear-gradient(135deg, #9a3320, var(--danger)); color: #fff;
+  }
+  .card .act:focus { outline: none; }
+  .card .act:focus-visible {
+    outline: 2px solid rgba(10,138,150,.45); outline-offset: 2px;
   }
   .empty {
     padding: 36px 16px; text-align: center; color: var(--muted); font-size: .92rem;
@@ -733,7 +768,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .hero .copy { padding: 8px 12px 14px; }
     .ask { margin: -14px 10px 0; padding: 8px; }
     .row { flex-wrap: wrap; }
-    .row button#askBtn { flex: 1 1 auto; min-height: 40px; }
+    .row #askBtn { flex: 1 1 auto; min-height: 40px; }
     .dial, .pc-badge-wrap { width: 52px; height: 52px; }
     .dial-val { font-size: .76rem; }
     .pulse-card { border-radius: 12px; padding: 6px 3px 6px; gap: 2px; }
@@ -776,6 +811,55 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .dial, .pc-badge-wrap { width: 40px; height: 40px; }
     .dial-val { font-size: .68rem; }
   }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+  /* Ubuntu 24.04 / GNOME dark — keep brand teal, invert surfaces */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #e8f4f7;
+      --ink2: #c5d8de;
+      --muted: #8aa3ad;
+      --fog: #0b161b;
+      --paper: #122026;
+      --panel: rgba(18,32,38,.90);
+      --line: rgba(180,220,230,.14);
+      --shadow: 0 24px 60px rgba(0,0,0,.42);
+      --chip-bg: rgba(21,36,43,.92);
+      --card-bg: rgba(21,36,43,.94);
+      --input-bg: #15242b;
+    }
+    html, body { background: #0b161b; }
+    .app {
+      background:
+        radial-gradient(900px 420px at 0% 0%, #1ec8d422, transparent 55%),
+        radial-gradient(700px 380px at 100% 8%, #ff8a2a16, transparent 50%),
+        linear-gradient(168deg, #0d1a20 0%, #0b161b 48%, #081318 100%);
+    }
+    .ask { background: #15242b; border-color: rgba(180,220,230,.14); }
+    .tile { background: #15242b; border-color: rgba(180,220,230,.14); }
+    .tile .name { color: #e8f4f7 !important; }
+    .btn-ghost { background: #15242b; color: var(--ink2); }
+    .pulse-card {
+      background:
+        radial-gradient(120% 90% at 50% 0%, rgba(30,200,212,.12), transparent 55%),
+        rgba(21,36,43,.94);
+    }
+    .dial .track { stroke: #243840; }
+    .badge { background: #1a3338; color: #9ee7ee; }
+    .health-cta { background: linear-gradient(135deg, #163238, #1a2c32); color: #d7f4f6; }
+    .logo { color: #8ee7ee; }
+    @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+      .logo {
+        background: linear-gradient(115deg, #b8f4f8 10%, #1ec8d4 55%, #8ee7ee 100%);
+        -webkit-background-clip: text; background-clip: text;
+        -webkit-text-fill-color: transparent; color: transparent;
+      }
+    }
+  }
 </style>
 </head>
 <body>
@@ -786,9 +870,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       <div class="ver">v__VERSION__ · <a class="site" href="https://www.tuxgenie.com" id="siteLink">www.tuxgenie.com</a></div>
     </div>
     <nav class="nav" id="tabs">
-      <button type="button" data-tab="home" class="active">Home</button>
-      <button type="button" data-tab="store">App Store</button>
-      <button type="button" data-tab="myapps">My Apps</button>
+      <div role="tab" tabindex="0" data-tab="home" class="nav-tab active">Home</div>
+      <div role="tab" tabindex="0" data-tab="store" class="nav-tab">App Store</div>
+      <div role="tab" tabindex="0" data-tab="myapps" class="nav-tab">My Apps</div>
     </nav>
   </header>
 
@@ -814,10 +898,10 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       <label for="q">What do you need?</label>
       <div class="row">
         <input id="q" type="text" placeholder="my wifi is not working" autocomplete="off"/>
-        <button id="askBtn" type="button">Ask →</button>
+        <div id="askBtn" role="button" tabindex="0">Ask →</div>
       </div>
       <div class="ask-tools">
-        <button type="button" class="health-cta" id="healthBtn" title="Run a full health check in the live terminal">Health scan →</button>
+        <div role="button" tabindex="0" class="health-cta" id="healthBtn" title="Run a full health check in the live terminal">Health scan →</div>
         <p class="hint">Try “install chrome” · “why is it slow?” · or browse the App Store</p>
       </div>
     </div>
@@ -825,7 +909,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     <div class="pulse-wrap" id="pulseWrap">
       <div class="sec">This PC</div>
       <div class="pulse" id="pulse" aria-label="System pulse">
-        <button type="button" class="pulse-card ok" data-pulse="cpu" title="Open health check">
+        <div role="button" tabindex="0" class="pulse-card ok" data-pulse="cpu" title="Open health check">
           <div class="dial" aria-hidden="true">
             <svg viewBox="0 0 72 72">
               <circle class="track" cx="36" cy="36" r="28"/>
@@ -835,8 +919,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
           </div>
           <div class="k">CPU</div>
           <div class="s" id="pulseCpuS">sampling…</div>
-        </button>
-        <button type="button" class="pulse-card ok" data-pulse="mem" title="Open health check">
+        </div>
+        <div role="button" tabindex="0" class="pulse-card ok" data-pulse="mem" title="Open health check">
           <div class="dial" aria-hidden="true">
             <svg viewBox="0 0 72 72">
               <circle class="track" cx="36" cy="36" r="28"/>
@@ -846,8 +930,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
           </div>
           <div class="k">Memory</div>
           <div class="s" id="pulseMemS">used / total</div>
-        </button>
-        <button type="button" class="pulse-card ok" data-pulse="disk" title="Open disk tools">
+        </div>
+        <div role="button" tabindex="0" class="pulse-card ok" data-pulse="disk" title="Open disk tools">
           <div class="dial" aria-hidden="true">
             <svg viewBox="0 0 72 72">
               <circle class="track" cx="36" cy="36" r="28"/>
@@ -857,15 +941,15 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
           </div>
           <div class="k">Disk</div>
           <div class="s" id="pulseDiskS">used / total</div>
-        </button>
-        <button type="button" class="pulse-card pc" data-pulse="pc" title="PC configuration">
+        </div>
+        <div role="button" tabindex="0" class="pulse-card pc" data-pulse="pc" title="PC configuration">
           <div class="pc-badge-wrap" aria-hidden="true">
             <div class="pc-badge">PC</div>
           </div>
           <div class="k">PC config</div>
           <div class="v" id="pulsePc">—</div>
           <div class="s" id="pulsePcS">hardware →</div>
-        </button>
+        </div>
       </div>
     </div>
 
@@ -879,7 +963,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   <section class="panel" id="tab-store">
     <div class="store-head">
       <h2>App Store</h2>
-      <p>220+ apps — search, filter, install. Approve steps in the live terminal.</p>
+      <p id="storeBlurb">Search, filter, install. Approve steps in the live terminal.</p>
     </div>
     <div class="store-bar">
       <input id="storeQ" type="search" placeholder="Search — chrome, steam, notes…" autocomplete="off"/>
@@ -895,7 +979,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     </div>
     <div class="store-bar">
       <input id="myQ" type="search" placeholder="Search installed apps…" autocomplete="off"/>
-      <button type="button" class="btn-primary" id="refreshInstalled">Refresh</button>
+      <div role="button" tabindex="0" class="btn-primary" id="refreshInstalled">Refresh</div>
     </div>
     <div class="cards" id="myCards"></div>
   </section>
@@ -947,7 +1031,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     if (name === "store-ai") { storeMode = "ai"; name = "store"; }
     activeTab = name;
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
-    document.querySelectorAll(".nav button").forEach(b => {
+    document.querySelectorAll(".nav .nav-tab").forEach(b => {
       b.classList.toggle("active", b.getAttribute("data-tab") === name);
     });
     const panel = document.getElementById("tab-" + name);
@@ -1014,14 +1098,23 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     setDial("pulseDiskArc", p.disk_pct, p.disk_warn);
   };
 
-  document.getElementById("pulseWrap").addEventListener("click", (e) => {
-    const card = e.target.closest("[data-pulse]");
+  function runPulse(card) {
     if (!card) return;
     const key = card.getAttribute("data-pulse");
     const kw = pulseActions[key] || key;
     const labelEl = card.querySelector(".k");
     setStatus("<strong>Starting</strong> — " + ((labelEl && labelEl.textContent) || kw));
     post({ op: "run", kind: "kw", payload: kw });
+  }
+  document.getElementById("pulseWrap").addEventListener("click", (e) => {
+    runPulse(e.target.closest("[data-pulse]"));
+  });
+  document.getElementById("pulseWrap").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const card = e.target.closest("[data-pulse]");
+    if (!card) return;
+    e.preventDefault();
+    runPulse(card);
   });
 
   function runText(text) {
@@ -1106,29 +1199,34 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     return seen;
   }
 
+  function onActivate(el, fn) {
+    el.addEventListener("click", fn);
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); fn(); }
+    });
+  }
+
+  function makeChip(text, on, fn) {
+    // DIV not <button>: WebKitGTK often paints blank white buttons
+    const el = document.createElement("div");
+    el.className = "chip" + (on ? " on" : "");
+    el.setAttribute("role", "button");
+    el.setAttribute("tabindex", "0");
+    el.textContent = text;
+    onActivate(el, fn);
+    return el;
+  }
+
   function renderStoreChips() {
     const chips = document.getElementById("storeChips");
     chips.innerHTML = "";
-    const modeApps = document.createElement("button");
-    modeApps.type = "button";
-    modeApps.textContent = "Apps (" + STORE_APPS.length + ")";
-    modeApps.className = storeMode === "apps" ? "on" : "";
-    modeApps.addEventListener("click", () => { storeMode = "apps"; storeCat = "All"; renderStore(); });
-    chips.appendChild(modeApps);
-    const modeAi = document.createElement("button");
-    modeAi.type = "button";
-    modeAi.textContent = "AI tools (" + AI_APPS.length + ")";
-    modeAi.className = storeMode === "ai" ? "on" : "";
-    modeAi.addEventListener("click", () => { storeMode = "ai"; storeCat = "All"; renderStore(); });
-    chips.appendChild(modeAi);
+    chips.appendChild(makeChip("Apps (" + STORE_APPS.length + ")", storeMode === "apps",
+      () => { storeMode = "apps"; storeCat = "All"; renderStore(); }));
+    chips.appendChild(makeChip("AI tools (" + AI_APPS.length + ")", storeMode === "ai",
+      () => { storeMode = "ai"; storeCat = "All"; renderStore(); }));
     const rows = catalogSource();
     ["All"].concat(uniqueCats(rows)).forEach(cat => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.textContent = cat;
-      if (cat === storeCat) b.className = "on";
-      b.addEventListener("click", () => { storeCat = cat; renderStore(); });
-      chips.appendChild(b);
+      chips.appendChild(makeChip(cat, cat === storeCat, () => { storeCat = cat; renderStore(); }));
     });
   }
 
@@ -1174,11 +1272,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       left.appendChild(h); left.appendChild(p); left.appendChild(badges);
       const actions = document.createElement("div");
       actions.className = "actions";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "install";
+      const btn = document.createElement("div");
+      btn.className = "act install";
+      btn.setAttribute("role", "button");
+      btn.setAttribute("tabindex", "0");
       btn.textContent = "Install";
-      btn.addEventListener("click", () => {
+      onActivate(btn, () => {
         setStatus("<strong>Install</strong> — " + r.name + " (confirm in terminal →)");
         post({ op: "install", kind: (r.kind || (storeMode === "ai" ? "ai" : "app")), id: r.id, name: r.name });
       });
@@ -1223,11 +1322,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       left.appendChild(h); left.appendChild(p); left.appendChild(badges);
       const actions = document.createElement("div");
       actions.className = "actions";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "remove";
+      const btn = document.createElement("div");
+      btn.className = "act remove";
+      btn.setAttribute("role", "button");
+      btn.setAttribute("tabindex", "0");
       btn.textContent = "Remove";
-      btn.addEventListener("click", () => {
+      onActivate(btn, () => {
         const ref = (r.method || "") + ":" + (r.target || "");
         setStatus("<strong>Remove</strong> — " + r.name + " (confirm in terminal →)");
         post({ op: "remove", ref: ref, name: r.name });
@@ -1246,22 +1346,37 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   };
 
   document.getElementById("tabs").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-tab]");
+    const b = e.target.closest("[data-tab]");
     if (!b) return;
     showTab(b.getAttribute("data-tab"));
   });
-  document.getElementById("askBtn").addEventListener("click", () => runText(q.value));
-  document.getElementById("healthBtn").addEventListener("click", () => {
+  document.getElementById("tabs").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const b = e.target.closest("[data-tab]");
+    if (!b) return;
+    e.preventDefault();
+    showTab(b.getAttribute("data-tab"));
+  });
+  onActivate(document.getElementById("askBtn"), () => runText(q.value));
+  onActivate(document.getElementById("healthBtn"), () => {
     setStatus("<strong>Starting</strong> — Health scan");
     post({ op: "run", kind: "kw", payload: "health" });
   });
   q.addEventListener("keydown", (e) => { if (e.key === "Enter") runText(q.value); });
   document.getElementById("storeQ").addEventListener("input", renderStore);
   document.getElementById("myQ").addEventListener("input", renderMyApps);
-  document.getElementById("refreshInstalled").addEventListener("click", () => {
+  onActivate(document.getElementById("refreshInstalled"), () => {
     setStatus("<strong>Scanning</strong> — installed apps…");
     post({ op: "list-installed" });
   });
+  const storeBlurb = document.getElementById("storeBlurb");
+  if (storeBlurb) {
+    storeBlurb.textContent = STORE_APPS.length + "+ apps — search, filter, install. Approve steps in the live terminal.";
+  }
+  try {
+    const dpr = window.devicePixelRatio || 1;
+    if (dpr >= 1.5) document.documentElement.style.fontSize = (15 + Math.min(dpr, 2)) + "px";
+  } catch (e) {}
   const site = document.getElementById("siteLink");
   if (site) {
     site.addEventListener("click", (e) => {

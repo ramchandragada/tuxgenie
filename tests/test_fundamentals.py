@@ -56,6 +56,12 @@ class TestStartupFundamentals:
     def test_base_ctx_reports_a_package_manager(self):
         ctx = tg.base_ctx()
         assert "pkg_mgr" in ctx and "os" in ctx
+        assert "flavour" in ctx and "is_debian_family" in ctx
+        assert "distro_id" in ctx and "desktop" in ctx
+        assert tg._debian_flavour({"ID": "ubuntu", "ID_LIKE": "debian"}) == "ubuntu"
+        assert tg._debian_flavour({"ID": "linuxmint", "ID_LIKE": "ubuntu debian"}) == "mint"
+        assert tg._debian_flavour({"ID": "pop", "ID_LIKE": "ubuntu"}) == "pop"
+        assert tg._debian_flavour({"ID": "debian", "ID_LIKE": ""}) == "debian"
 
     def test_all_free_backends_construct(self):
         # Every free default must always be constructable with a dummy key.
@@ -115,6 +121,16 @@ class TestCatalogFundamentals:
         assert "Discord" in names and "Vesktop" in names
         assert "Visual Studio Code" in names and "VSCodium" in names
         assert "Prism Launcher" in names and "Modrinth App" in names
+
+    def test_ubuntu_debian_daily_driver_apps_present(self):
+        names = {e["name"] for e in tg.APP_CATALOG}
+        for n in (
+            "Wine", "Multimedia Codecs", "1Password", "Piper", "Helvum",
+            "qpwgraph", "Proton Drive", "Trayscale", "Caffeine",
+            "Google Earth Pro", "FFmpeg",
+        ):
+            assert n in names, n
+        assert len(tg.APP_CATALOG) >= 233
 
     def test_ai_catalog_integrity(self):
         assert len(tg.AI_CATALOG) >= 10
@@ -229,10 +245,10 @@ class TestCatalogFundamentals:
         # then apt; then Flatpak BEFORE Snap. Chromium ships both snap + flatpak, so
         # it exercises the flatpak-before-snap rule.
         monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
-        # No downloaded file → Flatpak is chosen over Snap.
+        # No downloaded file → native apt package first (Debian/Ubuntu), then Flatpak.
         monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
         cmd, root = tg._catalog_deterministic_cmd({"name": "Chromium"}, {"pkg_mgr": "apt"})
-        assert "org.chromium.Chromium" in cmd and "snap install" not in cmd and root is True
+        assert "chromium" in cmd and "snap install" not in cmd and root is True
         # A downloaded .deb matching the app (by any known package name) wins first,
         # even for an app whose normal method is Flatpak/Snap.
         monkeypatch.setattr(tg, "_local_deb_for",
@@ -1161,6 +1177,17 @@ class TestUnifiedShell:
         src = open(path).read()
         assert "alloc.width * 0.40" in src
         assert "alloc.width * 0.30" not in src
+        # Ubuntu / Debian GUI polish — no color-mix, solid fallbacks, dark + motion
+        assert "color-mix(" not in html
+        assert "Ubuntu Sans" in html
+        assert "prefers-reduced-motion" in html
+        assert "prefers-color-scheme: dark" in html
+        assert "-webkit-font-smoothing: antialiased" in html
+        assert "devicePixelRatio" in html
+        assert "blank white buttons" in html
+        assert 'className = "chip"' in html or 'className = "chip"' in html
+        assert 'className = "act install"' in html
+        assert "storeBlurb" in html
 
     def test_gui_system_pulse_shape(self):
         p = tg.gui_system_pulse()

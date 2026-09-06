@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.3.1"
+__version__ = "7.4.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2458,18 +2458,61 @@ def collect_fingerprint(force: bool = False) -> dict:
     return fp
 
 
-def base_ctx() -> dict:
-    pretty = ""
+def _os_release_map() -> dict:
+    """Parse /etc/os-release into a dict (ID, ID_LIKE, PRETTY_NAME, …)."""
+    data = {}
     try:
-        for line in open("/etc/os-release"):
-            if line.startswith("PRETTY_NAME="):
-                pretty = line.split("=",1)[1].strip().strip('"')
+        with open("/etc/os-release") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                data[key] = val.strip().strip('"').strip("'")
     except Exception:
-        pretty = _r("uname -s")
+        pass
+    return data
+
+
+def _debian_flavour(osr=None):
+    """Ubuntu-family flavour: ubuntu, debian, mint, pop, elementary, kubuntu, …"""
+    osr = osr if osr is not None else _os_release_map()
+    did = (osr.get("ID") or "").lower()
+    like = (osr.get("ID_LIKE") or "").lower()
+    variant = (osr.get("VARIANT_ID") or osr.get("UBUNTU_CODENAME") or "").lower()
+    if did in ("linuxmint", "mint") or "linuxmint" in like:
+        return "mint"
+    if did in ("pop", "pop-os") or "pop" in like:
+        return "pop"
+    if did == "elementary" or "elementary" in like:
+        return "elementary"
+    if did == "zorin":
+        return "zorin"
+    if "kubuntu" in (osr.get("PRETTY_NAME") or "").lower() or variant == "kde":
+        return "kubuntu"
+    if did == "ubuntu" or "ubuntu" in like:
+        return "ubuntu"
+    if did == "debian" or "debian" in like:
+        return "debian"
+    return did or "unknown"
+
+
+def base_ctx() -> dict:
+    osr = _os_release_map()
+    pretty = osr.get("PRETTY_NAME") or _r("uname -s")
     pkg = "unknown"
-    for pm in ("apt","dnf","pacman","zypper","apk","emerge","brew"):
+    for pm in ("apt", "dnf", "pacman", "zypper", "apk", "emerge", "brew"):
         if _r(f"command -v {pm}"):
-            pkg = pm; break
+            pkg = pm
+            break
+    flavour = _debian_flavour(osr)
+    like = (osr.get("ID_LIKE") or "").lower()
+    did = (osr.get("ID") or "").lower()
+    is_debian_family = pkg == "apt" or did in (
+        "debian", "ubuntu", "linuxmint", "pop", "elementary", "zorin",
+    ) or "debian" in like or "ubuntu" in like
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP") or os.environ.get(
+        "XDG_SESSION_DESKTOP") or "none"
     return {
         "os":      pretty or "unknown",
         "kernel":  _r("uname -r"),
@@ -2478,9 +2521,13 @@ def base_ctx() -> dict:
         "is_root": os.geteuid()==0 if hasattr(os,"geteuid") else False,
         "hostname":_r("hostname"),
         "uptime":  _r("uptime -p"),
-        "desktop": os.environ.get("XDG_CURRENT_DESKTOP","none"),
+        "desktop": desktop,
         "pkg_mgr": pkg,
         "shell":   os.environ.get("SHELL","unknown"),
+        "distro_id": did or "unknown",
+        "distro_like": like,
+        "flavour": flavour,
+        "is_debian_family": is_debian_family,
     }
 
 def health_ctx() -> dict:
@@ -10685,6 +10732,18 @@ APP_CATALOG = [
     {"id": 220,"name": "GnuCash",             "cat": "Office & Notes", "prompt": "Install GnuCash, full double-entry personal/small-business accounting, via flatpak from Flathub: org.gnucash.GnuCash (or apt: gnucash).", "desc": "Full accounting / personal finance"},
     {"id": 221,"name": "HomeBank",            "cat": "Office & Notes", "prompt": "Install HomeBank, a simple personal accounting app, via flatpak from Flathub: fr.free.Homebank (or apt: homebank). Lighter than GnuCash for everyday budgets.", "desc": "Simple personal budgeting"},
     {"id": 222,"name": "VSCodium",            "cat": "Developer",      "prompt": "Install VSCodium, the telemetry-free community build of VS Code, via flatpak from Flathub: com.vscodium.codium. Distinct from Visual Studio Code (Microsoft) already in the catalog.", "desc": "VS Code without Microsoft telemetry"},
+    # ── Ubuntu / Debian daily-driver gaps (v7.4.0) ──
+    {"id": 223,"name": "Wine",                "cat": "Gaming",         "prompt": "Install Wine (and winetricks) so Windows programs can run on Linux. On Debian/Ubuntu prefer apt: wine (or wine64) plus winetricks. Flatpak alternative: org.winehq.Wine. Do not replace Steam/Proton — this is for non-Steam Windows apps.", "desc": "Run Windows programs on Linux"},
+    {"id": 224,"name": "Multimedia Codecs",   "cat": "Media",          "prompt": "Install multimedia codecs so videos and MP3s play. On Ubuntu / Mint / Pop use ubuntu-restricted-extras (accept the EULA). On Debian use ffmpeg, libavcodec-extra, gstreamer1.0-libav, gstreamer1.0-plugins-bad and gstreamer1.0-plugins-ugly. Never force Ubuntu-only packages on Debian.", "desc": "Play MP3 / H.264 / DVD on Ubuntu & Debian"},
+    {"id": 225,"name": "1Password",           "cat": "Files & Sync",   "prompt": "Install 1Password desktop via flatpak from Flathub: com.1password.1Password. Distinct from Bitwarden, KeePassXC and Proton Pass already in the catalog.", "desc": "Password manager (1Password official)"},
+    {"id": 226,"name": "Piper",               "cat": "System Tools",   "prompt": "Install Piper, a GUI for gaming mice (Logitech, etc.) via flatpak from Flathub: org.freedesktop.Piper (or apt: piper). Complements Solaar, which is for Logitech unifying receivers.", "desc": "Configure gaming mice"},
+    {"id": 227,"name": "Helvum",              "cat": "Media",          "prompt": "Install Helvum, the PipeWire patchbay (route app audio/video/MIDI), via flatpak from Flathub: org.pipewire.Helvum (or apt: helvum). Complements EasyEffects.", "desc": "PipeWire audio/video patchbay"},
+    {"id": 228,"name": "qpwgraph",            "cat": "Media",          "prompt": "Install qpwgraph, a Qt PipeWire graph / patchbay (popular on Kubuntu/KDE), via flatpak from Flathub: org.rncbc.qpwgraph (or apt: qpwgraph). Distinct from Helvum (GTK).", "desc": "PipeWire graph (KDE/Qt patchbay)"},
+    {"id": 229,"name": "Proton Drive",        "cat": "Files & Sync",   "prompt": "Install Proton Drive desktop via flatpak from Flathub: me.proton.Drive. Complements Proton Mail, Proton Pass and Proton VPN already in the catalog.", "desc": "Encrypted cloud files (Proton)"},
+    {"id": 230,"name": "Trayscale",           "cat": "Remote Access",  "prompt": "Install Trayscale, an unofficial GTK GUI for Tailscale, via flatpak from Flathub: dev.trayscale.Trayscale. Tailscale itself (the official CLI/daemon) is a separate catalog entry — install that first if missing.", "desc": "Unofficial GUI for Tailscale"},
+    {"id": 231,"name": "Caffeine",            "cat": "Utilities",      "prompt": "Install Caffeine so the screen does not sleep during videos or presentations. On Ubuntu/Debian prefer apt: caffeine (or gnome-shell-extension-caffeine on GNOME).", "desc": "Keep the screen awake"},
+    {"id": 232,"name": "Google Earth Pro",    "cat": "Utilities",      "prompt": "Install Google Earth Pro via flatpak from Flathub: com.google.EarthPro.", "desc": "Satellite maps and globe (Google)"},
+    {"id": 233,"name": "FFmpeg",              "cat": "AV Creation",    "prompt": "Install FFmpeg, the command-line Swiss-army knife for convert/record/stream audio and video, via apt (ffmpeg) on Debian/Ubuntu.", "desc": "Convert and record audio/video (CLI)"},
 
 ]
 
@@ -10770,7 +10829,7 @@ _CATALOG_INSTALL = {
     "Google Chrome":    {"deb": {"name": "google-chrome", "key": "https://dl.google.com/linux/linux_signing_key.pub",
                                  "repo": "https://dl.google.com/linux/chrome/deb/ stable main",
                                  "pkg": "google-chrome-stable"}},
-    "Mozilla Firefox":  {"snap": "firefox", "flatpak": "org.mozilla.firefox"},
+    "Mozilla Firefox":  {"pkg": "firefox", "flatpak": "org.mozilla.firefox", "snap": "firefox"},
     "Vivaldi":          {"deb": {"name": "vivaldi", "key": "https://repo.vivaldi.com/archive/linux_signing_key.pub",
                                  "repo": "https://repo.vivaldi.com/archive/deb/ stable main",
                                  "pkg": "vivaldi-stable"}},
@@ -10786,7 +10845,7 @@ _CATALOG_INSTALL = {
     "Opera":            {"deb": {"name": "opera", "key": "https://deb.opera.com/archive.key",
                                  "repo": "https://deb.opera.com/opera-stable/ stable non-free",
                                  "pkg": "opera-stable"}, "flatpak": "com.opera.Opera"},
-    "Chromium":         {"snap": "chromium", "flatpak": "org.chromium.Chromium"},
+    "Chromium":         {"pkg": "chromium", "flatpak": "org.chromium.Chromium", "snap": "chromium"},
     # ── Communication ──
     "Slack":            {"snap": "slack", "flatpak": "com.slack.Slack"},
     "Discord":          {"flatpak": "com.discordapp.Discord"},
@@ -11133,6 +11192,30 @@ _CATALOG_INSTALL = {
     "GnuCash":          {"pkg": "gnucash", "flatpak": "org.gnucash.GnuCash"},
     "HomeBank":         {"pkg": "homebank", "flatpak": "fr.free.Homebank"},
     "VSCodium":         {"flatpak": "com.vscodium.codium"},
+    # ── Ubuntu / Debian daily-driver gaps (v7.4.0) ──
+    "Wine":             {"pkg": "wine", "flatpak": "org.winehq.Wine"},
+    "Multimedia Codecs": {"script": "set -e; . /etc/os-release; "
+                                   "like=${ID_LIKE:-}; id=${ID:-}; "
+                                   "if [ \"$id\" = ubuntu ] || [ \"$id\" = linuxmint ] "
+                                   "|| [ \"$id\" = pop ] || [ \"$id\" = elementary ] "
+                                   "|| [ \"$id\" = zorin ] || echo \"$like\" | grep -q ubuntu; then "
+                                   "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "
+                                   "ubuntu-restricted-extras ffmpeg "
+                                   "|| sudo apt-get install -y ubuntu-restricted-extras; "
+                                   "else sudo apt-get install -y ffmpeg libavcodec-extra "
+                                   "gstreamer1.0-libav gstreamer1.0-plugins-bad "
+                                   "gstreamer1.0-plugins-ugly "
+                                   "|| sudo apt-get install -y ffmpeg libavcodec-extra; fi",
+                         "script_root": True},
+    "1Password":        {"flatpak": "com.1password.1Password"},
+    "Piper":            {"pkg": "piper", "flatpak": "org.freedesktop.Piper"},
+    "Helvum":           {"pkg": "helvum", "flatpak": "org.pipewire.Helvum"},
+    "qpwgraph":         {"pkg": "qpwgraph", "flatpak": "org.rncbc.qpwgraph"},
+    "Proton Drive":     {"flatpak": "me.proton.Drive"},
+    "Trayscale":        {"flatpak": "dev.trayscale.Trayscale"},
+    "Caffeine":         {"pkg": "caffeine"},
+    "Google Earth Pro": {"flatpak": "com.google.EarthPro"},
+    "FFmpeg":           {"pkg": "ffmpeg"},
 }
 
 
@@ -13771,8 +13854,8 @@ def _gui_pick_font_family(tkfont) -> str:
     """Prefer expressive Linux UI fonts over the bland Tk default."""
     available = set(tkfont.families())
     for name in (
-        "Ubuntu", "Cantarell", "Noto Sans", "Source Sans 3", "Source Sans Pro",
-        "IBM Plex Sans", "DejaVu Sans", "FreeSans",
+        "Ubuntu Sans", "Ubuntu", "Cantarell", "Noto Sans", "Source Sans 3",
+        "Source Sans Pro", "IBM Plex Sans", "DejaVu Sans", "FreeSans",
     ):
         if name in available:
             return name
