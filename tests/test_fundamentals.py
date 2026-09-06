@@ -1489,6 +1489,9 @@ class TestUnifiedShell:
         assert 'className = "chip"' in html or 'className = "chip"' in html
         assert 'className = "act install"' in html
         assert "storeBlurb" in html
+        assert "repeat(3, minmax(0, 1fr))" in html  # App Store 3-up
+        assert "makeAppIcon" in html and 'className = "app-ico"' in html
+        assert "APP_MARKS" in html
 
     def test_gui_system_pulse_shape(self):
         p = tg.gui_system_pulse()

@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.12.0"
+VERSION = "7.13.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -705,37 +705,66 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     outline: 2px solid rgba(10,138,150,.45); outline-offset: 2px;
   }
   .cards {
-    flex: 1; overflow: auto; padding: 2px 14px 18px;
-    display: grid; grid-template-columns: 1fr; gap: 8px;
+    flex: 1; overflow: auto; padding: 2px 12px 18px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
     align-content: start;
   }
   .card {
-    display: grid; grid-template-columns: 1fr auto; gap: 8px 14px;
-    border: 1px solid var(--line); border-radius: 16px;
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-orient: vertical; -webkit-flex-direction: column; flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    border: 1px solid var(--line); border-radius: 14px;
     background: #ffffff;
     box-shadow: 0 1px 3px rgba(16,48,64,.05);
-    padding: 14px 14px 14px 16px;
-    align-items: center;
+    padding: 11px 10px 10px;
     transition: transform .18s var(--ease), box-shadow .18s;
   }
   .card:hover {
     transform: translateY(-2px);
     box-shadow: 0 12px 28px rgba(3,40,48,.08);
   }
-  .card h3 { margin: 0; font-size: .98rem; font-weight: 800; letter-spacing: -.01em; }
-  .card p { margin: 4px 0 0; font-size: .78rem; color: var(--muted); line-height: 1.35; }
-  .badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .card-top {
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-align: start; -webkit-align-items: flex-start; align-items: flex-start;
+    gap: 8px; min-width: 0;
+  }
+  .app-ico {
+    -webkit-flex: 0 0 40px; flex: 0 0 40px;
+    width: 40px; height: 40px; border-radius: 11px;
+    display: -webkit-box; display: -webkit-flex; display: flex;
+    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+    -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center;
+    color: #fff; font-weight: 800; font-size: .78rem; letter-spacing: -.02em;
+    overflow: hidden;
+  }
+  .app-ico svg { width: 22px; height: 22px; display: block; }
+  .card-copy { min-width: 0; -webkit-box-flex: 1; -webkit-flex: 1; flex: 1; }
+  .card h3 {
+    margin: 0; font-size: .8rem; font-weight: 800; letter-spacing: -.02em;
+    line-height: 1.25;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .card p {
+    margin: 3px 0 0; font-size: .68rem; color: var(--muted); line-height: 1.3;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .badges { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 0; }
   .badge {
     font-size: .62rem; font-weight: 800; text-transform: uppercase;
     letter-spacing: .05em; padding: 3px 7px; border-radius: 6px;
     background: #e7f4f6; color: var(--tide0);
   }
   .badge.cat { background: #fff1e6; color: #9a3f08; }
-  .card .actions { display: flex; flex-direction: column; gap: 6px; }
+  .card .actions { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
   .card .act {
-    border: 0; border-radius: 10px; padding: 9px 14px; font-weight: 800;
-    font-size: .78rem; cursor: pointer; white-space: nowrap; font-family: inherit;
-    text-align: center;
+    border: 0; border-radius: 10px; padding: 8px 10px; font-weight: 800;
+    font-size: .74rem; cursor: pointer; white-space: nowrap; font-family: inherit;
+    text-align: center; width: 100%;
   }
   .card .act.install {
     background: linear-gradient(135deg, var(--tide1), var(--tide3)); color: #fff;
@@ -749,6 +778,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   .empty {
     padding: 36px 16px; text-align: center; color: var(--muted); font-size: .92rem;
+    grid-column: 1 / -1;
   }
   .status-bar {
     flex: 0 0 auto;
@@ -789,8 +819,10 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   @media (max-width: 420px) {
     a.aspera-mark .by { display: none; }
   }
-  @media (min-width: 560px) {
-    .cards { grid-template-columns: 1fr 1fr; }
+  @media (max-width: 400px) {
+    .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card { padding: 8px 7px 8px; }
+    .app-ico { width: 34px; height: 34px; -webkit-flex-basis: 34px; flex-basis: 34px; }
   }
   /* Wide control deck */
   @media (min-width: 720px) {
@@ -1261,6 +1293,45 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     return storeMode === "ai" ? AI_APPS : STORE_APPS;
   }
 
+  const ICO_PALETTE = ["#0a7c88", "#0b6f9a", "#1b6b4a", "#c45c12",
+                       "#3d5a80", "#7e22ce", "#9a3f08", "#0d6e8c"];
+  const APP_MARKS = {
+    "brave browser": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7z"/></svg>',
+    "google chrome": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/><path d="M12 8.8h8.2M8.4 14.2L4.2 7.6M15.6 14.2l-4.2 7.3"/></svg>',
+    "mozilla firefox": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M4 10c3 1 6-1 8-4 2 4 6 5 8 3-1 5-5 9-8 9s-7-3-8-8z"/></svg>',
+    "vivaldi": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8l8 12 8-12"/><circle cx="12" cy="8" r="3"/></svg>',
+    "slack": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 8h3v3H8zM13 8h3v3h-3zM8 13h3v3H8zM13 13h3v3h-3z"/></svg>',
+    "discord": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7c2-1 4-1 5-1s3 0 5 1l2 6c-2 2-4 3-7 3s-5-1-7-3z"/><circle cx="9.5" cy="11" r=".8" fill="currentColor"/><circle cx="14.5" cy="11" r=".8" fill="currentColor"/></svg>',
+    "steam": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="14" r="2.2"/><circle cx="15" cy="9" r="2"/><path d="M10.6 12.6L14 9.6"/></svg>',
+    "vlc": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5l10 7-10 7z"/></svg>',
+    "visual studio code": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8l7-4 9 4v8l-9 4-7-4V8zM11 4v16"/></svg>',
+    "spotify": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M7.5 11c3-1.4 6-1.4 9 0M8 14c2.4-1 5-1 7.4 0"/></svg>'
+  };
+
+  function appInitials(name) {
+    const parts = String(name || "").replace(/[^A-Za-z0-9 ]/g, " ").trim().split(" ").filter(Boolean);
+    if (parts.length >= 2) return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+    return String(name || "?").replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase() || "?";
+  }
+
+  function appIcoColor(name) {
+    let h = 0;
+    const s = String(name || "");
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return ICO_PALETTE[h % ICO_PALETTE.length];
+  }
+
+  function makeAppIcon(name) {
+    const el = document.createElement("div");
+    el.className = "app-ico";
+    el.setAttribute("aria-hidden", "true");
+    el.style.background = appIcoColor(name);
+    const mark = APP_MARKS[String(name || "").toLowerCase()];
+    if (mark) el.innerHTML = mark;
+    else el.textContent = appInitials(name);
+    return el;
+  }
+
   function uniqueCats(rows) {
     const seen = [];
     rows.forEach(r => { if (r.cat && seen.indexOf(r.cat) < 0) seen.push(r.cat); });
@@ -1320,24 +1391,29 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     rows.forEach(r => {
       const card = document.createElement("div");
       card.className = "card";
-      const left = document.createElement("div");
+      const top = document.createElement("div");
+      top.className = "card-top";
+      const copy = document.createElement("div");
+      copy.className = "card-copy";
       const h = document.createElement("h3");
       h.textContent = r.name;
       const p = document.createElement("p");
       p.textContent = r.desc || "";
+      copy.appendChild(h); copy.appendChild(p);
+      top.appendChild(makeAppIcon(r.name));
+      top.appendChild(copy);
       const badges = document.createElement("div");
       badges.className = "badges";
       const cat = document.createElement("span");
       cat.className = "badge cat";
       cat.textContent = r.cat;
       badges.appendChild(cat);
-      (r.methods || []).forEach(m => {
+      (r.methods || []).slice(0, 2).forEach(m => {
         const b = document.createElement("span");
         b.className = "badge";
         b.textContent = m;
         badges.appendChild(b);
       });
-      left.appendChild(h); left.appendChild(p); left.appendChild(badges);
       const actions = document.createElement("div");
       actions.className = "actions";
       const btn = document.createElement("div");
@@ -1350,7 +1426,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
         post({ op: "install", kind: (r.kind || (storeMode === "ai" ? "ai" : "app")), id: r.id, name: r.name });
       });
       actions.appendChild(btn);
-      card.appendChild(left);
+      card.appendChild(top);
+      card.appendChild(badges);
       card.appendChild(actions);
       box.appendChild(card);
     });
@@ -1376,18 +1453,23 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     rows.forEach(r => {
       const card = document.createElement("div");
       card.className = "card";
-      const left = document.createElement("div");
+      const top = document.createElement("div");
+      top.className = "card-top";
+      const copy = document.createElement("div");
+      copy.className = "card-copy";
       const h = document.createElement("h3");
       h.textContent = r.name;
       const p = document.createElement("p");
       p.textContent = r.desc || (r.method + " · " + r.target);
+      copy.appendChild(h); copy.appendChild(p);
+      top.appendChild(makeAppIcon(r.name));
+      top.appendChild(copy);
       const badges = document.createElement("div");
       badges.className = "badges";
       const m = document.createElement("span");
       m.className = "badge";
       m.textContent = r.method;
       badges.appendChild(m);
-      left.appendChild(h); left.appendChild(p); left.appendChild(badges);
       const actions = document.createElement("div");
       actions.className = "actions";
       const btn = document.createElement("div");
@@ -1401,7 +1483,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
         post({ op: "remove", ref: ref, name: r.name });
       });
       actions.appendChild(btn);
-      card.appendChild(left);
+      card.appendChild(top);
+      card.appendChild(badges);
       card.appendChild(actions);
       box.appendChild(card);
     });
