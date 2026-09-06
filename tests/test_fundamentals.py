@@ -130,7 +130,7 @@ class TestCatalogFundamentals:
             "Google Earth Pro", "FFmpeg",
         ):
             assert n in names, n
-        assert len(tg.APP_CATALOG) >= 233
+        assert len(tg.APP_CATALOG) >= 234
 
     def test_ai_catalog_integrity(self):
         assert len(tg.AI_CATALOG) >= 10
@@ -311,6 +311,25 @@ class TestCatalogFundamentals:
         assert "Aspera Hub" in {e["name"] for e in tg.APP_CATALOG}
         cmd, root = tg._catalog_deterministic_cmd({"name": "Aspera Hub"}, {"pkg_mgr": "apt"})
         assert "AsperaDock/releases/latest" in cmd and "_amd64" in cmd and root is True
+
+    def test_aspera_connect_installs_without_ai(self, monkeypatch):
+        # Aspera Connect is the Linux + Android phone companion (distinct from
+        # Aspera Hub). One-tap: save the Play AAB to ~/Downloads and install the
+        # official desktop .deb (GitHub Releases, else the published branch artifact).
+        monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
+        names = {e["name"] for e in tg.APP_CATALOG}
+        assert "Aspera Connect" in names
+        assert "Aspera Hub" in names
+        entry = next(e for e in tg.APP_CATALOG if e["name"] == "Aspera Connect")
+        assert entry["id"] == 234
+        assert entry["cat"] == "Communication"
+        cmd, root = tg._catalog_deterministic_cmd(
+            {"name": "Aspera Connect"}, {"pkg_mgr": "apt"})
+        assert root is True
+        assert "AsperaConnect-Phone-Play.aab" in cmd
+        assert "ramchandragada/asperaconnect" in cmd
+        assert "AsperaConnect-Desktop.deb" in cmd
+        assert "aspera-connect.deb" in cmd
 
     def test_ventoy_installs_without_ai(self, monkeypatch):
         # Ventoy is a portable tarball tool — it now installs deterministically by
