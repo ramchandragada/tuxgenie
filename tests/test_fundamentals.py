@@ -956,6 +956,137 @@ class TestCrisisPlaybookFundamentals:
         assert boot[4] is tg.feat_boot
         assert "dual" in boot[3].lower() or "update" in boot[3].lower()
 
+    def test_audio_plan_switches_hdmi_to_analog(self):
+        results = {
+            "mute": "Mute: no",
+            "pactl_sink": "0 alsa_output.pci-0000_00_1f.3.analog-stereo module-alsa-card.c RUNNING\n"
+                          "1 alsa_output.pci-0000_01_00.1.hdmi-stereo module-alsa-card.c RUNNING",
+            "pactl_info": "Default Sink: alsa_output.pci-0000_01_00.1.hdmi-stereo",
+            "pipewire": "active",
+            "groups": "alice audio",
+        }
+        plan = tg._crisis_audio_build_plan(results, {"pkg_mgr": "apt", "user": "alice"})
+        cmds = " ".join(row[1] for row in plan)
+        assert "pactl set-default-sink" in cmds
+        assert "analog-stereo" in cmds
+
+
+class TestLocalPlaybookFundamentals:
+    """Health / Disk / Memory: built-in commands first, AI last resort."""
+
+    def test_parse_failed_units_ignores_legend(self):
+        text = (
+            "UNIT LOAD ACTIVE SUB DESCRIPTION\n"
+            "● virtualbox.service loaded failed failed LSB: VirtualBox Linux kernel module\n"
+            "Legend: LOAD   → Reflects whether the unit definition was properly loaded.\n"
+            "1 loaded units listed.\n"
+        )
+        assert tg._parse_failed_units(text) == ["virtualbox.service"]
+        assert tg._parse_failed_units("0 loaded units listed.") == []
+        assert tg._parse_failed_units("") == []
+
+    def test_health_plan_virtualbox(self):
+        results = {
+            "failed_units": ["virtualbox.service"],
+            "vbox_mod": "",
+            "secure_boot": "SecureBoot enabled",
+            "dmesg_vbox": "modprobe vboxdrv failed",
+            "disk": "/dev/sda2       439G   93G  324G  23% /",
+        }
+        plan = tg._health_build_plan(results, {"pkg_mgr": "apt"})
+        cmds = " ".join(row[1] for row in plan)
+        assert "modprobe vboxdrv" in cmds
+        assert "virtualbox-dkms" in cmds or "vboxconfig" in cmds
+        assert "disable --now virtualbox" in cmds
+        for _d, cmd, _r, _w in plan:
+            assert not tg.is_dangerous(cmd), cmd
+
+    def test_disk_plan_never_deletes_home_projects(self):
+        results = {
+            "journal": "Archived and active journals take up 800.0M on disk.",
+            "pkg_cache": "450M\t/var/cache/apt/archives/",
+            "trash": "100M\t/home/shree/.local/share/Trash",
+            "home_top": "18G\t/home/shree/winboat\n12G\t/home/shree/Downloads\n"
+                        "5.7G\t/home/shree/Aspera Connect",
+            "flatpak": "7.9G\t/var/lib/flatpak",
+            "snap": "1.4G\t/var/lib/snapd",
+            "snap_old": "hello 123",
+            "boot": "/dev/nvme0n1p1   96M   38M   59M  40% /boot/efi",
+        }
+        plan = tg._disk_build_plan(results, {"pkg_mgr": "apt"})
+        blob = " ".join(row[1] for row in plan)
+        assert "winboat" not in blob
+        assert "Downloads" not in blob
+        assert "Aspera" not in blob
+        assert "journalctl --vacuum" in blob
+        assert "apt-get" in blob
+
+    def test_memory_skips_generic_and_diagnostics(self):
+        assert tg._is_generic_memory_prompt("Fix the issues found in the health check.")
+        assert tg._is_generic_memory_prompt(
+            "Find what is using disk space and help me free up space safely.")
+        assert tg._is_diagnostic_cmd("dkms status")
+        assert tg._is_diagnostic_cmd("dpkg-query -W -f=x '*virtualbox*'")
+        assert tg._is_diagnostic_cmd("systemctl status virtualbox.service")
+        assert not tg._is_diagnostic_cmd("sudo modprobe vboxdrv")
+        assert tg._filter_fix_steps(
+            ["dkms status", "sudo modprobe vboxdrv"]) == ["sudo modprobe vboxdrv"]
+
+    def test_mem_recall_ignores_generic_health_prompt(self, monkeypatch):
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        monkeypatch.setattr(tg, "_mem_load", lambda: {
+            "solved": [{
+                "problem": "Fix the issues found in the health check.",
+                "steps": ["dkms status", "dpkg-query -W virtualbox"],
+            }]
+        })
+        monkeypatch.setattr(tg, "_community_fixes_load", lambda: [])
+        assert tg._mem_recall("Fix the issues found in the health check.") is None
+
+    def test_mem_apply_refuses_diagnostic_only(self, monkeypatch):
+        ran = []
+        monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: ran.append(a) or (0, "", ""))
+        recalled = {"source": "local",
+                    "entry": {"problem": "x", "steps": ["dkms status", "dpkg-query -W v"]}}
+        assert tg._mem_apply_recalled(recalled) is False
+        assert ran == []
+
+    def test_feat_health_does_not_call_ai(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(tg, "health_ctx", lambda: {
+            "cpu_usage": "1%", "memory": "Mem: 16G",
+            "disk": "/dev/sda2 439G 93G 324G 23% /",
+            "failed_services":
+                "● virtualbox.service loaded failed failed LSB: VirtualBox\n"
+                "1 loaded units listed.",
+            "temps": "",
+        })
+        monkeypatch.setattr(tg, "_health_issue_collect",
+                            lambda u: {"vbox_mod": "", "secure_boot": "SecureBoot disabled"})
+        monkeypatch.setattr(tg, "_apply_approved_plan", lambda *a, **k: 0)
+        monkeypatch.setattr(tg, "_offer_optional_ai", lambda *a, **k: asked.append("offer") or False)
+        monkeypatch.setattr(tg, "_r", lambda *a, **k: "")
+        monkeypatch.setattr(tg, "ask_ai", lambda *a, **k: asked.append("ask") or "")
+        monkeypatch.setattr(tg, "fix_engine", lambda *a, **k: asked.append("fix"))
+        tg.feat_health(None, {"os": "Zorin OS 18.1", "kernel": "7.0.0",
+                              "arch": "x86_64", "uptime": "1h", "pkg_mgr": "apt"}, [])
+        assert "ask" not in asked and "fix" not in asked
+        assert "offer" in asked
+
+    def test_passthrough_routes_disk_and_vbox(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(tg, "feat_disk", lambda *a, **k: seen.append("disk"))
+        monkeypatch.setattr(tg, "feat_health", lambda *a, **k: seen.append("health"))
+        monkeypatch.setattr(tg, "feat_bluetooth", lambda *a, **k: seen.append("bt"))
+        assert tg.try_passthrough("free up space", [], None, {"pkg_mgr": "apt"}) is True
+        assert seen == ["disk"]
+        seen.clear()
+        assert tg.try_passthrough("virtualbox failed", [], None, {"pkg_mgr": "apt"}) is True
+        assert seen == ["health"]
+        seen.clear()
+        assert tg.try_passthrough("bluetooth not working", [], None, {"pkg_mgr": "apt"}) is True
+        assert seen == ["bt"]
+
 
 class TestPhaseCLocalAiAndSnapshots:
     """Phase C: Ollama as a keyless local backend + real config snapshots/undo."""

@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.7.0"
+__version__ = "7.8.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4892,6 +4892,45 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
                 return False
             return True
 
+    # Known menu playbooks — natural language should not burn AI tokens.
+    for _rx, _label, _fn in (
+        (r"(?is)^\s*(?:virtualbox|vboxdrv).{0,50}(?:fail|failed|not working|broken)",
+         "health", feat_health),
+        (r"(?is)^\s*(?:failed\s+services?|a service failed|systemd.{0,24}fail)",
+         "health", feat_health),
+        (r"(?is)^\s*(?:free\s+up\s+(?:disk\s+)?space|disk\s+(?:is\s+)?full|"
+         r"clean\s+(?:up\s+)?(?:my\s+)?disk|running\s+out\s+of\s+(?:disk\s+)?space)"
+         r"\s*[.!?]?\s*$",
+         "disk", feat_disk),
+        (r"(?is)^\s*(?:my\s+)?(?:bluetooth|headphones?).{0,40}"
+         r"(?:not working|won'?t pair|not (?:found|connecting)|broken)"
+         r"\s*[.!?]?\s*$",
+         "bluetooth", feat_bluetooth),
+        (r"(?is)^\s*(?:my\s+)?(?:printer).{0,40}"
+         r"(?:not (?:working|detected|printing)|won'?t print|broken)"
+         r"\s*[.!?]?\s*$",
+         "printer", feat_printer),
+        (r"(?is)^\s*(?:my\s+)?(?:webcam|camera).{0,40}"
+         r"(?:not working|black screen|not detected|broken)"
+         r"\s*[.!?]?\s*$",
+         "webcam", feat_webcam),
+        (r"(?is)^\s*(?:(?:my\s+)?(?:battery).{0,30}(?:drain|dying|not charging)|"
+         r"laptop (?:overheating|too hot)|battery life)"
+         r"\s*[.!?]?\s*$",
+         "battery", feat_battery),
+        (r"(?is)^\s*(?:(?:wrong|bad) resolution|second monitor|hdmi not|"
+         r"(?:my\s+)?(?:display|monitor|screen).{0,30}(?:not working|blank|wrong))"
+         r"\s*[.!?]?\s*$",
+         "display", feat_display),
+    ):
+        if re.match(_rx, cmd):
+            try:
+                _fn(backend, _ctx, session_log)
+            except Exception as e:
+                warn(f"{_label} playbook hit a snag ({e}) — asking the AI instead.")
+                return False
+            return True
+
     # Phase C — local AI / snapshot phrases (no AI needed to route).
     if re.match(
         r"(?is)^\s*(?:use\s+)?(?:local\s+ai|ollama|offline\s+ai)"
@@ -6608,9 +6647,13 @@ def feat_health(backend, bctx, slog):
 
     section("Failed Services")
     failed = ctx.get('failed_services','').strip()
-    if failed and 'failed' in failed.lower():
-        for line in failed.splitlines()[:10]:
-            if line.strip(): print(f"  {RED}{line}{R}")
+    units = _parse_failed_units(failed)
+    if units:
+        for u in units:
+            print(f"  {RED}{u}{R}")
+        for line in failed.splitlines()[:8]:
+            if line.strip() and not line.lower().startswith("legend"):
+                print(f"  {DIM}{line}{R}")
     else:
         ok("No failed services")
 
@@ -6622,17 +6665,51 @@ def feat_health(backend, bctx, slog):
     else:
         print(f"  {DIM}(temperature sensors not available){R}")
 
-    # If any issues found, let AI suggest fixes
-    has_issues = (
-        any(int(m.group(1)) >= 90 for m in [re.search(r'(\d+)%', l) for l in ctx.get('disk','').splitlines() if l] if m)
-        or ('failed' in failed.lower() if failed else False)
+    disk_hot = any(
+        int(m.group(1)) >= 90
+        for m in (re.search(r"(\d+)%", l) for l in ctx.get("disk", "").splitlines() if l)
+        if m
     )
-    if has_issues:
-        print(f"\n  {YELLOW}{BOLD}Issues detected — asking Claude for recommendations…{R}")
-        sys_p = BASE_SYS + "\nHealth check found issues. Suggest specific fixes." + _sys_ctx_block(ctx)
-        fix_engine(backend, sys_p, [{"role":"user","content":"Fix the issues found in the health check."}], slog)
-    else:
+    has_issues = bool(units) or disk_hot
+    if not has_issues:
         print(f"\n  {GREEN}{BOLD}✓ System looks healthy!{R}")
+        return
+
+    print(f"\n  {YELLOW}{BOLD}Issues detected — using built-in playbooks (no AI yet).{R}")
+    extra = _health_issue_collect(units)
+    results = {
+        "failed_units": units,
+        "failed_services": failed,
+        "failed_plain": extra.get("failed_plain", ""),
+        "disk": ctx.get("disk", ""),
+        **extra,
+    }
+    plan = _health_build_plan(results, bctx or {})
+    applied = 0
+    if plan:
+        print(f"\n  {CYAN}{BOLD}Safe fixes ready{R}  "
+              f"{DIM}({len(plan)} — each shown before it runs){R}\n")
+        applied = _apply_approved_plan(plan, slog, source="health")
+    else:
+        info("No safe automatic fix for this exact issue yet.")
+
+    still = _parse_failed_units(
+        _r("systemctl --failed --plain --no-legend --no-pager 2>/dev/null"))
+    if units and not still:
+        ok("Failed services are cleared.")
+    elif still:
+        warn("Still failed: " + ", ".join(still))
+
+    prompt = (
+        "Remaining health issues after the built-in playbook.\n"
+        f"Originally failed: {', '.join(units) or 'none'}\n"
+        f"Still failed: {', '.join(still) or 'none'}\n"
+        f"Applied {applied} local fix(es). Only suggest more if something is still wrong."
+    )
+    _offer_optional_ai(
+        backend, {**ctx, **extra}, slog, prompt,
+        "Done. Re-run health anytime — AI is only used if you ask.",
+    )
 
 # ── FEATURE 3: Package Wizard ─────────────────────────────────────────────────
 def feat_packages(backend, bctx, slog):
@@ -6674,98 +6751,107 @@ def feat_network(backend, bctx, slog):
 
 # ── FEATURE 5: Security Audit ─────────────────────────────────────────────────
 def feat_security(backend, bctx, slog):
-    hdr("Security Audit — Harden your system")
-    with Spinner("Collecting security data…"):
-        ctx = {**bctx, **security_ctx()}
-    ok("Security data collected")
-    warn("This will check firewall, SSH, open ports, SUID files, login history.")
-    sys_p = BASE_SYS + """
-Additional instructions for SECURITY AUDIT mode:
-- Check: firewall status, SSH hardening, open ports, SUID/SGID files, failed logins.
-- Start with safe read-only checks; suggest hardening steps with moderate/dangerous risk labels.
-- Explain each risk in plain language.
-- Provide an overall security score (1-10) in the analysis field.
-- Prioritise fixes by severity: Critical → High → Medium → Low.
-""" + _sys_ctx_block(ctx)
-    msg = "Run a comprehensive security audit and suggest hardening steps."
-    fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
+    """Firewall / updates — local checks first. AI only if you ask."""
+    _run_local_playbook(
+        "Security Audit — Harden your system",
+        _security_playbook_collect,
+        _security_show_report,
+        _security_build_plan,
+        backend, bctx, slog,
+        source="security",
+        ai_prompt="Review remaining security gaps. Prefer reversible hardening. Do not lock the user out of SSH.",
+    )
 
 # ── FEATURE 6: Disk Detective ─────────────────────────────────────────────────
 def feat_disk(backend, bctx, slog):
-    hdr("Disk Detective — Free up space")
-    with Spinner("Scanning disk usage…"):
-        ctx = {**bctx, **disk_ctx()}
-    ok("Disk data collected")
-    sys_p = BASE_SYS + """
-Additional instructions for DISK DETECTIVE mode:
-- Identify top space consumers clearly.
-- Suggest safe cleanup: apt/dnf cache, journal logs, old kernels, trash, temp files.
-- Flag large files that might be accidental (core dumps, old backups, VM images).
-- Do NOT suggest deleting files without explaining what they are.
-- Start with read-only du/df commands before any cleanup.
-""" + _sys_ctx_block(ctx)
-    msg = "Find what is using disk space and help me free up space safely."
-    fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
+    """Disk cleanup — local report + safe plan. AI only if you ask."""
+    _run_local_playbook(
+        "Disk Detective — Free up space",
+        _disk_playbook_collect,
+        _disk_show_report,
+        _disk_build_plan,
+        backend, bctx, slog,
+        source="disk",
+        ai_prompt=(
+            "Help free disk space safely. Home project folders (Downloads, WinBoat, "
+            "Aspera Connect, etc.) must NOT be deleted unless the user names them. "
+            "Prefer caches, logs, trash, unused Flatpak/Snap revisions."
+        ),
+        done_msg="Done. Home folders were listed only — nothing there was deleted.",
+    )
 
 # ── FEATURE 7: Driver Check ───────────────────────────────────────────────────
 def feat_drivers(backend, bctx, slog):
-    """GPU/drivers — NVIDIA crisis playbook when applicable, else AI driver check."""
+    """GPU/drivers — NVIDIA crisis playbook, else local firmware playbook."""
     probe = _crisis_nvidia_collect()
     if re.search(r"nvidia", (probe.get("gpu") or "") + (probe.get("driver_k") or ""), re.I):
         _run_crisis_playbook("nvidia", backend, bctx, slog)
         return
-    hdr("Driver Check — Detect missing drivers")
-    with Spinner("Scanning hardware…"):
-        ctx = {**bctx, **driver_ctx()}
-    ok("Hardware scanned")
-    sys_p = BASE_SYS + """
-Additional instructions for DRIVER CHECK mode:
-- Identify all hardware devices and check if they have working drivers.
-- Flag devices with missing/broken firmware or kernel modules.
-- Provide specific install commands for missing drivers on this distro.
-- For NVIDIA/AMD GPUs: recommend the optimal driver for gaming vs general use.
-- For WiFi adapters: identify chipset and recommend working drivers.
-""" + _sys_ctx_block(ctx)
-    msg = "Check all hardware for missing or problematic drivers and fix them."
-    fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
+    _run_local_playbook(
+        "Driver Check — Detect missing drivers",
+        _drivers_generic_collect,
+        _drivers_show_report,
+        _drivers_generic_build_plan,
+        backend, bctx, slog,
+        source="drivers",
+        ai_prompt="Check remaining hardware for missing firmware or drivers. Prefer distro packages.",
+    )
 
 # ── FEATURE 8: Service Manager ────────────────────────────────────────────────
 def feat_services(backend, bctx, slog):
-    hdr("Service Manager — Optimise startup & services")
-    with Spinner("Analysing services…"):
-        ctx = {**bctx, **service_ctx()}
-    ok("Services analysed")
-    sys_p = BASE_SYS + """
-Additional instructions for SERVICE MANAGER mode:
-- Identify services that are failing, slow to start, or unnecessary.
-- Suggest which services can safely be disabled to improve boot time & RAM usage.
-- Explain what each flagged service does before suggesting to disable it.
-- Never suggest disabling critical system services without a strong warning.
-- Show estimated boot time savings where possible.
-""" + _sys_ctx_block(ctx)
-    msg = "Analyse my running services, fix failures, and optimise startup time."
-    fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
+    """Failed units — known-issue playbook first. AI only if you ask."""
+    def _collect():
+        extra = _crisis_collect([
+            ("failed_plain", "systemctl --failed --plain --no-legend --no-pager 2>/dev/null || true"),
+            ("blame", "systemd-analyze blame 2>/dev/null | head -12 || true"),
+            ("boot", "systemd-analyze 2>/dev/null | head -3 || true"),
+        ])
+        extra["failed_units"] = _parse_failed_units(extra.get("failed_plain") or "")
+        extra.update(_health_issue_collect(extra["failed_units"]))
+        return extra
+
+    def _show(results, _bctx=None):
+        section("Boot")
+        print(f"  {(results.get('boot') or '').strip() or '(n/a)'}")
+        section("Failed units")
+        units = results.get("failed_units") or []
+        if units:
+            for u in units:
+                print(f"  {RED}{u}{R}")
+        else:
+            ok("No failed services")
+
+    _run_local_playbook(
+        "Service Manager — Optimise startup & services",
+        _collect, _show, _health_build_plan,
+        backend, bctx, slog,
+        source="services",
+        ai_prompt="Fix remaining failed services and only disable units that are clearly unused. Never disable ssh, NetworkManager, display manager, or ufw.",
+    )
 
 # ── FEATURE 9: Log Analyser ───────────────────────────────────────────────────
 def feat_logs(backend, bctx, slog):
-    hdr("Log Analyser — Decode errors")
+    """Show journal locally; playbook for failed units; AI only if you ask (or paste)."""
     try:
-        paste = input(f"\n{BOLD}Paste an error message (or press Enter to scan recent logs):{R}\n> ").strip()
+        paste = input(
+            f"\n{BOLD}Paste an error message (or press Enter to scan recent logs):{R}\n> "
+        ).strip()
     except (EOFError, KeyboardInterrupt):
         return
-    with Spinner("Reading logs…"):
-        ctx = {**bctx, **log_ctx(paste)}
-    ok("Logs collected")
-    sys_p = BASE_SYS + """
-Additional instructions for LOG ANALYSER mode:
-- Decode cryptic error messages into plain English.
-- Identify the ROOT CAUSE, not just symptoms.
-- Cross-reference multiple log sources to find the chain of events.
-- Explain what each error means and why it happened.
-- Provide targeted fixes for each error found.
-""" + _sys_ctx_block(ctx)
-    msg = paste if paste else "Analyse my system logs and explain any errors or warnings."
-    fix_engine(backend, sys_p, [{"role":"user","content":msg}], slog)
+    _run_local_playbook(
+        "Log Analyser — Decode errors",
+        _logs_playbook_collect,
+        _logs_show_report,
+        _logs_build_plan,
+        backend, bctx, slog,
+        source="logs",
+        ai_prompt=(
+            f"Decode this error and suggest a safe fix:\n{paste}"
+            if paste else
+            "Explain remaining journal errors in plain English and suggest safe fixes."
+        ),
+        done_msg="Done. Paste a specific error next time if you want it decoded.",
+    )
 
 # ── FEATURE 10: Update Advisor ────────────────────────────────────────────────
 def _classify_apt_upgrade(upgrade_output: str, remaining: list) -> str:
@@ -7810,104 +7896,43 @@ Additional instructions for GIT HELPER mode:
 
 # ── FEATURE 24: Bluetooth Fix ────────────────────────────────────────────────
 def feat_bluetooth(backend, bctx, slog):
-    hdr("Bluetooth Fix — Fix pairing & connection problems")
-    with Spinner("Scanning Bluetooth system…"):
-        ctx = {**bctx, **_parallel_ctx({
-            "bt_hardware":   "lspci | grep -i bluetooth 2>/dev/null; lsusb | grep -i bluetooth 2>/dev/null",
-            "bt_service":    "systemctl status bluetooth 2>/dev/null | head -8",
-            "bt_devices":    "bluetoothctl devices 2>/dev/null",
-            "bt_info":       "bluetoothctl show 2>/dev/null | head -15",
-            "rfkill":        "rfkill list 2>/dev/null",
-            "bt_module":     "lsmod | grep -i bluetooth 2>/dev/null",
-            "dmesg_bt":      "dmesg | grep -iE 'bluetooth|hci|btusb' | tail -15 2>/dev/null",
-            "bt_log":        "journalctl -u bluetooth -n 20 --no-pager 2>/dev/null",
-        })}
-    try:
-        problem = input(f"\n{BOLD}What's the Bluetooth problem? (or Enter for general fix):{R}\n"
-                        f"{C('(e.g. headphones wont connect, device not found, keeps disconnecting)',DIM)}\n> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not problem:
-        problem = "Bluetooth is not working. Diagnose and fix the issue."
-    sys_p = BASE_SYS + """
-Additional instructions for BLUETOOTH FIX mode:
-- Most common causes: bluetooth service not running, device blocked by rfkill, wrong pairing state, missing firmware.
-- For 'device not found': check if bluetooth is powered on (bluetoothctl power on), check rfkill.
-- For 'wont pair': try removing the device first (bluetoothctl remove), then re-pair.
-- For 'keeps disconnecting': check power management settings, check firmware updates.
-- For 'no bluetooth at all': check if hardware is rfkill-blocked or driver is missing.
-- Translate terms: 'bluetooth service' = 'the program that manages bluetooth', 'rfkill' = 'a software switch that can turn off bluetooth'.
-- bluetoothctl is safe to use; guide user through the interactive steps clearly.
-""" + _sys_ctx_block(ctx)
-    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
+    """Bluetooth — rfkill / service playbook. AI only if you ask."""
+    _run_local_playbook(
+        "Bluetooth Fix — Fix pairing & connection problems",
+        _bluetooth_playbook_collect,
+        _bluetooth_show_report,
+        _bluetooth_build_plan,
+        backend, bctx, slog,
+        source="bluetooth",
+        ai_prompt="Fix remaining Bluetooth pairing or firmware issues. Prefer rfkill, bluetoothctl, and service restarts.",
+    )
 
 # ── FEATURE 25: Printer Setup ─────────────────────────────────────────────────
 def feat_printer(backend, bctx, slog):
-    hdr("Printer Setup — Install and fix printers")
-    with Spinner("Checking print system…"):
-        ctx = {**bctx, **_parallel_ctx({
-            "cups_status":   "systemctl status cups 2>/dev/null | head -8",
-            "printers":      "lpstat -p 2>/dev/null || echo 'no printers configured'",
-            "cups_version":  "cups-config --version 2>/dev/null",
-            "usb_printers":  "lsusb | grep -i print 2>/dev/null",
-            "network_devs":  "avahi-browse -art 2>/dev/null | grep -i print | head -10 2>/dev/null",
-            "printer_pkgs":  "dpkg -l | grep -iE 'cups|hplip|brother|epson|canon|printer' 2>/dev/null | head -15",
-            "cups_log":      "journalctl -u cups -n 20 --no-pager 2>/dev/null",
-            "ppd_files":     "ls /etc/cups/ppd/ 2>/dev/null",
-        })}
-    try:
-        problem = input(f"\n{BOLD}Describe your printer issue (or Enter to set up a new printer):{R}\n"
-                        f"{C('(e.g. printer not detected, prints blank pages, HP printer, network printer)',DIM)}\n> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not problem:
-        problem = "Help me set up my printer on Linux."
-    sys_p = BASE_SYS + """
-Additional instructions for PRINTER SETUP mode:
-- CUPS is the print system on Linux — explain it as 'the program that talks to your printer'.
-- For USB printers: check if detected with lsusb, then install manufacturer driver (hplip for HP, etc.).
-- For network printers: use CUPS web interface (http://localhost:631) or lpstat/lpadmin commands.
-- For HP printers: hplip is the best driver — guide through hp-setup if needed.
-- For Brother/Canon/Epson: often need manufacturer .deb driver from their website.
-- For 'blank pages' or 'wrong output': often a wrong PPD/driver — guide through re-adding with correct driver.
-- Explain CUPS web UI (localhost:631) as 'a website on your own computer for managing printers'.
-- Keep the user confident — printer setup on Linux is famously tricky but we can do it step by step.
-""" + _sys_ctx_block(ctx)
-    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
+    """CUPS — local start/install playbook. AI only if you ask."""
+    _run_local_playbook(
+        "Printer Setup — Install and fix printers",
+        _printer_playbook_collect,
+        _printer_show_report,
+        _printer_build_plan,
+        backend, bctx, slog,
+        source="printer",
+        ai_prompt="Help set up or fix the printer. Prefer CUPS and vendor packages (hplip for HP).",
+    )
 
 # ── FEATURE 26: Webcam Fix ────────────────────────────────────────────────────
 def feat_webcam(backend, bctx, slog):
-    hdr("Webcam Fix — Fix camera for video calls")
-    with Spinner("Checking camera system…"):
-        ctx = {**bctx, **_parallel_ctx({
-            "video_devices": "ls -la /dev/video* 2>/dev/null",
-            "usb_cameras":   "lsusb | grep -iE 'camera|webcam|video|logitech|microsoft' 2>/dev/null",
-            "v4l_devices":   "v4l2-ctl --list-devices 2>/dev/null",
-            "camera_module": "lsmod | grep -iE 'uvcvideo|camera|v4l' 2>/dev/null",
-            "dmesg_cam":     "dmesg | grep -iE 'camera|webcam|uvc|video' | tail -10 2>/dev/null",
-            "pipewire_cam":  "pw-cli list-objects 2>/dev/null | grep -i camera | head -5 2>/dev/null",
-            "apps_using":    "fuser /dev/video0 2>/dev/null",
-        })}
-    try:
-        problem = input(f"\n{BOLD}What's the webcam problem? (or Enter for general fix):{R}\n"
-                        f"{C('(e.g. camera not detected, black screen in Zoom, wrong camera selected)',DIM)}\n> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not problem:
-        problem = "My webcam is not working. Diagnose and fix the issue."
-    sys_p = BASE_SYS + """
-Additional instructions for WEBCAM FIX mode:
-- Most common causes: wrong /dev/video device, uvcvideo driver missing, another app holding the camera, PipeWire permissions.
-- For 'not detected': check lsusb and /dev/video*, check if uvcvideo module is loaded.
-- For 'black screen in app': check if another app is using the camera (fuser), check PipeWire/permissions.
-- For 'wrong camera': most apps let you select camera in settings — guide through that first before touching drivers.
-- v4l2-ctl can test camera: explain as 'a tool to check if your camera is working at the system level'.
-- Explain /dev/video0 as 'the address Linux gives your camera'.
-- For Zoom/Teams/Meet: often a browser permission issue first — guide through that before system changes.
-""" + _sys_ctx_block(ctx)
-    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
+    """Webcam — load uvcvideo if missing. AI only if you ask."""
+    _run_local_playbook(
+        "Webcam Fix — Fix camera for video calls",
+        _webcam_playbook_collect,
+        _webcam_show_report,
+        _webcam_build_plan,
+        backend, bctx, slog,
+        source="webcam",
+        ai_prompt="Fix remaining webcam issues. Check browser permissions before changing drivers.",
+    )
 
-# ── FEATURE 27: App Switcher — Linux equivalents ──────────────────────────────
 def feat_appswitch(backend, bctx, slog):
     hdr("App Finder — Find Linux alternatives to Windows/Mac apps")
     try:
@@ -7936,42 +7961,17 @@ Additional instructions for APP FINDER mode:
 
 # ── FEATURE 28: Battery & Power Management ────────────────────────────────────
 def feat_battery(backend, bctx, slog):
-    hdr("Battery & Power — Improve battery life & power settings")
-    with Spinner("Reading power info…"):
-        ctx = {**bctx, **_parallel_ctx({
-            "battery":       "upower -i $(upower -e | grep battery) 2>/dev/null",
-            "power_profile": "powerprofilesctl status 2>/dev/null || tlp-stat -s 2>/dev/null | head -10",
-            "tlp":           "systemctl status tlp 2>/dev/null | head -6",
-            "thermald":      "systemctl status thermald 2>/dev/null | head -6",
-            "cpu_governor":  "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null",
-            "cpu_freq":      "cat /proc/cpuinfo | grep 'cpu MHz' | head -4 2>/dev/null",
-            "temps":         "sensors 2>/dev/null | grep -iE 'core|package|temp' | head -8",
-            "power_supply":  "ls /sys/class/power_supply/ 2>/dev/null",
-            "screen_bright": "cat /sys/class/backlight/*/brightness 2>/dev/null | head -3",
-            "wake_locks":    "cat /sys/kernel/debug/wakeup_sources 2>/dev/null | head -10",
-            "suspend_mode":  "cat /sys/power/state 2>/dev/null",
-        })}
-    try:
-        problem = input(f"\n{BOLD}What's the power/battery issue? (or Enter for general optimisation):{R}\n"
-                        f"{C('(e.g. battery drains fast, laptop overheating, wont sleep, screen brightness)',DIM)}\n> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not problem:
-        problem = "Optimise my laptop's battery life and power settings."
-    sys_p = BASE_SYS + """
-Additional instructions for BATTERY & POWER mode:
-- Most impactful fixes: install TLP (background power manager), set CPU governor to powersave, reduce screen brightness.
-- Explain TLP as 'a background program that automatically saves battery — you install it and forget it'.
-- For overheating: thermald and CPU frequency scaling are the main tools.
-- For 'won't sleep': check power settings, logind.conf, and any wake locks.
-- For battery health: explain charge cycles and capacity fade in plain terms.
-- Power profiles daemon (if present) is the modern way — explain 'power saver', 'balanced', 'performance' modes.
-- Explain CPU governor simply: 'performance = full speed always, powersave = slows down when idle to save battery'.
-- Always install TLP if not present on laptops — it's one of the best Linux battery improvements.
-""" + _sys_ctx_block(ctx)
-    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
+    """Laptop power — TLP / power-saver. AI only if you ask."""
+    _run_local_playbook(
+        "Battery & Power — Improve battery life & power settings",
+        _battery_playbook_collect,
+        _battery_show_report,
+        _battery_build_plan,
+        backend, bctx, slog,
+        source="battery",
+        ai_prompt="Improve remaining battery or heat issues. Prefer TLP and power-saver. Do not change BIOS.",
+    )
 
-# ── FEATURE 31: Gaming Setup ──────────────────────────────────────────────────
 def feat_gaming_setup(backend, bctx, slog):
     hdr("Gaming Setup — Get your PC ready to game on Linux")
     with Spinner("Checking your graphics & gaming readiness…"):
@@ -8430,41 +8430,16 @@ def feat_sound(backend, bctx, slog):
 
 # ── FEATURE 23: Display Fix ───────────────────────────────────────────────────
 def feat_display(backend, bctx, slog):
-    hdr("Display Fix — Fix screen & monitor problems")
-    with Spinner("Checking display setup…"):
-        ctx = {**bctx, **_parallel_ctx({
-            "xrandr_full":    "xrandr 2>/dev/null",
-            "monitors":       "xrandr --listmonitors 2>/dev/null",
-            "connected":      "xrandr 2>/dev/null | grep ' connected'",
-            "gpu_info":       "lspci | grep -iE 'vga|3d|display|graphics' 2>/dev/null",
-            "nvidia_smi":     "nvidia-smi 2>/dev/null | head -8",
-            "session_type":   "echo ${XDG_SESSION_TYPE:-unknown}",
-            "desktop":        "echo ${XDG_CURRENT_DESKTOP:-unknown}",
-            "resolution":     "xdpyinfo 2>/dev/null | grep -i dimensions",
-            "xorg_errors":    "grep -E '\\(EE\\)|\\(WW\\)' /var/log/Xorg.0.log 2>/dev/null | tail -15",
-            "dmesg_gpu":      "dmesg | grep -iE 'drm|nvidia|amdgpu|i915|radeon' | tail -15 2>/dev/null",
-            "gpu_driver":     "glxinfo 2>/dev/null | grep -iE 'renderer|vendor' | head -3",
-            "wayland_disp":   "wayland-info 2>/dev/null | head -10",
-        })}
-    try:
-        problem = input(f"\n{BOLD}What's the display problem? (or press Enter for general fix):{R}\n"
-                        f"{C('(e.g. wrong resolution, second monitor not detected, HDMI not working, screen too small)',DIM)}\n> ").strip()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if not problem:
-        problem = "Diagnose display setup and fix any issues found."
-    sys_p = BASE_SYS + """
-Additional instructions for DISPLAY FIX mode:
-- Common issues: wrong resolution, external monitor not detected, HDMI/DisplayPort not working, scaling/DPI, GPU driver problems.
-- Check if Wayland or X11 is in use — xrandr only works on X11; Wayland needs different tools.
-- For resolution: use xrandr to list and set modes; explain modes in plain English (e.g. "1920x1080 is Full HD").
-- For second monitor not detected: check xrandr output; if not listed, may need GPU driver fix.
-- For HDMI: if not in xrandr output, suspect driver issue; if listed but blank, try xrandr --auto.
-- For scaling/HiDPI: explain GDK_SCALE, QT_SCALE_FACTOR in plain English ("makes everything bigger").
-- NEVER remove GPU drivers without a fallback plan — user could lose their display entirely.
-- Explain terms simply: "display driver" not "DRM/KMS", "screen refresh rate" not "Hz modeline".
-""" + _sys_ctx_block(ctx)
-    fix_engine(backend, sys_p, [{"role":"user","content":problem}], slog)
+    """Monitors — local xrandr playbook. AI only if you ask."""
+    _run_local_playbook(
+        "Display Fix — Fix screen & monitor problems",
+        _display_playbook_collect,
+        _display_show_report,
+        _display_build_plan,
+        backend, bctx, slog,
+        source="display",
+        ai_prompt="Fix remaining display/monitor issues. Never remove GPU drivers without a fallback.",
+    )
 
 # ── FEATURE: Self-Update ──────────────────────────────────────────────────────
 _UPDATE_URL = f"https://api.github.com/repos/{_GITHUB_REPO}/releases/latest"
@@ -9066,10 +9041,11 @@ def quick_health_check():
     except Exception:
         pass
 
-    # Failed services
-    failed = _r("systemctl --failed --no-pager 2>/dev/null | grep failed | wc -l").strip()
-    if failed.isdigit() and int(failed) > 0:
-        issues.append(f"{failed} systemd service(s) have failed")
+    # Failed services — real unit names only (ignore systemd legends)
+    failed_n = len(_parse_failed_units(
+        _r("systemctl --failed --plain --no-legend --no-pager 2>/dev/null")))
+    if failed_n:
+        issues.append(f"{failed_n} systemd service(s) have failed")
 
     # High load
     try:
@@ -9475,6 +9451,66 @@ def _clean_problem_label(text: str, limit: int = 90) -> str:
     return (line[:limit].rstrip() + "…") if len(line) > limit else line
 
 
+# Generic AI feature prompts — never store or recall these as "solved issues".
+_GENERIC_MEMORY_PROMPTS = frozenset({
+    "fix the issues found in the health check.",
+    "find what is using disk space and help me free up space safely.",
+    "run a comprehensive security audit and suggest hardening steps.",
+    "analyse my running services, fix failures, and optimise startup time.",
+    "analyse my system logs and explain any errors or warnings.",
+    "check all hardware for missing or problematic drivers and fix them.",
+    "update my system.",
+    "diagnose display setup and fix any issues found.",
+    "bluetooth is not working. diagnose and fix the issue.",
+    "help me set up my printer on linux.",
+    "my webcam is not working. diagnose and fix the issue.",
+    "optimise my laptop's battery life and power settings.",
+})
+
+_DIAGNOSTIC_CMD_RE = re.compile(
+    r"(?is)^\s*(?:sudo\s+)?"
+    r"(?:dpkg-query\b|dpkg\s+-l\b|dkms\s+status\b|du\b|df\b|ls\b|lsblk\b|free\b|"
+    r"ps\b|top\b|uptime\b|uname\b|"
+    r"systemctl\s+(?:status|--failed|list-units|list-unit-files|is-active|is-enabled)\b|"
+    r"journalctl\b|dmesg\b|mokutil\b|snap\s+list\b|flatpak\s+list\b|"
+    r"apt(?:-get)?\s+list\b|apt-cache\s+search\b|"
+    r"cat\b|head\b|tail\b|grep\b|wc\b|which\b|command\s+-v\b|"
+    r"lspci\b|lsusb\b|lsmod\b|ip\s+(?:-brief\s+)?(?:addr|link|route)\b)"
+)
+
+
+def _is_diagnostic_cmd(cmd: str) -> bool:
+    """True for read-only probes that cannot fix anything on their own."""
+    c = (cmd or "").strip()
+    if not c:
+        return True
+    return bool(_DIAGNOSTIC_CMD_RE.match(c))
+
+
+def _filter_fix_steps(steps) -> list:
+    """Keep only commands that could actually change state."""
+    out = []
+    for s in steps or []:
+        s = (s or "").strip()
+        if s and not _is_diagnostic_cmd(s):
+            out.append(s)
+    return out
+
+
+def _is_generic_memory_prompt(text: str) -> bool:
+    """True for canned feature prompts that collide across every Health/Disk run."""
+    t = _clean_problem_label(text or "", 200).lower().strip()
+    if not t:
+        return True
+    if t in _GENERIC_MEMORY_PROMPTS:
+        return True
+    if t.startswith("fix the issues found"):
+        return True
+    if t.startswith("find what is using disk"):
+        return True
+    return False
+
+
 def _mem_record_fix(problem: str, successful_steps: list,
                     failing_cmd: str = "", error_excerpt: str = ""):
     """Save a successfully resolved issue to cross-session memory.
@@ -9484,6 +9520,11 @@ def _mem_record_fix(problem: str, successful_steps: list,
     if load_cfg().get("disable_history"):
         return
     if not problem or not successful_steps:
+        return
+    if _is_generic_memory_prompt(problem):
+        return
+    successful_steps = _filter_fix_steps(successful_steps)
+    if not successful_steps:
         return
     data    = _mem_load()
     solved  = data.get("solved", [])
@@ -9525,6 +9566,8 @@ def _mem_recall(problem: str):
         return None
     if not problem:
         return None
+    if _is_generic_memory_prompt(problem):
+        return None
     p_lower = problem.lower().strip()
     _STOP  = {"the","this","my","your","not","working","please","how","can",
               "why","what","make","get","run","fix","help","need","want",
@@ -9546,6 +9589,10 @@ def _mem_recall(problem: str):
         prob = (e.get("problem") or "").lower().strip()
         if not prob or not e.get("steps"):
             continue
+        if _is_generic_memory_prompt(prob):
+            continue
+        if not _filter_fix_steps(e.get("steps") or []):
+            continue
         if prob == p_lower:
             return {"source": source, "entry": e, "score": 999}
         e_text = prob + " " + " ".join(e.get("steps", []))
@@ -9561,8 +9608,9 @@ def _mem_apply_recalled(recalled: dict) -> bool:
     On failure we fall back to the normal Claude-driven loop in fix_engine."""
     entry  = recalled["entry"]
     source = recalled["source"]
-    steps  = [s for s in entry.get("steps", []) if s]
+    steps  = _filter_fix_steps(entry.get("steps", []))
     if not steps:
+        warn("Saved memory entry is only diagnostic (not a real fix) — skipping it.")
         return False
     # Safety: recalled steps run through run_cmd_live directly, so apply the SAME
     # hard-block every other execution path uses. If any stored step is dangerous
@@ -9755,6 +9803,659 @@ def _apply_approved_plan(plan, slog, source="playbook"):
         i += 1
         print()
     return applied
+
+
+def _offer_optional_ai(backend, bctx, slog, prompt, done_msg="Done. You can re-run this anytime."):
+    """AI is last resort — default No. Returns True if the model was invoked."""
+    try:
+        deeper = _safe_input(
+            f"\n  {BOLD}Want a deeper AI analysis for what's left?{R} "
+            f"[{C('y', GREEN)}=yes  {C('N', DIM)}=no, I'm done]: "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        deeper = "n"
+    if deeper not in ("y", "yes"):
+        info(done_msg)
+        return False
+    if not backend:
+        warn("No AI backend configured. Run settings to add a free key if you want this.")
+        return False
+    print(f"\n  {CYAN}{BOLD}AI analysing remaining issues…{R}")
+    fix_engine(backend, BASE_SYS + _sys_ctx_block(bctx or {}),
+               [{"role": "user", "content": prompt}], slog)
+    return True
+
+
+def _parse_failed_units(text: str) -> list:
+    """Real systemd unit names from `systemctl --failed` (ignore legends)."""
+    units = []
+    for line in (text or "").splitlines():
+        low = line.lower()
+        if "loaded units listed" in low or low.startswith("legend:") or low.startswith("unit "):
+            continue
+        m = re.search(r"([\w@.-]+\.(?:service|socket|target|timer|mount|device|path))\b", line)
+        if not m:
+            continue
+        name = m.group(1)
+        if name not in units:
+            units.append(name)
+    return units
+
+
+def _pkg_cache_clean_cmd(pm: str) -> str:
+    return {
+        "apt":    "sudo apt-get autoremove -y && sudo apt-get clean",
+        "dnf":    "sudo dnf clean all && sudo dnf autoremove -y",
+        "yum":    "sudo yum clean all",
+        "zypper": "sudo zypper clean --all",
+        "pacman": "sudo pacman -Sc --noconfirm",
+        "apk":    "sudo apk cache clean",
+    }.get((pm or "apt").strip(), "")
+
+
+def _health_issue_collect(units: list) -> dict:
+    """Extra local probes for known failed units — no AI."""
+    probes = [
+        ("failed_plain", "systemctl --failed --plain --no-legend --no-pager 2>/dev/null || true"),
+        ("secure_boot",  "mokutil --sb-state 2>/dev/null || true"),
+        ("dkms",         "dkms status 2>/dev/null || true"),
+        ("vbox_mod",     "lsmod 2>/dev/null | grep -i vbox || true"),
+        ("dmesg_vbox",   "dmesg 2>/dev/null | grep -iE 'vbox|secure.boot|Lockdown' | tail -20 || true"),
+        ("journal_fail", "journalctl -p err -b --no-pager -n 15 2>/dev/null || true"),
+    ]
+    blob = " ".join(units).lower()
+    if any(x in blob for x in ("virtualbox", "vbox")):
+        probes.append((
+            "vbox_status",
+            "systemctl status virtualbox.service --no-pager -l 2>/dev/null | tail -20 || true",
+        ))
+    return _crisis_collect(probes)
+
+
+def _known_virtualbox_plan(results: dict, bctx: dict) -> list:
+    """Phase 3: VirtualBox vboxdrv + new kernel + Secure Boot."""
+    plan = []
+    lsmod = (results.get("vbox_mod") or "").lower()
+    sb = (results.get("secure_boot") or "").lower()
+    dmesg = (results.get("dmesg_vbox") or "").lower()
+    pm = ((bctx or {}).get("pkg_mgr") or "apt").strip()
+    if "vboxdrv" not in lsmod:
+        plan.append((
+            "Try loading the VirtualBox kernel module",
+            "sudo modprobe vboxdrv",
+            "safe",
+            "virtualbox.service failed because vboxdrv did not load.",
+        ))
+    if pm == "apt":
+        plan.append((
+            "Rebuild VirtualBox drivers for this kernel (DKMS)",
+            "sudo dpkg-reconfigure virtualbox-dkms || sudo /sbin/vboxconfig || true",
+            "moderate",
+            "A new kernel often needs VirtualBox modules rebuilt. This does not delete VMs.",
+        ))
+    sb_on = "enabled" in sb and "disabled" not in sb
+    lockdown = "lockdown" in dmesg or "secure boot" in dmesg or "required key not available" in dmesg
+    why_off = (
+        "Secure Boot / kernel lockdown often blocks unsigned VirtualBox modules. "
+        "If you use WinBoat or do not need VirtualBox, disabling the leftover service "
+        "clears the health alert. You can re-enable it later."
+        if (sb_on or lockdown) else
+        "If you use WinBoat or another VM tool instead, this leftover service only "
+        "creates a health alert."
+    )
+    plan.append((
+        "Disable unused VirtualBox boot service (keeps the app installed)",
+        "sudo systemctl disable --now virtualbox.service",
+        "moderate",
+        why_off,
+    ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _known_failed_unit_plan(unit: str, results: dict, bctx: dict) -> list:
+    """Phase 3 known-issue library for a single failed systemd unit."""
+    ul = (unit or "").lower()
+    if "virtualbox" in ul or ul.startswith("vbox"):
+        return _known_virtualbox_plan(results, bctx)
+    if ul in ("snapd.apparmor.service",):
+        return [(
+            "Restart snapd AppArmor helper",
+            "sudo systemctl reset-failed snapd.apparmor.service; "
+            "sudo systemctl restart snapd.apparmor.service",
+            "safe",
+            "This helper often fails once after an update and is safe to restart.",
+        )]
+    # Generic: one restart — never auto-disable unknown units.
+    if re.match(r"^[\w@.-]+\.(?:service|socket)$", unit or ""):
+        return [(
+            f"Restart {unit}",
+            f"sudo systemctl reset-failed {unit}; sudo systemctl restart {unit}",
+            "moderate",
+            f"{unit} is marked failed. A restart often clears a one-off error.",
+        )]
+    return []
+
+
+def _health_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    seen = set()
+    for unit in results.get("failed_units") or _parse_failed_units(
+            results.get("failed_plain") or results.get("failed_services") or ""):
+        for row in _known_failed_unit_plan(unit, results, bctx):
+            key = row[1]
+            if key in seen:
+                continue
+            seen.add(key)
+            plan.append(row)
+    # Full root filesystem → disk cleanup commands
+    for line in (results.get("disk") or "").splitlines():
+        m = re.search(r"(\d+)%\s+(/\s*$)", line)
+        if m and int(m.group(1)) >= 90:
+            plan.extend(_disk_build_plan(results, bctx))
+            break
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _disk_playbook_collect() -> dict:
+    """Fast disk probes — no `find /` (that can take minutes)."""
+    return _crisis_collect([
+        ("df",          "df -h -x tmpfs -x devtmpfs -x squashfs -x overlay 2>/dev/null || df -h"),
+        ("boot",        "df -h /boot /boot/efi 2>/dev/null || true"),
+        ("journal",     "journalctl --disk-usage 2>/dev/null || true"),
+        ("pkg_cache",   "du -sh /var/cache/apt/archives /var/cache/dnf /var/cache/pacman/pkg "
+                        "2>/dev/null || true"),
+        ("trash",       "du -sh \"$HOME/.local/share/Trash\" 2>/dev/null || true"),
+        ("home_top",    "du -hxd 1 \"$HOME\" 2>/dev/null | sort -rh | head -n 15 || true"),
+        ("flatpak",     "du -sh /var/lib/flatpak \"$HOME/.local/share/flatpak\" 2>/dev/null || true"),
+        ("snap",        "du -sh /var/lib/snapd 2>/dev/null || true"),
+        ("snap_old",    "snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}' || true"),
+        ("thumbnails",  "du -sh \"$HOME/.cache/thumbnails\" \"$HOME/.cache\" 2>/dev/null || true"),
+        ("kernels",     "uname -r; dpkg -l 'linux-image-*' 2>/dev/null | awk '/^ii/{print $2}' || true"),
+    ])
+
+
+def _disk_show_report(results: dict, bctx=None) -> None:
+    section("Disk space")
+    for line in (results.get("df") or "").splitlines():
+        if not line.strip():
+            continue
+        pct = re.search(r"(\d+)%", line)
+        col = RED if pct and int(pct.group(1)) >= 90 else (
+            YELLOW if pct and int(pct.group(1)) >= 75 else GREEN)
+        print(f"  {col}{line}{R}")
+    home = (results.get("home_top") or "").strip()
+    if home and home not in ("(no output)", "(error)"):
+        section("Largest folders in your home (not deleted)")
+        for line in home.splitlines()[:12]:
+            print(f"  {line}")
+        print(f"  {DIM}These are listed so you can decide — TuxGenie will not delete them.{R}")
+    extras = (
+        ("journal", "System logs"),
+        ("pkg_cache", "Package cache"),
+        ("trash", "Trash"),
+        ("flatpak", "Flatpak"),
+        ("snap", "Snap"),
+    )
+    section("Safe-to-clean areas")
+    for key, label in extras:
+        val = (results.get(key) or "").strip().splitlines()
+        if val and val[0] not in ("(no output)", "(error)"):
+            print(f"  {DIM}{label}:{R} {val[0][:90]}")
+
+
+def _disk_build_plan(results: dict, bctx: dict) -> list:
+    """Safe cleanup only — never home projects (Downloads, WinBoat, Aspera…)."""
+    plan = []
+    pm = ((bctx or {}).get("pkg_mgr") or "apt").strip()
+    j_mb = _parse_size_to_mb(results.get("journal") or "")
+    if j_mb is not None and j_mb > 200:
+        plan.append((
+            "Trim old system logs (keep last 7 days)",
+            "sudo journalctl --vacuum-time=7d",
+            "safe",
+            f"System logs are about {j_mb:.0f} MB.",
+        ))
+    c_mb = _parse_size_to_mb(results.get("pkg_cache") or "")
+    clean = _pkg_cache_clean_cmd(pm)
+    if clean and (c_mb is None or c_mb > 80):
+        plan.append((
+            "Clear package cache and unused packages",
+            clean,
+            "safe",
+            "Frees leftover downloads. Does not remove apps you still use. "
+            "On Debian/Ubuntu, autoremove also drops old kernels safely.",
+        ))
+    trash = _parse_size_to_mb(results.get("trash") or "")
+    if trash is not None and trash > 20:
+        plan.append((
+            "Empty the Trash",
+            "rm -rf \"$HOME/.local/share/Trash/files/\"* \"$HOME/.local/share/Trash/info/\"* 2>/dev/null || true",
+            "safe",
+            f"Trash is about {trash:.0f} MB.",
+        ))
+    if shutil.which("flatpak"):
+        plan.append((
+            "Remove unused Flatpak runtimes",
+            "flatpak uninstall --unused -y",
+            "safe",
+            "Old Flatpak runtimes accumulate after app updates.",
+        ))
+    snap_old = (results.get("snap_old") or "").strip()
+    if snap_old and snap_old not in ("(no output)", "(error)"):
+        plan.append((
+            "Remove disabled (old) Snap revisions",
+            "snap list --all 2>/dev/null | awk '/disabled/{print $1, $3}' | "
+            "while read n r; do sudo snap remove \"$n\" --revision=\"$r\"; done",
+            "safe",
+            "Snap keeps old revisions after updates. Removing disabled ones frees space.",
+        ))
+    boot = results.get("boot") or ""
+    for line in boot.splitlines():
+        m = re.search(r"(\d+)%\s+(/boot(?:/efi)?)\s*$", line)
+        if m and int(m.group(1)) >= 80 and pm == "apt":
+            plan.append((
+                "Remove unused old kernels (keeps the running one)",
+                "sudo apt-get autoremove -y --purge",
+                "moderate",
+                f"{m.group(2)} is {m.group(1)}% full. Autoremove drops unused linux-image packages only.",
+            ))
+            break
+    # de-dupe identical commands
+    seen, out = set(), []
+    for row in plan:
+        if row[1] in seen or is_dangerous(row[1]):
+            continue
+        seen.add(row[1])
+        out.append(row)
+    return out
+
+
+def _security_playbook_collect() -> dict:
+    return _crisis_collect([
+        ("ufw",      "ufw status 2>/dev/null || true"),
+        ("ssh",      "systemctl is-active ssh sshd 2>/dev/null || true"),
+        ("ssh_pw",   "grep -E '^PasswordAuthentication|^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null || true"),
+        ("fail2ban", "systemctl is-active fail2ban 2>/dev/null || true"),
+        ("updates",  "systemctl is-enabled unattended-upgrades 2>/dev/null || true"),
+        ("ports",    "ss -tuln 2>/dev/null | head -25 || true"),
+        ("last",     "last -5 2>/dev/null || true"),
+    ])
+
+
+def _security_show_report(results: dict, bctx=None) -> None:
+    section("Firewall")
+    print(f"  {(results.get('ufw') or 'ufw not installed').splitlines()[0][:100]}")
+    section("SSH")
+    print(f"  active: {(results.get('ssh') or 'n/a').replace(chr(10), ' ')[:80]}")
+    pw = (results.get("ssh_pw") or "").strip()
+    if pw:
+        for line in pw.splitlines()[:4]:
+            print(f"  {line}")
+    section("Listening ports")
+    for line in (results.get("ports") or "").splitlines()[:12]:
+        print(f"  {DIM}{line}{R}")
+
+
+def _security_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    ufw = (results.get("ufw") or "").lower()
+    pm = ((bctx or {}).get("pkg_mgr") or "apt").strip()
+    if "inactive" in ufw or "status: inactive" in ufw:
+        plan.append((
+            "Enable the Uncomplicated Firewall (UFW)",
+            "sudo ufw allow OpenSSH; sudo ufw --force enable",
+            "moderate",
+            "Firewall is off. This turns it on and keeps SSH allowed so you are not locked out.",
+        ))
+    elif "command not found" in ufw or not ufw.strip() or ufw.strip() == "(no output)":
+        if pm == "apt":
+            plan.append((
+                "Install and enable UFW",
+                "sudo apt-get install -y ufw && sudo ufw allow OpenSSH && sudo ufw --force enable",
+                "moderate",
+                "No firewall tool found. UFW is the usual Ubuntu/Zorin/Mint choice.",
+            ))
+    upd = (results.get("updates") or "").lower()
+    if pm == "apt" and "enabled" not in upd:
+        plan.append((
+            "Enable automatic security updates",
+            "sudo apt-get install -y unattended-upgrades && "
+            "sudo dpkg-reconfigure -plow unattended-upgrades || "
+            "sudo systemctl enable --now unattended-upgrades",
+            "safe",
+            "Automatic security updates close holes without a full upgrade.",
+        ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _display_playbook_collect() -> dict:
+    return _crisis_collect([
+        ("session",  "echo ${XDG_SESSION_TYPE:-unknown}"),
+        ("connected","xrandr 2>/dev/null | grep ' connected' || true"),
+        ("xrandr",   "xrandr 2>/dev/null | head -30 || true"),
+        ("gpu",      "lspci 2>/dev/null | grep -iE 'vga|3d|display' || true"),
+        ("driver",   "lspci -k 2>/dev/null | grep -A2 -iE 'vga|3d' || true"),
+    ])
+
+
+def _display_show_report(results: dict, bctx=None) -> None:
+    section("Session")
+    print(f"  {(results.get('session') or '?').strip()}")
+    section("Connected displays")
+    txt = results.get("connected") or results.get("xrandr") or ""
+    for line in txt.splitlines()[:8]:
+        print(f"  {line}")
+    section("GPU")
+    for line in (results.get("gpu") or "").splitlines()[:4]:
+        print(f"  {line}")
+
+
+def _display_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    session = (results.get("session") or "").lower()
+    xr = results.get("xrandr") or ""
+    if "wayland" not in session and xr.strip() and "connected" in xr:
+        plan.append((
+            "Re-detect monitors (xrandr --auto)",
+            "xrandr --auto",
+            "safe",
+            "Asks every connected display to pick a working mode. Safe on X11.",
+        ))
+    drv = (results.get("driver") or "").lower()
+    gpu = (results.get("gpu") or "").lower()
+    if "nvidia" in gpu and "nouveau" in drv:
+        plan.append((
+            "NVIDIA is using the nouveau driver — open the NVIDIA playbook next",
+            "true",
+            "safe",
+            "The NVIDIA crisis playbook (menu 9) installs the proper driver.",
+        ))
+    return [row for row in plan if row[1] != "true" and not is_dangerous(row[1])]
+
+
+def _bluetooth_playbook_collect() -> dict:
+    return _crisis_collect([
+        ("service", "systemctl is-active bluetooth 2>/dev/null || true"),
+        ("rfkill",  "rfkill list bluetooth 2>/dev/null || rfkill list 2>/dev/null || true"),
+        ("hw",      "lsusb 2>/dev/null | grep -i bluetooth; lspci 2>/dev/null | grep -i bluetooth || true"),
+        ("mod",     "lsmod 2>/dev/null | grep -i bluetooth || true"),
+        ("show",    "bluetoothctl show 2>/dev/null | head -12 || true"),
+    ])
+
+
+def _bluetooth_show_report(results: dict, bctx=None) -> None:
+    section("Bluetooth")
+    print(f"  service: {(results.get('service') or '?').strip()}")
+    rf = (results.get("rfkill") or "").strip()
+    if rf:
+        print(f"  rfkill: {rf.splitlines()[0][:90]}")
+    for line in (results.get("hw") or "").splitlines()[:3]:
+        print(f"  {line}")
+
+
+def _bluetooth_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    rf = (results.get("rfkill") or "").lower()
+    if "soft blocked: yes" in rf:
+        plan.append((
+            "Unblock Bluetooth (rfkill)",
+            "rfkill unblock bluetooth",
+            "safe",
+            "Bluetooth is soft-blocked.",
+        ))
+    svc = (results.get("service") or "").lower()
+    if "active" not in svc:
+        plan.append((
+            "Start the Bluetooth service",
+            "sudo systemctl enable --now bluetooth",
+            "safe",
+            "The bluetooth daemon is not running.",
+        ))
+    show = (results.get("show") or "").lower()
+    if "powered: no" in show or "powered:no" in show:
+        plan.append((
+            "Power on the Bluetooth adapter",
+            "bluetoothctl power on",
+            "safe",
+            "The adapter is present but powered off.",
+        ))
+    plan.append((
+        "Restart Bluetooth stack",
+        "sudo systemctl restart bluetooth",
+        "safe",
+        "Clears stuck pairing state. Re-pair headphones after this if needed.",
+    ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _printer_playbook_collect() -> dict:
+    return _crisis_collect([
+        ("cups",     "systemctl is-active cups 2>/dev/null || true"),
+        ("printers", "lpstat -p 2>/dev/null || true"),
+        ("usb",      "lsusb 2>/dev/null | grep -i print || true"),
+    ])
+
+
+def _printer_show_report(results: dict, bctx=None) -> None:
+    section("CUPS")
+    print(f"  {(results.get('cups') or 'not installed').strip()}")
+    section("Printers")
+    pr = (results.get("printers") or "none configured").strip()
+    for line in pr.splitlines()[:8]:
+        print(f"  {line}")
+
+
+def _printer_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    pm = ((bctx or {}).get("pkg_mgr") or "apt").strip()
+    cups = (results.get("cups") or "").lower()
+    if "active" not in cups:
+        if pm == "apt":
+            plan.append((
+                "Install and start CUPS (Linux print service)",
+                "sudo apt-get install -y cups && sudo systemctl enable --now cups",
+                "safe",
+                "CUPS is the program that talks to printers.",
+            ))
+        else:
+            plan.append((
+                "Start CUPS",
+                "sudo systemctl enable --now cups",
+                "safe",
+                "The print service is not running.",
+            ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _webcam_playbook_collect() -> dict:
+    return _crisis_collect([
+        ("devs",   "ls -l /dev/video* 2>/dev/null || true"),
+        ("mod",    "lsmod 2>/dev/null | grep -i uvcvideo || true"),
+        ("usb",    "lsusb 2>/dev/null | grep -iE 'camera|webcam|video|logitech' || true"),
+        ("holder", "fuser /dev/video0 /dev/video1 2>/dev/null || true"),
+    ])
+
+
+def _webcam_show_report(results: dict, bctx=None) -> None:
+    section("Camera devices")
+    print(f"  {(results.get('devs') or 'no /dev/video* found').strip()[:120]}")
+    usb = (results.get("usb") or "").strip()
+    if usb and usb not in ("(no output)", "(error)"):
+        for line in usb.splitlines()[:4]:
+            print(f"  {line}")
+    hold = (results.get("holder") or "").strip()
+    if hold and hold not in ("(no output)", "(error)"):
+        print(f"  {YELLOW}Another program may be using the camera:{R} {hold[:80]}")
+
+
+def _webcam_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    devs = results.get("devs") or ""
+    mod = (results.get("mod") or "").lower()
+    if "/dev/video" not in devs and "uvcvideo" not in mod:
+        plan.append((
+            "Load the standard USB webcam driver (uvcvideo)",
+            "sudo modprobe uvcvideo",
+            "safe",
+            "No camera device node and the UVC driver is not loaded.",
+        ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _battery_playbook_collect() -> dict:
+    return _crisis_collect([
+        ("bat",      "upower -i $(upower -e 2>/dev/null | grep battery | head -1) 2>/dev/null || true"),
+        ("tlp",      "systemctl is-active tlp 2>/dev/null || true"),
+        ("ppd",      "powerprofilesctl get 2>/dev/null || true"),
+        ("gov",      "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || true"),
+        ("on_ac",    "cat /sys/class/power_supply/AC*/online 2>/dev/null | head -1 || true"),
+    ])
+
+
+def _battery_show_report(results: dict, bctx=None) -> None:
+    section("Power")
+    bat = (results.get("bat") or "").strip()
+    if bat and "battery" in bat.lower():
+        for line in bat.splitlines():
+            if re.search(r"percentage|state|time to|energy", line, re.I):
+                print(f"  {line.strip()}")
+    else:
+        print(f"  {DIM}No battery detected (desktop) — power tweaks stay optional.{R}")
+    print(f"  TLP: {(results.get('tlp') or 'n/a').strip()}  ·  "
+          f"profile: {(results.get('ppd') or 'n/a').strip()}  ·  "
+          f"governor: {(results.get('gov') or 'n/a').strip()}")
+
+
+def _battery_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    bat = (results.get("bat") or "").lower()
+    laptop = "battery" in bat and "native-path" in bat
+    if not laptop and "percentage" not in bat:
+        return []
+    pm = ((bctx or {}).get("pkg_mgr") or "apt").strip()
+    tlp = (results.get("tlp") or "").lower()
+    if "active" not in tlp and pm == "apt":
+        plan.append((
+            "Install TLP (automatic laptop power saving)",
+            "sudo apt-get install -y tlp tlp-rdw && sudo systemctl enable --now tlp",
+            "safe",
+            "TLP quietly reduces power use. Safe to install and forget.",
+        ))
+    on_ac = (results.get("on_ac") or "").strip()
+    ppd = (results.get("ppd") or "").lower()
+    if on_ac == "0" and "power-saver" not in ppd and shutil.which("powerprofilesctl"):
+        plan.append((
+            "Switch to power-saver profile (on battery)",
+            "powerprofilesctl set power-saver",
+            "safe",
+            "You are on battery. Power-saver lowers CPU clocks.",
+        ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _logs_playbook_collect() -> dict:
+    return _crisis_collect([
+        ("err",    "journalctl -p err -b --no-pager -n 25 2>/dev/null || true"),
+        ("failed", "systemctl --failed --plain --no-legend --no-pager 2>/dev/null || true"),
+        ("dmesg",  "dmesg -l err,crit 2>/dev/null | tail -15 || true"),
+    ])
+
+
+def _logs_show_report(results: dict, bctx=None) -> None:
+    section("Failed services")
+    units = _parse_failed_units(results.get("failed") or "")
+    if units:
+        for u in units:
+            print(f"  {RED}{u}{R}")
+    else:
+        ok("No failed services")
+    section("Recent errors (this boot)")
+    lines = [l for l in (results.get("err") or "").splitlines() if l.strip()]
+    if not lines or lines[0] in ("(no output)", "(error)"):
+        print(f"  {DIM}No journal errors this boot.{R}")
+    else:
+        for line in lines[:18]:
+            print(f"  {DIM}{line[:120]}{R}")
+
+
+def _logs_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    for unit in _parse_failed_units(results.get("failed") or ""):
+        plan.extend(_known_failed_unit_plan(unit, results, bctx))
+    seen, out = set(), []
+    for row in plan:
+        if row[1] in seen or is_dangerous(row[1]):
+            continue
+        seen.add(row[1])
+        out.append(row)
+    return out
+
+
+def _drivers_generic_collect() -> dict:
+    return _crisis_collect([
+        ("gpu",      "lspci 2>/dev/null | grep -iE 'vga|3d|display' || true"),
+        ("driver",   "lspci -k 2>/dev/null | grep -A3 -iE 'vga|3d' || true"),
+        ("fw",       "dmesg 2>/dev/null | grep -iE 'firmware.*(fail|error|not found)' | tail -12 || true"),
+        ("wifi",     "lspci 2>/dev/null | grep -iE 'network|wireless'; lsusb 2>/dev/null | grep -iE 'wireless|wifi' || true"),
+    ])
+
+
+def _drivers_show_report(results: dict, bctx=None) -> None:
+    section("Graphics")
+    for line in (results.get("gpu") or "").splitlines()[:4]:
+        print(f"  {line}")
+    for line in (results.get("driver") or "").splitlines()[:8]:
+        print(f"  {DIM}{line}{R}")
+    fw = (results.get("fw") or "").strip()
+    if fw and fw not in ("(no output)", "(error)"):
+        section("Firmware warnings")
+        for line in fw.splitlines()[:8]:
+            print(f"  {YELLOW}{line}{R}")
+
+
+def _drivers_generic_build_plan(results: dict, bctx: dict) -> list:
+    plan = []
+    pm = ((bctx or {}).get("pkg_mgr") or "apt").strip()
+    fw = (results.get("fw") or "").lower()
+    if ("firmware" in fw and ("fail" in fw or "not found" in fw)) and pm == "apt":
+        plan.append((
+            "Install Linux firmware package",
+            "sudo apt-get install -y linux-firmware",
+            "safe",
+            "The kernel reported missing firmware. linux-firmware is the usual fix.",
+        ))
+    return [row for row in plan if not is_dangerous(row[1])]
+
+
+def _run_local_playbook(title, collect, show, build, backend, bctx, slog,
+                        source, ai_prompt, done_msg=None):
+    """Scan → show → safe plan → optional AI (default No)."""
+    hdr(title)
+    print(f"\n  {CYAN}{BOLD}Scanning…{R}  {DIM}(local commands only, no AI){R}\n")
+    results = collect() if collect else {}
+    ok("Scan complete")
+    if show:
+        show(results, bctx)
+    plan = build(results, bctx or {}) if build else []
+    applied = 0
+    if plan:
+        print(f"\n  {CYAN}{BOLD}Safe fixes ready{R}  "
+              f"{DIM}({len(plan)} — each shown before it runs){R}\n")
+        applied = _apply_approved_plan(plan, slog, source=source)
+        if applied:
+            print(f"\n  {GREEN}{BOLD}✓ Applied {applied} fix(es).{R}")
+    else:
+        info("No safe automatic fixes looked necessary from this scan.")
+    ctx = dict(bctx or {})
+    for k, v in (results or {}).items():
+        ctx[k] = str(v)[:800]
+    prompt = ai_prompt
+    if callable(prompt):
+        prompt = prompt(results, applied)
+    _offer_optional_ai(
+        backend, ctx, slog, prompt,
+        done_msg or "Done. You can re-run this from the menu anytime.",
+    )
 
 
 # ── Phase B — Crisis playbooks (deterministic first, AI optional) ─────────────
@@ -10091,6 +10792,24 @@ def _crisis_audio_build_plan(results: dict, bctx: dict) -> list:
             "safe",
             "Clears stuck audio streams and reconnects Bluetooth/headsets.",
         ))
+    info = results.get("pactl_info") or ""
+    default_m = re.search(r"Default Sink:\s*(\S+)", info)
+    default_sink = (default_m.group(1) if default_m else "").lower()
+    analog = None
+    for line in (results.get("pactl_sink") or "").splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and re.search(r"analog", parts[1], re.I):
+            name = parts[1]
+            if re.match(r"^[\w.+:-]+$", name):
+                analog = name
+                break
+    if analog and default_sink and "hdmi" in default_sink:
+        plan.append((
+            "Switch default speakers from HDMI to analog",
+            f"pactl set-default-sink {analog}",
+            "safe",
+            "Sound is going to HDMI (TV/monitor) instead of the analog jack.",
+        ))
     groups = results.get("groups") or ""
     if "audio" not in groups.split() and "pipewire" not in groups:
         user = (bctx or {}).get("user") or os.environ.get("USER", "")
@@ -10303,16 +11022,6 @@ def _run_crisis_playbook(kind, backend, bctx, slog):
         print(f"\n  {GREEN}{BOLD}✓ Applied {applied} fix(es).{R}  "
               f"{DIM}Reboot if drivers/GRUB/firmware were changed.{R}")
 
-    try:
-        deeper = input(f"\n  {BOLD}Want a deeper AI analysis for what's left?{R} "
-                       f"[{C('y',GREEN,BOLD)}=yes  {C('n',DIM)}=no, I'm done]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        deeper = "n"
-    if deeper not in ("y", "yes"):
-        info("Done. You can re-run this from the menu anytime.")
-        return
-
-    print(f"\n  {CYAN}{BOLD}AI analysing remaining issues…{R}")
     data_block = "\n\n".join(f"[{k}]\n{v}" for k, v in results.items())
     prompt = (
         f"{ai_focus}\n\nLive diagnostic scan:\n\n{data_block}\n\n"
@@ -10320,8 +11029,10 @@ def _run_crisis_playbook(kind, backend, bctx, slog):
         "Focus on remaining issues. Prefer safe, reversible steps. "
         "Explain each fix in plain English."
     )
-    fix_engine(backend, BASE_SYS + _sys_ctx_block(bctx or {}),
-               [{"role": "user", "content": prompt}], slog)
+    _offer_optional_ai(
+        backend, bctx or {}, slog, prompt,
+        "Done. You can re-run this from the menu anytime.",
+    )
 
 
 # ── Slow-PC / Performance Boost helpers (Phase 4) ─────────────────────────────
@@ -10540,17 +11251,6 @@ def feat_performance(backend, bctx, slog):
         print(f"\n  {GREEN}{BOLD}✓ Applied {applied} speed fix(es).{R}  "
               f"{DIM}Safe/reversible. A reboot can help some take full effect.{R}")
 
-    # Optional deeper AI pass — never forced; keeps free-tier cost down.
-    try:
-        deeper = input(f"\n  {BOLD}Want a deeper AI performance analysis?{R} "
-                       f"[{C('y',GREEN,BOLD)}=yes  {C('n',DIM)}=no, I'm done]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        deeper = "n"
-    if deeper not in ("y", "yes"):
-        info("Done. Type \"my PC is slow\" anytime — or press 18 for Performance Boost.")
-        return
-
-    print(f"\n  {CYAN}{BOLD}AI analysing remaining bottlenecks…{R}")
     data_block = "\n\n".join(f"[{k}]\n{v}" for k, v in results.items())
     perf_prompt = f"""Make my Linux system as fast as possible.
 
@@ -10575,8 +11275,10 @@ FIXES TO CONSIDER (only those actually still needed based on the data):
 DO NOT suggest: upgrading RAM, replacing apps, reinstalling the OS.
 Set needs_synthesis: true so a full before/after summary is generated."""
 
-    fix_engine(backend, BASE_SYS + _sys_ctx_block(bctx or {}),
-               [{"role": "user", "content": perf_prompt}], slog)
+    _offer_optional_ai(
+        backend, bctx or {}, slog, perf_prompt,
+        "Done. Type \"my PC is slow\" anytime — or press 18 for Performance Boost.",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
