@@ -120,6 +120,13 @@ finish the task on Claude — paid, so only after an explicit "yes"
   The interactive `❯` loop must resolve those via `menu_keyword_map()` → `feat_*`
   and must **never** send bare keywords to `agentic_engine`. Bare `fix` is the
   menu feature; `!!` / `why` are last-failed only.
+- **Make Ubuntu complete (`complete` / 41):** re-runnable first-run wizard —
+  updates, codecs, Flatpak+Flathub, firewall, NTP, Timeshift, fwupd, fonts.
+  One y/s/q per step. First-run welcome offers it; Home shows a flavour-aware
+  tile (Ubuntu / Mint / Debian / Pop). Never hard-code apt on non-Debian.
+- **DE-aware Home:** `compose_home_actions()` injects a “This desktop” section
+  from `de_home_actions()` (GNOME Tweaks/Extensions, Cinnamon, KDE Discover,
+  COSMIC/XFCE Settings). Keywords: `tweaks`, `extensions`, `dsettings`.
 - **App Store (GUI):** WebKit tabs Home / App Store / My Apps. Install feeds
   `install-app <id>` or `install-ai <id>`; Remove feeds `remove-app method:target`.
   Those commands call `cli_install_catalog_ref` / `cli_remove_app_ref` — same

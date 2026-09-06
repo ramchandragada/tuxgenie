@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.4.0"
+__version__ = "7.5.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2495,6 +2495,125 @@ def _debian_flavour(osr=None):
     if did == "debian" or "debian" in like:
         return "debian"
     return did or "unknown"
+
+
+def desktop_family(desktop: str = "") -> str:
+    """Normalize XDG_CURRENT_DESKTOP to gnome/cinnamon/kde/cosmic/xfce/mate/lxqt/other."""
+    d = (desktop or os.environ.get("XDG_CURRENT_DESKTOP")
+         or os.environ.get("XDG_SESSION_DESKTOP") or "").lower()
+    if "cinnamon" in d:
+        return "cinnamon"
+    if "cosmic" in d:
+        return "cosmic"
+    if "kde" in d or "plasma" in d:
+        return "kde"
+    if "xfce" in d:
+        return "xfce"
+    if "mate" in d:
+        return "mate"
+    if "lxqt" in d:
+        return "lxqt"
+    if "gnome" in d or "unity" in d or "ubuntu" in d:
+        return "gnome"
+    return "other"
+
+
+def _complete_setup_label(flavour: str = "") -> str:
+    return {
+        "mint": "Make Mint complete",
+        "pop": "Make Pop!_OS complete",
+        "debian": "Make Debian complete",
+        "elementary": "Make elementary complete",
+        "zorin": "Make Zorin complete",
+        "kubuntu": "Make Kubuntu complete",
+        "ubuntu": "Make Ubuntu complete",
+    }.get((flavour or "").lower(), "Finish Linux setup")
+
+
+def de_home_actions(desktop=None, flavour=None, debian_family=None):
+    """Extra Unified Shell Home chips for this desktop + distro flavour."""
+    if flavour is None or debian_family is None:
+        try:
+            ctx = base_ctx()
+            flavour = flavour if flavour is not None else ctx.get("flavour")
+            debian_family = (debian_family if debian_family is not None
+                             else ctx.get("is_debian_family"))
+            desktop = desktop if desktop is not None else ctx.get("desktop")
+        except Exception:
+            flavour = flavour or ""
+            debian_family = bool(debian_family)
+            desktop = desktop or ""
+    fam = desktop_family(desktop or "")
+    actions = [{"kind": "sec", "label": "This desktop"}]
+    actions.append({
+        "id": "complete",
+        "label": _complete_setup_label(flavour if debian_family else ""),
+        "tip": "Codecs, Flathub, Timeshift, firmware — you approve each step",
+        "kind": "kw", "payload": "complete", "accent": "#0e7c86",
+    })
+    if fam == "gnome":
+        actions.append({
+            "id": "tweaks", "label": "GNOME Tweaks",
+            "tip": "Fonts, title buttons, touchpad — GNOME extras",
+            "kind": "kw", "payload": "tweaks", "accent": "#0d6e8c",
+        })
+        actions.append({
+            "id": "extensions", "label": "Extensions",
+            "tip": "Install GNOME Shell extensions safely",
+            "kind": "kw", "payload": "extensions", "accent": "#156f9a",
+        })
+        actions.append({
+            "id": "dsettings", "label": "GNOME Settings",
+            "tip": "Open Ubuntu / GNOME Settings",
+            "kind": "kw", "payload": "dsettings", "accent": "#3d5a80",
+        })
+    elif fam == "cinnamon":
+        actions.append({
+            "id": "tweaks", "label": "Cinnamon Settings",
+            "tip": "Themes, panel, applets — Mint desktop",
+            "kind": "kw", "payload": "tweaks", "accent": "#1b7a4a",
+        })
+        actions.append({
+            "id": "dsettings", "label": "System Settings",
+            "tip": "Open Cinnamon system settings",
+            "kind": "kw", "payload": "dsettings", "accent": "#3d5a80",
+        })
+    elif fam == "kde":
+        actions.append({
+            "id": "extensions", "label": "Discover",
+            "tip": "KDE app store and updates",
+            "kind": "kw", "payload": "extensions", "accent": "#0b7ea8",
+        })
+        actions.append({
+            "id": "dsettings", "label": "System Settings",
+            "tip": "Open KDE System Settings",
+            "kind": "kw", "payload": "dsettings", "accent": "#3d5a80",
+        })
+    elif fam == "cosmic":
+        actions.append({
+            "id": "dsettings", "label": "COSMIC Settings",
+            "tip": "Open Pop!_OS / COSMIC Settings",
+            "kind": "kw", "payload": "dsettings", "accent": "#48b9c7",
+        })
+    elif fam == "xfce":
+        actions.append({
+            "id": "dsettings", "label": "XFCE Settings",
+            "tip": "Open the XFCE settings manager",
+            "kind": "kw", "payload": "dsettings", "accent": "#3d5a80",
+        })
+    elif fam == "mate":
+        actions.append({
+            "id": "dsettings", "label": "MATE Settings",
+            "tip": "Open MATE Control Center",
+            "kind": "kw", "payload": "dsettings", "accent": "#3d5a80",
+        })
+    else:
+        actions.append({
+            "id": "dsettings", "label": "Desktop Settings",
+            "tip": "Open this desktop's settings app",
+            "kind": "kw", "payload": "dsettings", "accent": "#3d5a80",
+        })
+    return actions
 
 
 def base_ctx() -> dict:
@@ -13298,7 +13417,7 @@ def show_menu(compact=False):
         _row("📊", "Inspect",     [("23","Hardware"),("24","Programs"),("25","Logs")])
         _row("⚙️", "Developers",  [("26","Script"),("27","Schedule"),("28","Docker"),("29","SSH"),("30","Git")])
         _row("🎮", "Gaming",      [("31","Gaming Setup")])
-        _row("🧭", "Setups",      [("39","Suggest ⭐"),("32","New-to-Linux"),("33","Dev"),("34","Creator"),("35","Privacy"),("36","Student"),("37","Homelab"),("38","Access"),("40","Dev Envs")])
+        _row("🧭", "Setups",      [("41","Ubuntu complete"),("39","Suggest ⭐"),("32","New-to-Linux"),("33","Dev"),("34","Creator"),("35","Privacy"),("36","Student"),("37","Homelab"),("38","Access"),("40","Dev Envs"),("42","Tweaks"),("44","Settings")])
         _row("🎁", "Catalogs",    [("77","Apps"),("88","Cloud"),("99","AI Tools")])
         _row("🗑️", "Uninstall",   [("78","Remove installed apps")])
         print(f"\n  {DIM}{'─' * 65}{R}")
@@ -13359,6 +13478,7 @@ def show_menu(compact=False):
 
     _cat(BG_TEAL, "🧭", "GUIDED SETUPS", "Set your PC up for how you use it")
     print(f"    {BGREEN}{BOLD}👉 Not sure which?{R} Type {BOLD}suggest{R} {DIM}(or 39){R} — one question and I'll pick the right one for you.")
+    _item("41", "Make Ubuntu Complete","Codecs, Flathub, Timeshift, firmware — re-run anytime")
     _item("32", "New to Linux",        "Just switched from Windows/Mac? Full first-day setup")
     _item("33", "Developer Setup",     "Languages, VS Code, git, SSH keys, Docker, shell")
     _item("34", "Creator / Streaming", "OBS, video/audio editors, virtual camera, mic setup")
@@ -13367,6 +13487,9 @@ def show_menu(compact=False):
     _item("37", "Homelab Setup",       "Docker, Portainer, Tailscale, Syncthing, backups")
     _item("38", "Accessibility",       "Screen reader, magnifier, on-screen keyboard, contrast")
     _item("40", "Dev Environments",    "Ready-to-run stacks: LAMP/LEMP, Node, Python, databases, WordPress")
+    _item("42", "Desktop Tweaks",      "GNOME Tweaks, Cinnamon Settings, KDE extras")
+    _item("43", "Desktop Extras",      "GNOME extensions / Cinnamon applets / Discover")
+    _item("44", "Desktop Settings",    "Open this desktop's Settings app")
 
     _cat(BG_MAGENTA, "🎁", "ONE-TAP CATALOGS", "Headline picks — install bundles by number")
     _item("77", "Install Apps",        "🎁 220+ apps: Brave, Signal, Blender, Bitwarden, Steam, games & more…")
@@ -13427,15 +13550,17 @@ def show_help():
     {RED}{BOLD}q{R}         Quit TuxGenie
 """)
 
-def _first_run_setup_steps(pkg_mgr: str, os_name: str = "") -> list:
+def _first_run_setup_steps(pkg_mgr: str, os_name: str = "", flavour: str = "") -> list:
     """Distro-aware first-run playbook: [(description, command, risk), ...].
 
     Phase A — never hard-code apt. Every major package manager gets a working
     path for updates, essentials, codecs (best-effort), Flatpak+Flathub,
     firewall, and NTP. Unknown managers still get Flatpak/NTP when possible.
+    Ubuntu/Debian-family also get Timeshift, fwupd, and desktop fonts.
     """
     pm = (pkg_mgr or "unknown").strip().lower()
     os_l = (os_name or "").lower()
+    flavour = (flavour or "").lower()
     steps = []
 
     update = {
@@ -13556,7 +13681,296 @@ def _first_run_setup_steps(pkg_mgr: str, os_name: str = "") -> list:
         "sudo timedatectl set-ntp true 2>/dev/null || true",
         "safe",
     ))
+
+    # Ubuntu/Debian complete extras — Timeshift, firmware, fonts.
+    os_and = f"{os_l} {(flavour or '')}"
+    if pm == "apt" and any(x in os_and for x in (
+        "ubuntu", "debian", "mint", "pop", "elementary", "zorin", "kubuntu",
+    )):
+        steps.append((
+            "Install Timeshift (system restore points)",
+            "sudo apt-get install -y timeshift",
+            "safe",
+        ))
+        steps.append((
+            "Check firmware updates (fwupd)",
+            "sudo apt-get install -y fwupd 2>/dev/null || true; "
+            "fwupdmgr refresh --force 2>/dev/null || true; "
+            "fwupdmgr get-updates 2>/dev/null || true",
+            "safe",
+        ))
+        steps.append((
+            "Install desktop fonts (Noto, Liberation)",
+            "sudo apt-get install -y fonts-noto-core fonts-liberation "
+            "fonts-dejavu-core 2>/dev/null || "
+            "sudo apt-get install -y fonts-noto fonts-liberation || true",
+            "safe",
+        ))
+    elif pm in ("dnf", "yum"):
+        steps.append((
+            "Check firmware updates (fwupd)",
+            "sudo dnf install -y fwupd 2>/dev/null || true; "
+            "fwupdmgr refresh --force 2>/dev/null || true; "
+            "fwupdmgr get-updates 2>/dev/null || true",
+            "safe",
+        ))
     return steps
+
+
+def _setup_step_already_done(desc: str, cmd: str) -> bool:
+    """Skip complete-wizard steps that are already in place."""
+    d = (desc or "").lower()
+    c = (cmd or "").lower()
+    if "flatpak" in d and shutil.which("flatpak"):
+        rem = _r("flatpak remotes 2>/dev/null")
+        if rem and "flathub" in rem.lower():
+            return True
+    if "timeshift" in d and shutil.which("timeshift"):
+        return True
+    if "useful tools" in d and shutil.which("curl") and shutil.which("git"):
+        return True
+    if "ubuntu-restricted-extras" in c:
+        out = _r("dpkg -s ubuntu-restricted-extras 2>/dev/null")
+        if out and "install ok" in out:
+            return True
+    if "mint-meta-codecs" in c:
+        out = _r("dpkg -s mint-meta-codecs 2>/dev/null")
+        if out and "install ok" in out:
+            return True
+    if "fonts-noto" in c:
+        out = _r("dpkg -s fonts-noto-core 2>/dev/null")
+        if out and "install ok" in out:
+            return True
+    return False
+
+
+def _ubuntu_complete_steps(bctx=None) -> list:
+    """First-run playbook + Ubuntu-complete extras; skip what's already done."""
+    bctx = bctx or {}
+    pm = bctx.get("pkg_mgr") or "unknown"
+    os_name = bctx.get("os") or ""
+    flavour = bctx.get("flavour") or ""
+    steps = list(_first_run_setup_steps(pm, os_name, flavour=flavour))
+    # Optional: apply firmware only after the user has seen the check step.
+    if any("fwupd" in (cmd or "") for _d, cmd, _r in steps):
+        steps.append((
+            "Apply firmware updates if any are waiting (can ask to reboot)",
+            "sudo fwupdmgr update -y 2>/dev/null || true",
+            "moderate",
+        ))
+    out = []
+    for desc, cmd, risk in steps:
+        if _setup_step_already_done(desc, cmd):
+            continue
+        out.append((desc, cmd, risk))
+    return out
+
+
+def _run_approved_setup_steps(steps) -> None:
+    """Prompt y/s/q for each setup step and run approved commands."""
+    if not steps:
+        info("Nothing left to do — this system already looks complete.")
+        return
+    for desc, cmd, risk in steps:
+        print(f"\n  {DIM}▸ {desc}{R}")
+        print(f"    {DIM}$ {cmd}{R}")
+        if risk == "moderate":
+            print(f"    {YELLOW}Needs your OK — this can change system settings.{R}")
+        try:
+            ch = input(f"    Run this? [{C('y',GREEN,BOLD)}/{C('s',YELLOW,BOLD)}=skip/{C('q',RED,BOLD)}=quit setup]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if ch in ("q", "quit"):
+            break
+        if ch in ("s", "skip", "n") or ch not in ("y", "yes", ""):
+            print(C("    ↳ Skipped.", DIM))
+            continue
+        sudo_pw = None
+        if re.search(r"\bsudo\b", cmd):
+            try:
+                sudo_pw = get_or_cache_sudo_password()
+                run_cmd_live("sudo -v", sudo_password=sudo_pw, timeout=30)
+            except KeyboardInterrupt:
+                break
+        print(f"  {CYAN}▶ Running…{R}")
+        pw = sudo_pw if cmd.lstrip().startswith("sudo") else None
+        rc, _, _ = run_cmd_live(cmd, sudo_password=pw, timeout=600)
+        _restore_terminal()
+        if rc == 0:
+            ok(desc)
+        else:
+            warn(f"{desc} — had an issue, continuing anyway.")
+
+
+def feat_ubuntu_complete(backend=None, bctx=None, slog=None):
+    """Re-runnable Ubuntu/Debian complete wizard (also used on first run)."""
+    bctx = bctx or base_ctx()
+    flavour = bctx.get("flavour") or ""
+    title = _complete_setup_label(flavour if bctx.get("is_debian_family") else "")
+    hdr(title + " — codecs, Flathub, snapshots, firmware")
+    print(f"  {DIM}Detected: {bctx.get('os', 'Linux')} · {bctx.get('pkg_mgr', '?')} · "
+          f"{desktop_family(bctx.get('desktop') or '')} desktop{R}")
+    print(f"  {DIM}You approve every step. Skip anything you don't want.{R}")
+    steps = _ubuntu_complete_steps(bctx)
+    _run_approved_setup_steps(steps)
+    print(f"\n  {GREEN}{BOLD}✓ Setup finished.{R}")
+    print(f"  {DIM}Tip: {BOLD}77{R}{DIM} = apps · {BOLD}tweaks{R}{DIM} = desktop extras · "
+          f"{BOLD}\"my PC is slow\"{R}{DIM} anytime.{R}\n")
+
+
+def _de_settings_argv(fam: str):
+    """(argv, label) for this desktop's settings app."""
+    table = {
+        "gnome":    (["gnome-control-center"], "GNOME Settings"),
+        "cinnamon": (["cinnamon-settings"], "Cinnamon Settings"),
+        "kde":      (["systemsettings"], "KDE System Settings"),
+        "cosmic":   (["cosmic-settings"], "COSMIC Settings"),
+        "xfce":     (["xfce4-settings-manager"], "XFCE Settings"),
+        "mate":     (["mate-control-center"], "MATE Control Center"),
+        "lxqt":     (["lxqt-config"], "LXQt Configuration"),
+    }
+    return table.get(fam, (["xdg-open", "settings://"], "Desktop Settings"))
+
+
+def _open_desktop_app(argv, label) -> bool:
+    if not argv:
+        return False
+    exe = argv[0]
+    if not os.path.isabs(exe) and not shutil.which(exe):
+        return False
+    try:
+        subprocess.Popen(
+            argv, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        ok(f"Opened {label}")
+        return True
+    except Exception as e:
+        warn(f"Could not open {label}: {e}")
+        return False
+
+
+def _ensure_pkg_then_open(pkg, argv, label, bctx):
+    """Install a small DE helper if missing, then launch it."""
+    if argv and shutil.which(argv[0]):
+        _open_desktop_app(argv, label)
+        return
+    pm = (bctx or {}).get("pkg_mgr") or "apt"
+    cmd = _native_pkg_cmd(pm, pkg) if pkg else None
+    if not cmd:
+        warn(f"{label} is not installed and no package manager command is available.")
+        return
+    print(f"  {DIM}{label} is not installed yet.{R}")
+    print(f"    {DIM}$ {cmd}{R}")
+    try:
+        ch = input(f"    Install {label}? [{C('y',GREEN,BOLD)}/{C('n',DIM)}]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if ch not in ("y", "yes", ""):
+        info("Cancelled.")
+        return
+    sudo_pw = None
+    if re.search(r"\bsudo\b", cmd):
+        try:
+            sudo_pw = get_or_cache_sudo_password()
+        except KeyboardInterrupt:
+            return
+    rc, _, _ = run_cmd_live(cmd, sudo_password=sudo_pw, timeout=300)
+    _restore_terminal()
+    if rc != 0:
+        warn(f"Could not install {label}.")
+        return
+    _open_desktop_app(argv, label)
+
+
+def feat_desktop_tweaks(backend=None, bctx=None, slog=None):
+    """Install/open DE tweaks (GNOME Tweaks, Cinnamon Settings, …)."""
+    bctx = bctx or base_ctx()
+    fam = desktop_family(bctx.get("desktop") or "")
+    hdr("Desktop Tweaks")
+    if fam == "gnome":
+        _ensure_pkg_then_open("gnome-tweaks", ["gnome-tweaks"], "GNOME Tweaks", bctx)
+    elif fam == "cinnamon":
+        if not _open_desktop_app(["cinnamon-settings"], "Cinnamon Settings"):
+            _ensure_pkg_then_open("cinnamon", ["cinnamon-settings"], "Cinnamon Settings", bctx)
+    elif fam == "kde":
+        if not _open_desktop_app(["systemsettings"], "KDE System Settings"):
+            _open_desktop_app(["systemsettings5"], "KDE System Settings")
+    elif fam == "cosmic":
+        _open_desktop_app(["cosmic-settings"], "COSMIC Settings")
+    else:
+        info("No dedicated tweaks app for this desktop — opening Settings instead.")
+        feat_desktop_settings(backend, bctx, slog)
+
+
+def feat_desktop_extensions(backend=None, bctx=None, slog=None):
+    """GNOME Extension Manager, Cinnamon applets, or KDE Discover."""
+    bctx = bctx or base_ctx()
+    fam = desktop_family(bctx.get("desktop") or "")
+    hdr("Desktop Extensions & extras")
+    if fam == "gnome":
+        if shutil.which("extension-manager"):
+            _open_desktop_app(["extension-manager"], "Extension Manager")
+            return
+        # Prefer the Flatpak when gnome-shell-extension-manager isn't in apt yet.
+        if shutil.which("flatpak"):
+            print(f"  {DIM}Install Extension Manager from Flathub?{R}")
+            try:
+                ch = input(f"    [{C('y',GREEN,BOLD)}/{C('n',DIM)}]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return
+            if ch in ("y", "yes", ""):
+                cmd = "sudo flatpak install -y flathub com.mattjakeman.ExtensionManager"
+                try:
+                    sudo_pw = get_or_cache_sudo_password()
+                except KeyboardInterrupt:
+                    return
+                rc, _, _ = run_cmd_live(cmd, sudo_password=sudo_pw, timeout=300)
+                _restore_terminal()
+                if rc == 0:
+                    _open_desktop_app(
+                        ["flatpak", "run", "com.mattjakeman.ExtensionManager"],
+                        "Extension Manager")
+                    return
+        _ensure_pkg_then_open(
+            "gnome-shell-extension-manager",
+            ["extension-manager"], "Extension Manager", bctx)
+    elif fam == "cinnamon":
+        _open_desktop_app(["cinnamon-settings", "applets"], "Cinnamon Applets")
+    elif fam == "kde":
+        if not _open_desktop_app(["plasma-discover"], "Discover"):
+            _ensure_pkg_then_open("plasma-discover", ["plasma-discover"], "Discover", bctx)
+    else:
+        info("This desktop has no extension store tile — opening Settings.")
+        feat_desktop_settings(backend, bctx, slog)
+
+
+def feat_desktop_settings(backend=None, bctx=None, slog=None):
+    """Open this desktop environment's settings app."""
+    bctx = bctx or base_ctx()
+    fam = desktop_family(bctx.get("desktop") or "")
+    hdr("Desktop Settings")
+    argv, label = _de_settings_argv(fam)
+    if _open_desktop_app(argv, label):
+        return
+    # Fallbacks
+    for alt in (["systemsettings5"], ["unity-control-center"], ["xdg-open", "/"]):
+        if _open_desktop_app(alt, label):
+            return
+    warn("Could not find a settings app. Try the Super key and type “Settings”.")
+
+
+# Registered after the handlers exist (these sit below MENU_ITEMS in the file).
+MENU_ITEMS.extend([
+    ("41", "complete",  "Make Ubuntu Complete",
+     "Codecs, Flathub, Timeshift, firmware — you approve each step", feat_ubuntu_complete),
+    ("42", "tweaks",    "Desktop Tweaks",
+     "GNOME Tweaks / Cinnamon / KDE extras for this desktop", feat_desktop_tweaks),
+    ("43", "extensions", "Desktop Extras",
+     "GNOME extensions, Cinnamon applets, or KDE Discover", feat_desktop_extensions),
+    ("44", "dsettings", "Desktop Settings",
+     "Open this desktop's Settings app", feat_desktop_settings),
+])
 
 
 def first_run_check():
@@ -13587,56 +14001,18 @@ def first_run_check():
   {DIM}Type {BOLD}help{R}{DIM} anytime to see tips.{R}
 """)
 
-    # Offer first-time setup wizard
+    # Offer first-time setup wizard (Ubuntu-complete on Debian-family)
+    bctx = base_ctx()
+    label = _complete_setup_label(
+        bctx.get("flavour") if bctx.get("is_debian_family") else "")
     try:
-        ans = input(f"  {GREEN}{BOLD}Would you like a quick setup to get your Linux ready?{R} [{C('y',GREEN,BOLD)}/{C('n',DIM)}]: ").strip().lower()
+        ans = input(f"  {GREEN}{BOLD}{label}? Codecs, Flathub, snapshots, firmware.{R} "
+                    f"[{C('y',GREEN,BOLD)}/{C('n',DIM)}]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         ans = "n"
 
     if ans in ("y", "yes"):
-        bctx = base_ctx()
-        pm = bctx.get("pkg_mgr") or "unknown"
-        print(f"\n  {CYAN}{BOLD}Running First-Time Setup…{R}")
-        print(f"  {DIM}Detected: {bctx.get('os', 'Linux')} · package manager: {pm}{R}")
-        print(f"  {DIM}Each step is adapted for your distro. You approve every change.{R}\n")
-
-        setup_steps = _first_run_setup_steps(pm, bctx.get("os") or "")
-        if not setup_steps:
-            warn("Could not detect a known package manager — skipping automatic setup.")
-            info("You can still use catalogs, menus, and plain-English fixes anytime.")
-        else:
-            for desc, cmd, risk in setup_steps:
-                print(f"\n  {DIM}▸ {desc}{R}")
-                print(f"    {DIM}$ {cmd}{R}")
-                try:
-                    ch = input(f"    Run this? [{C('y',GREEN,BOLD)}/{C('s',YELLOW,BOLD)}=skip/{C('q',RED,BOLD)}=quit setup]: ").strip().lower()
-                except (EOFError, KeyboardInterrupt):
-                    break
-                if ch in ("q", "quit"):
-                    break
-                if ch in ("s", "skip", "n"):
-                    print(C("    ↳ Skipped.", DIM)); continue
-                if ch not in ("y", "yes", ""):
-                    print(C("    ↳ Skipped.", DIM)); continue
-                sudo_pw = None
-                if re.search(r"\bsudo\b", cmd):
-                    try:
-                        sudo_pw = get_or_cache_sudo_password()
-                        run_cmd_live("sudo -v", sudo_password=sudo_pw, timeout=30)
-                    except KeyboardInterrupt:
-                        break
-                print(f"  {CYAN}▶ Running…{R}")
-                pw = sudo_pw if cmd.lstrip().startswith("sudo") else None
-                rc, _, _ = run_cmd_live(cmd, sudo_password=pw, timeout=600)
-                _restore_terminal()
-                if rc == 0:
-                    ok(desc)
-                else:
-                    warn(f"{desc} — had an issue, continuing anyway.")
-
-            print(f"\n  {GREEN}{BOLD}✓ Setup complete! Your Linux is ready.{R}")
-            print(f"  {DIM}Tip: press {BOLD}77{R}{DIM} for apps · {BOLD}99{R}{DIM} for AI tools · "
-                  f"or type {BOLD}\"my PC is slow\"{R}{DIM}.{R}\n")
+        feat_ubuntu_complete(None, bctx, None)
 
     try:
         open(flag, "w").write("1")
@@ -13662,6 +14038,7 @@ _BEGINNER_GUI_ACTIONS = (
     ("sound",    "Sound / Audio",     "No sound or mic issues",                 "feature", "sound"),
     ("drivers",  "Drivers / NVIDIA",  "Missing GPU or hardware drivers",        "feature", "drivers"),
     ("perf",     "My PC is slow",     "Scan + safe speed fixes",                "feature", "perf"),
+    ("complete", "Make Ubuntu complete", "Codecs, Flathub, Timeshift, firmware", "feature", "complete"),
     ("apps",     "Install apps",      "220+ app catalog — Chrome, Steam, etc.",  "feature", "apps"),
     ("remove",   "Remove apps",       "Uninstall apps you no longer need",      "feature", "remove"),
     ("ai",       "AI tools catalog",  "Ollama, Cursor, Claude Code, and more",  "feature", "ai"),

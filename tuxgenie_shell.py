@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.4.0"
+VERSION = "7.5.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -83,6 +83,29 @@ ACTIONS = [
 
 # GTK fallback (no WebKit): tab → terminal catalog keyword
 _TAB_FALLBACK_KW = {"store": "apps", "myapps": "remove", "store-ai": "ai"}
+
+
+def compose_home_actions():
+    """Static Home chips plus a DE-aware “This desktop” section."""
+    extra = []
+    try:
+        import tuxgenie as _tg
+        extra = _tg.de_home_actions()
+    except Exception:
+        extra = []
+    if not extra:
+        return list(ACTIONS)
+    out = []
+    inserted = False
+    for a in ACTIONS:
+        if (not inserted and a.get("kind") == "sec"
+                and a.get("label") == "Fix something"):
+            out.extend(extra)
+            inserted = True
+        out.append(a)
+    if not inserted:
+        out = extra + list(ACTIONS)
+    return out
 
 
 def _resolve_tuxgenie() -> str:
@@ -1401,7 +1424,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 </html>
 """
     html = html.replace("__VERSION__", version)
-    html = html.replace("__ACTIONS__", json.dumps(ACTIONS, ensure_ascii=False))
+    html = html.replace("__ACTIONS__", json.dumps(compose_home_actions(), ensure_ascii=False))
     html = html.replace("__STORE__", json.dumps(store_apps, ensure_ascii=False))
     html = html.replace("__AI__", json.dumps(ai_apps, ensure_ascii=False))
     return html
@@ -1699,7 +1722,7 @@ class UnifiedShell:
         grid.set_margin_start(12)
         grid.set_margin_end(12)
         grid.set_margin_bottom(12)
-        for a in ACTIONS:
+        for a in compose_home_actions():
             if a.get("kind") == "sec":
                 lab = Gtk.Label()
                 lab.set_xalign(0)

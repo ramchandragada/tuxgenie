@@ -564,6 +564,8 @@ class TestFirstRunUniversal:
         assert "apt-get" in cmds
         assert "ubuntu-restricted-extras" in cmds
         assert "ufw" in cmds
+        assert "timeshift" in cmds
+        assert "fwupd" in cmds
         assert steps  # non-empty
 
     def test_fedora_dnf_steps(self):
@@ -602,6 +604,59 @@ class TestFirstRunUniversal:
         for pm in ("apt", "dnf", "pacman", "zypper", "apk"):
             for desc, cmd, _risk in tg._first_run_setup_steps(pm, "Test OS"):
                 assert not tg.is_dangerous(cmd), (pm, desc, cmd)
+
+
+class TestUbuntuCompleteAndDeHome:
+    """v7.5.0: re-runnable complete wizard + DE-aware Home chips."""
+
+    def test_desktop_family_aliases(self):
+        assert tg.desktop_family("ubuntu:GNOME") == "gnome"
+        assert tg.desktop_family("X-Cinnamon") == "cinnamon"
+        assert tg.desktop_family("KDE") == "kde"
+        assert tg.desktop_family("pop:COSMIC") == "cosmic"
+        assert tg.desktop_family("XFCE") == "xfce"
+        assert tg.desktop_family("") == "other"
+
+    def test_complete_label(self):
+        assert "Ubuntu" in tg._complete_setup_label("ubuntu")
+        assert "Mint" in tg._complete_setup_label("mint")
+        assert "Debian" in tg._complete_setup_label("debian")
+        assert "Linux" in tg._complete_setup_label("")
+
+    def test_de_home_actions_are_menu_keywords(self):
+        kws = set(tg.menu_keyword_map())
+        for desktop in ("ubuntu:GNOME", "X-Cinnamon", "KDE", "COSMIC", "XFCE", ""):
+            acts = tg.de_home_actions(desktop=desktop, flavour="ubuntu",
+                                      debian_family=True)
+            assert any(a.get("kind") == "sec" for a in acts)
+            for a in acts:
+                if a.get("kind") == "kw":
+                    assert a["payload"] in kws, (desktop, a)
+
+    def test_complete_steps_skip_when_timeshift_present(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which",
+                            lambda n: "/usr/bin/timeshift" if n == "timeshift" else None)
+        steps = tg._ubuntu_complete_steps({
+            "pkg_mgr": "apt", "os": "Ubuntu 24.04 LTS", "flavour": "ubuntu",
+        })
+        cmds = " ".join(c for _, c, _ in steps)
+        assert "timeshift" not in cmds
+        assert "ubuntu-restricted-extras" in cmds
+
+    def test_complete_steps_not_dangerous(self):
+        steps = tg._ubuntu_complete_steps({
+            "pkg_mgr": "apt", "os": "Ubuntu 24.04 LTS", "flavour": "ubuntu",
+        })
+        assert steps
+        for desc, cmd, _risk in steps:
+            assert not tg.is_dangerous(cmd), (desc, cmd)
+
+    def test_menu_41_44_wired(self):
+        assert next(r for r in tg.MENU_ITEMS if r[0] == "41")[4] is tg.feat_ubuntu_complete
+        assert next(r for r in tg.MENU_ITEMS if r[1] == "complete")[4] is tg.feat_ubuntu_complete
+        assert tg.menu_keyword_map()["tweaks"] is tg.feat_desktop_tweaks
+        assert tg.menu_keyword_map()["extensions"] is tg.feat_desktop_extensions
+        assert tg.menu_keyword_map()["dsettings"] is tg.feat_desktop_settings
 
 
 class TestSlowPcFundamentals:
@@ -1177,6 +1232,8 @@ class TestUnifiedShell:
         src = open(path).read()
         assert "alloc.width * 0.40" in src
         assert "alloc.width * 0.30" not in src
+        assert "compose_home_actions" in src
+        assert "This desktop" in src or "de_home_actions" in src
         # Ubuntu / Debian GUI polish — no color-mix, solid fallbacks, dark + motion
         assert "color-mix(" not in html
         assert "Ubuntu Sans" in html
@@ -1223,7 +1280,8 @@ class TestInteractiveKeywordRouting:
     def test_menu_keyword_map_covers_shell_and_gui_tiles(self):
         km = tg.menu_keyword_map()
         for kw in ("health", "network", "sound", "drivers", "perf", "apps",
-                   "remove", "ai", "backup", "updates", "fix", "settings"):
+                   "remove", "ai", "backup", "updates", "fix", "settings",
+                   "complete", "tweaks", "extensions", "dsettings"):
             assert kw in km, kw
             assert callable(km[kw])
 
