@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.5.0"
+__version__ = "7.6.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -10863,6 +10863,7 @@ APP_CATALOG = [
     {"id": 231,"name": "Caffeine",            "cat": "Utilities",      "prompt": "Install Caffeine so the screen does not sleep during videos or presentations. On Ubuntu/Debian prefer apt: caffeine (or gnome-shell-extension-caffeine on GNOME).", "desc": "Keep the screen awake"},
     {"id": 232,"name": "Google Earth Pro",    "cat": "Utilities",      "prompt": "Install Google Earth Pro via flatpak from Flathub: com.google.EarthPro.", "desc": "Satellite maps and globe (Google)"},
     {"id": 233,"name": "FFmpeg",              "cat": "AV Creation",    "prompt": "Install FFmpeg, the command-line Swiss-army knife for convert/record/stream audio and video, via apt (ffmpeg) on Debian/Ubuntu.", "desc": "Convert and record audio/video (CLI)"},
+    {"id": 234,"name": "Aspera Connect",      "cat": "Communication",  "prompt": "Install Aspera Connect, the free Linux + Android companion that mirrors and controls your phone (USB/wireless, click-to-call, files). Download AsperaConnect-Desktop.deb from https://github.com/ramchandragada/asperaconnect (prefer GitHub Releases .deb, else dist/release/AsperaConnect-Desktop.deb) and install with apt, plus adb and scrcpy. Also save AsperaConnect-Phone-Play.aab to ~/Downloads for the phone/Play companion. Distinct from Aspera Hub already in the catalog.", "desc": "Mirror & control your Android phone from Linux (by Aspera)"},
 
 ]
 
@@ -10986,6 +10987,21 @@ _CATALOG_INSTALL = {
                                     "| grep -oE 'https://[^\"[:space:]]+_amd64\\.deb' | head -1); "
                                     "[ -n \"$url\" ]; curl -fL -o /tmp/aspera-hub.deb \"$url\"; "
                                     "sudo apt-get install -y /tmp/aspera-hub.deb",
+                         "script_root": True},
+    "Aspera Connect":   {"script": "set -e; "
+                                    "mkdir -p \"$HOME/Downloads\"; "
+                                    "curl -fL --http1.1 -o \"$HOME/Downloads/AsperaConnect-Phone-Play.aab\" "
+                                    "\"https://github.com/ramchandragada/asperaconnect/raw/cursor/phone-contacts-sync-5b4f/dist/release/AsperaConnect-Phone-Play.aab\" "
+                                    "|| true; "
+                                    "url=$(curl -fsSL "
+                                    "https://api.github.com/repos/ramchandragada/asperaconnect/releases/latest "
+                                    "| grep -oE 'https://[^\"[:space:]]+\\.deb' | head -1 || true); "
+                                    "if [ -z \"$url\" ]; then "
+                                    "url=\"https://github.com/ramchandragada/asperaconnect/raw/cursor/phone-contacts-sync-5b4f/dist/release/AsperaConnect-Desktop.deb\"; "
+                                    "fi; "
+                                    "curl -fL --http1.1 -o /tmp/aspera-connect.deb \"$url\"; "
+                                    "sudo apt-get install -y adb scrcpy || true; "
+                                    "sudo apt-get install -y /tmp/aspera-connect.deb",
                          "script_root": True},
     # ── Office & Notes ──
     "LibreOffice":      {"pkg": "libreoffice", "flatpak": "org.libreoffice.LibreOffice"},
