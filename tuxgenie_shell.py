@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.10.0"
+VERSION = "7.11.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -249,20 +249,13 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .brandrow {
     display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
   }
-  /* logo-contrast: ink-teal on white — no pale clip-text washout */
+  /* logo-contrast: solid ink-teal on white (no clip-text washout in WebKitGTK) */
   .logo {
     font-size: clamp(2rem, 4.2vw, 2.7rem);
     font-weight: 800; letter-spacing: -.04em; line-height: .95;
     margin: 0;
     color: #03313c;
     animation: brandIn .7s var(--ease) both;
-  }
-  @supports ((-webkit-background-clip: text) or (background-clip: text)) {
-    .logo {
-      background: linear-gradient(115deg, #03232c 8%, #054450 52%, #0a5c68 100%);
-      -webkit-background-clip: text; background-clip: text;
-      -webkit-text-fill-color: transparent; color: transparent;
-    }
   }
   @keyframes brandIn {
     from { opacity: 0; transform: translateY(10px); letter-spacing: .04em; }
