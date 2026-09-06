@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.8.0"
+__version__ = "7.9.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -6695,6 +6695,8 @@ def feat_health(backend, bctx, slog):
 
     still = _parse_failed_units(
         _r("systemctl --failed --plain --no-legend --no-pager 2>/dev/null"))
+    disk_now = _r("df -P / /boot /home /var 2>/dev/null") or ctx.get("disk", "")
+    disk_still_hot = _df_critical_full(disk_now)
     if units and not still:
         ok("Failed services are cleared.")
     elif still:
@@ -6708,7 +6710,8 @@ def feat_health(backend, bctx, slog):
     )
     _offer_optional_ai(
         backend, {**ctx, **extra}, slog, prompt,
-        "Done. Re-run health anytime — AI is only used if you ask.",
+        needed=bool(still) or disk_still_hot,
+        done_msg="Health playbook finished — nothing leftover for AI.",
     )
 
 # ── FEATURE 3: Package Wizard ─────────────────────────────────────────────────
@@ -6746,12 +6749,12 @@ Do NOT try apt-cache search or apt install for these without adding their repo f
 
 # ── FEATURE 4: Network Doctor ─────────────────────────────────────────────────
 def feat_network(backend, bctx, slog):
-    """Wi-Fi / internet — Phase B crisis playbook first, optional AI after."""
+    """Wi-Fi / internet — local playbook first; AI takes over if still down."""
     _run_crisis_playbook("wifi", backend, bctx, slog)
 
 # ── FEATURE 5: Security Audit ─────────────────────────────────────────────────
 def feat_security(backend, bctx, slog):
-    """Firewall / updates — local checks first. AI only if you ask."""
+    """Firewall / updates — local checks first. AI takes over if still open."""
     _run_local_playbook(
         "Security Audit — Harden your system",
         _security_playbook_collect,
@@ -6760,11 +6763,12 @@ def feat_security(backend, bctx, slog):
         backend, bctx, slog,
         source="security",
         ai_prompt="Review remaining security gaps. Prefer reversible hardening. Do not lock the user out of SSH.",
+        leftover=_leftover_security,
     )
 
 # ── FEATURE 6: Disk Detective ─────────────────────────────────────────────────
 def feat_disk(backend, bctx, slog):
-    """Disk cleanup — local report + safe plan. AI only if you ask."""
+    """Disk cleanup — local report + safe plan. AI takes over if still critically full."""
     _run_local_playbook(
         "Disk Detective — Free up space",
         _disk_playbook_collect,
@@ -6778,6 +6782,7 @@ def feat_disk(backend, bctx, slog):
             "Prefer caches, logs, trash, unused Flatpak/Snap revisions."
         ),
         done_msg="Done. Home folders were listed only — nothing there was deleted.",
+        leftover=_leftover_disk,
     )
 
 # ── FEATURE 7: Driver Check ───────────────────────────────────────────────────
@@ -6795,11 +6800,12 @@ def feat_drivers(backend, bctx, slog):
         backend, bctx, slog,
         source="drivers",
         ai_prompt="Check remaining hardware for missing firmware or drivers. Prefer distro packages.",
+        leftover=_leftover_drivers,
     )
 
 # ── FEATURE 8: Service Manager ────────────────────────────────────────────────
 def feat_services(backend, bctx, slog):
-    """Failed units — known-issue playbook first. AI only if you ask."""
+    """Failed units — known-issue playbook first. AI takes over if still failed."""
     def _collect():
         extra = _crisis_collect([
             ("failed_plain", "systemctl --failed --plain --no-legend --no-pager 2>/dev/null || true"),
@@ -6827,17 +6833,24 @@ def feat_services(backend, bctx, slog):
         backend, bctx, slog,
         source="services",
         ai_prompt="Fix remaining failed services and only disable units that are clearly unused. Never disable ssh, NetworkManager, display manager, or ufw.",
+        leftover=_leftover_failed_units,
     )
 
 # ── FEATURE 9: Log Analyser ───────────────────────────────────────────────────
 def feat_logs(backend, bctx, slog):
-    """Show journal locally; playbook for failed units; AI only if you ask (or paste)."""
+    """Show journal locally; playbook first. AI takes over if units still failed or a paste needs decoding."""
     try:
         paste = input(
             f"\n{BOLD}Paste an error message (or press Enter to scan recent logs):{R}\n> "
         ).strip()
     except (EOFError, KeyboardInterrupt):
         return
+
+    def _logs_leftover(results, applied, plan):
+        if paste:
+            return True
+        return _leftover_failed_units(results, applied, plan)
+
     _run_local_playbook(
         "Log Analyser — Decode errors",
         _logs_playbook_collect,
@@ -6851,6 +6864,7 @@ def feat_logs(backend, bctx, slog):
             "Explain remaining journal errors in plain English and suggest safe fixes."
         ),
         done_msg="Done. Paste a specific error next time if you want it decoded.",
+        leftover=_logs_leftover,
     )
 
 # ── FEATURE 10: Update Advisor ────────────────────────────────────────────────
@@ -7896,7 +7910,7 @@ Additional instructions for GIT HELPER mode:
 
 # ── FEATURE 24: Bluetooth Fix ────────────────────────────────────────────────
 def feat_bluetooth(backend, bctx, slog):
-    """Bluetooth — rfkill / service playbook. AI only if you ask."""
+    """Bluetooth — rfkill / service playbook. AI takes over if still blocked."""
     _run_local_playbook(
         "Bluetooth Fix — Fix pairing & connection problems",
         _bluetooth_playbook_collect,
@@ -7905,11 +7919,12 @@ def feat_bluetooth(backend, bctx, slog):
         backend, bctx, slog,
         source="bluetooth",
         ai_prompt="Fix remaining Bluetooth pairing or firmware issues. Prefer rfkill, bluetoothctl, and service restarts.",
+        leftover=_leftover_bluetooth,
     )
 
 # ── FEATURE 25: Printer Setup ─────────────────────────────────────────────────
 def feat_printer(backend, bctx, slog):
-    """CUPS — local start/install playbook. AI only if you ask."""
+    """CUPS — local start/install playbook. AI takes over if CUPS is still down."""
     _run_local_playbook(
         "Printer Setup — Install and fix printers",
         _printer_playbook_collect,
@@ -7918,11 +7933,12 @@ def feat_printer(backend, bctx, slog):
         backend, bctx, slog,
         source="printer",
         ai_prompt="Help set up or fix the printer. Prefer CUPS and vendor packages (hplip for HP).",
+        leftover=_leftover_printer,
     )
 
 # ── FEATURE 26: Webcam Fix ────────────────────────────────────────────────────
 def feat_webcam(backend, bctx, slog):
-    """Webcam — load uvcvideo if missing. AI only if you ask."""
+    """Webcam — load uvcvideo if missing. AI takes over if still no camera."""
     _run_local_playbook(
         "Webcam Fix — Fix camera for video calls",
         _webcam_playbook_collect,
@@ -7931,6 +7947,7 @@ def feat_webcam(backend, bctx, slog):
         backend, bctx, slog,
         source="webcam",
         ai_prompt="Fix remaining webcam issues. Check browser permissions before changing drivers.",
+        leftover=_leftover_webcam,
     )
 
 def feat_appswitch(backend, bctx, slog):
@@ -7961,7 +7978,7 @@ Additional instructions for APP FINDER mode:
 
 # ── FEATURE 28: Battery & Power Management ────────────────────────────────────
 def feat_battery(backend, bctx, slog):
-    """Laptop power — TLP / power-saver. AI only if you ask."""
+    """Laptop power — TLP / power-saver. Optional tweaks; no auto-AI."""
     _run_local_playbook(
         "Battery & Power — Improve battery life & power settings",
         _battery_playbook_collect,
@@ -7970,6 +7987,7 @@ def feat_battery(backend, bctx, slog):
         backend, bctx, slog,
         source="battery",
         ai_prompt="Improve remaining battery or heat issues. Prefer TLP and power-saver. Do not change BIOS.",
+        leftover=_leftover_never,
     )
 
 def feat_gaming_setup(backend, bctx, slog):
@@ -8425,12 +8443,12 @@ def feat_suggest_setup(backend, bctx, slog):
 
 # ── FEATURE 22: Sound Fix ────────────────────────────────────────────────────
 def feat_sound(backend, bctx, slog):
-    """Sound / audio — Phase B crisis playbook first, optional AI after."""
+    """Sound / audio — local playbook first; AI takes over if still silent."""
     _run_crisis_playbook("audio", backend, bctx, slog)
 
 # ── FEATURE 23: Display Fix ───────────────────────────────────────────────────
 def feat_display(backend, bctx, slog):
-    """Monitors — local xrandr playbook. AI only if you ask."""
+    """Monitors — local xrandr playbook. AI takes over if still no display."""
     _run_local_playbook(
         "Display Fix — Fix screen & monitor problems",
         _display_playbook_collect,
@@ -8439,6 +8457,7 @@ def feat_display(backend, bctx, slog):
         backend, bctx, slog,
         source="display",
         ai_prompt="Fix remaining display/monitor issues. Never remove GPU drivers without a fallback.",
+        leftover=_leftover_display,
     )
 
 # ── FEATURE: Self-Update ──────────────────────────────────────────────────────
@@ -9805,25 +9824,26 @@ def _apply_approved_plan(plan, slog, source="playbook"):
     return applied
 
 
-def _offer_optional_ai(backend, bctx, slog, prompt, done_msg="Done. You can re-run this anytime."):
-    """AI is last resort — default No. Returns True if the model was invoked."""
-    try:
-        deeper = _safe_input(
-            f"\n  {BOLD}Want a deeper AI analysis for what's left?{R} "
-            f"[{C('y', GREEN)}=yes  {C('N', DIM)}=no, I'm done]: "
-        ).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        deeper = "n"
-    if deeper not in ("y", "yes"):
+def _handoff_ai_if_needed(backend, bctx, slog, prompt, needed,
+                          done_msg="Done. Built-in fixes were enough."):
+    """AI takes over automatically only after local playbooks leave a problem."""
+    if not needed:
         info(done_msg)
         return False
     if not backend:
-        warn("No AI backend configured. Run settings to add a free key if you want this.")
+        warn("Built-in fixes didn't finish this, and no AI key is set. "
+             "Add a free key in Settings if you want TuxGenie to keep going.")
         return False
-    print(f"\n  {CYAN}{BOLD}AI analysing remaining issues…{R}")
+    print(f"\n  {YELLOW}{BOLD}Built-in playbook didn't clear this — AI taking over.{R}")
     fix_engine(backend, BASE_SYS + _sys_ctx_block(bctx or {}),
                [{"role": "user", "content": prompt}], slog)
     return True
+
+
+def _offer_optional_ai(backend, bctx, slog, prompt, needed=True, *,
+                       done_msg="Done. You can re-run this anytime."):
+    """If a leftover problem remains, start AI automatically — no y/N prompt."""
+    return _handoff_ai_if_needed(backend, bctx, slog, prompt, needed, done_msg)
 
 
 def _parse_failed_units(text: str) -> list:
@@ -9840,6 +9860,126 @@ def _parse_failed_units(text: str) -> list:
         if name not in units:
             units.append(name)
     return units
+
+
+def _df_critical_full(df_text: str, threshold=90) -> bool:
+    """True if /, /boot, /home, or /var is still at or above threshold."""
+    critical = ("/", "/boot", "/boot/efi", "/home", "/var", "/usr")
+    for line in (df_text or "").splitlines():
+        m = re.search(r"(\d+)%\s+(\S+)\s*$", line)
+        if m and int(m.group(1)) >= threshold and m.group(2) in critical:
+            return True
+    return False
+
+
+def _ping_ok(text: str) -> bool:
+    t = text or ""
+    return "0% packet loss" in t or "bytes from" in t
+
+
+def _nvidia_smi_ok(text: str) -> bool:
+    t = text or ""
+    return ("NVIDIA-SMI" in t
+            and "failed" not in t.lower()
+            and "not found" not in t.lower())
+
+
+def _leftover_failed_units(results=None, applied=0, plan=None) -> bool:
+    """Re-check systemd — leftover only if units are still failed."""
+    return bool(_parse_failed_units(
+        _r("systemctl --failed --plain --no-legend --no-pager 2>/dev/null")))
+
+
+def _leftover_disk(results=None, applied=0, plan=None) -> bool:
+    """AI only when a critical mount is still ≥90% after cleanup."""
+    df = _r("df -P / /boot /boot/efi /home /var 2>/dev/null")
+    return _df_critical_full(df or (results or {}).get("df") or "")
+
+
+def _leftover_security(results=None, applied=0, plan=None) -> bool:
+    orig = ((results or {}).get("ufw") or "").lower()
+    was_off = ("inactive" in orig or "command not found" in orig
+               or not orig.strip() or orig.strip() in ("(no output)", "(error)"))
+    if not was_off:
+        return False
+    now = (_r("ufw status 2>/dev/null || true") or "").lower()
+    return ("inactive" in now or "command not found" in now
+            or not now.strip() or now.strip() in ("(no output)", "(error)"))
+
+
+def _leftover_bluetooth(results=None, applied=0, plan=None) -> bool:
+    svc = (_r("systemctl is-active bluetooth 2>/dev/null || true") or "").lower()
+    rf = (_r("rfkill list bluetooth 2>/dev/null || true") or "").lower()
+    return "soft blocked: yes" in rf or "active" not in svc
+
+
+def _leftover_printer(results=None, applied=0, plan=None) -> bool:
+    orig = ((results or {}).get("cups") or "").lower()
+    if "active" in orig:
+        return False
+    now = (_r("systemctl is-active cups 2>/dev/null || true") or "").lower()
+    return "active" not in now
+
+
+def _leftover_webcam(results=None, applied=0, plan=None) -> bool:
+    orig = (results or {}).get("devs") or ""
+    if "/dev/video" in orig:
+        return False
+    now = _r("ls -l /dev/video* 2>/dev/null || true") or ""
+    return "/dev/video" not in now
+
+
+def _leftover_display(results=None, applied=0, plan=None) -> bool:
+    now = _r("xrandr 2>/dev/null | grep ' connected' || true") or ""
+    if now.strip() and now.strip() not in ("(no output)", "(error)") and "connected" in now:
+        return False
+    orig = ((results or {}).get("connected") or (results or {}).get("xrandr") or "")
+    if "connected" not in orig:
+        return True
+    return bool(plan) and applied == 0
+
+
+def _leftover_drivers(results=None, applied=0, plan=None) -> bool:
+    fw = ((results or {}).get("fw") or "").lower()
+    if "firmware" in fw and ("fail" in fw or "not found" in fw):
+        return applied == 0
+    return False
+
+
+def _leftover_never(results=None, applied=0, plan=None) -> bool:
+    """Optional tweaks (battery/TLP) are not a leftover failure."""
+    return False
+
+
+def _leftover_slow_pc(results=None, applied=0, plan=None) -> bool:
+    if _leftover_failed_units(results, applied, plan):
+        return True
+    return _df_critical_full(_r("df -P / /boot /home /var 2>/dev/null") or "")
+
+
+def _leftover_crisis(kind, results, applied, plan) -> bool:
+    """Re-probe the original crisis symptom. Skip AI if it is gone."""
+    results = results or {}
+    if kind == "wifi":
+        if _ping_ok(results.get("ping_ip") or ""):
+            return False
+        return not _ping_ok(_r("ping -c2 -W2 8.8.8.8 2>&1 || true"))
+    if kind == "nvidia":
+        gpu = (results.get("gpu") or "") + (results.get("driver_k") or "")
+        if not re.search(r"nvidia", gpu, re.I):
+            return False
+        if _nvidia_smi_ok(results.get("nvidia_smi") or ""):
+            return False
+        return not _nvidia_smi_ok(_r("nvidia-smi 2>&1 | head -20 || true"))
+    if kind == "audio":
+        orig = (results.get("pactl_sink") or "").strip()
+        had_none = not orig or orig in ("(no output)", "(error)")
+        now = (_r("pactl list short sinks 2>/dev/null || true") or "").strip()
+        if had_none:
+            return not now or now in ("(no output)", "(error)")
+        mute = (_r("pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null || true") or "").lower()
+        return "yes" in mute
+    return bool(plan) and applied == 0
 
 
 def _pkg_cache_clean_cmd(pm: str) -> str:
@@ -10428,8 +10568,8 @@ def _drivers_generic_build_plan(results: dict, bctx: dict) -> list:
 
 
 def _run_local_playbook(title, collect, show, build, backend, bctx, slog,
-                        source, ai_prompt, done_msg=None):
-    """Scan → show → safe plan → optional AI (default No)."""
+                        source, ai_prompt, done_msg=None, leftover=None):
+    """Scan → show → safe plan → AI only if leftover(results, applied, plan)."""
     hdr(title)
     print(f"\n  {CYAN}{BOLD}Scanning…{R}  {DIM}(local commands only, no AI){R}\n")
     results = collect() if collect else {}
@@ -10452,15 +10592,22 @@ def _run_local_playbook(title, collect, show, build, backend, bctx, slog,
     prompt = ai_prompt
     if callable(prompt):
         prompt = prompt(results, applied)
+    needed = False
+    if leftover:
+        try:
+            needed = bool(leftover(results, applied, plan))
+        except Exception:
+            needed = False
     _offer_optional_ai(
         backend, ctx, slog, prompt,
-        done_msg or "Done. You can re-run this from the menu anytime.",
+        needed=needed,
+        done_msg=done_msg or "Done. You can re-run this from the menu anytime.",
     )
 
 
 # ── Phase B — Crisis playbooks (deterministic first, AI optional) ─────────────
 # Day-1 / day-30 panics: Wi-Fi, NVIDIA, audio, broken-after-update, dual-boot.
-# Same shape as Slow-PC: local scan → safe plan → approve → optional AI.
+# Same shape as Slow-PC: local scan → safe plan → approve → AI if leftover.
 
 _WIFI_CRISIS_RE = re.compile(
     r"(?is)^\s*(?:"
@@ -10959,7 +11106,7 @@ def _crisis_dualboot_build_plan(results: dict, bctx: dict) -> list:
 
 
 def _run_crisis_playbook(kind, backend, bctx, slog):
-    """Scan → safe plan → approve → optional AI deep-dive for one crisis kind."""
+    """Scan → safe plan → approve → AI takes over if the symptom is still there."""
     catalog = {
         "wifi": (
             "Network Doctor — Wi-Fi / Internet crisis",
@@ -11029,9 +11176,15 @@ def _run_crisis_playbook(kind, backend, bctx, slog):
         "Focus on remaining issues. Prefer safe, reversible steps. "
         "Explain each fix in plain English."
     )
+    needed = False
+    try:
+        needed = bool(_leftover_crisis(kind, results, applied, plan))
+    except Exception:
+        needed = False
     _offer_optional_ai(
         backend, bctx or {}, slog, prompt,
-        "Done. You can re-run this from the menu anytime.",
+        needed=needed,
+        done_msg="Done. You can re-run this from the menu anytime.",
     )
 
 
@@ -11229,7 +11382,7 @@ def feat_performance(backend, bctx, slog):
 
     1) Scan the system with no AI (~5s)
     2) Apply safe, reversible speed fixes deterministically (with approval)
-    3) Optionally offer a deeper AI analysis for anything left
+    3) AI takes over automatically if a leftover problem is still there
     """
     hdr("Performance Boost — Speed up a slow PC")
     print(f"\n  {CYAN}{BOLD}Step 1/2  Scanning your system…{R}  {DIM}(~5 seconds, no AI){R}\n")
@@ -11275,9 +11428,15 @@ FIXES TO CONSIDER (only those actually still needed based on the data):
 DO NOT suggest: upgrading RAM, replacing apps, reinstalling the OS.
 Set needs_synthesis: true so a full before/after summary is generated."""
 
+    needed = False
+    try:
+        needed = bool(_leftover_slow_pc(results, applied, plan))
+    except Exception:
+        needed = False
     _offer_optional_ai(
         backend, bctx or {}, slog, perf_prompt,
-        "Done. Type \"my PC is slow\" anytime — or press 18 for Performance Boost.",
+        needed=needed,
+        done_msg="Done. Type \"my PC is slow\" anytime — or press 18 for Performance Boost.",
     )
 
 
@@ -14019,8 +14178,8 @@ MENU_ITEMS = [
     ("1",  "fix",       "Fix a Problem",      "Describe what's wrong in plain English",         feat_fix),
     ("2",  "health",    "Health Check",       "System CPU/RAM/disk/service health scan",        feat_health),
     # ── FIX SOMETHING ────────────────────────────────────────────
-    ("3",  "network",   "Internet / WiFi",    "Wi-Fi down — scan + safe fixes (optional AI)",   feat_network),
-    ("4",  "sound",     "Sound / Audio",      "No sound — unmute/restart audio (optional AI)",  feat_sound),
+    ("3",  "network",   "Internet / WiFi",    "Wi-Fi down — local fixes, then AI if still down", feat_network),
+    ("4",  "sound",     "Sound / Audio",      "No sound — unmute/restart, then AI if still silent", feat_sound),
     ("5",  "display",   "Display",            "Wrong resolution, monitor not detected",         feat_display),
     ("6",  "bluetooth", "Bluetooth",          "Pairing fails, device not found",                feat_bluetooth),
     ("7",  "printer",   "Printer Setup",      "Install printer, fix printing problems",         feat_printer),
@@ -14037,7 +14196,7 @@ MENU_ITEMS = [
     ("16", "backup",    "Backup Settings",    "Create / restore config snapshots (.tar.gz)",    feat_backup),
     ("17", "rollback",  "Undo Changes",       "Restore snapshot or undo session commands",      feat_rollback),
     # ── SPEED & MAINTENANCE ──────────────────────────────────────
-    ("18", "perf",      "Performance Boost",  "My PC is slow — scan + safe speed fixes (optional AI)", feat_performance),
+    ("18", "perf",      "Performance Boost",  "My PC is slow — local speed fixes, then AI if still slow", feat_performance),
     ("19", "disk",      "Disk Cleanup",       "Find space hogs & clean up safely",              feat_disk),
     ("20", "boot",      "Boot & Back",        "Broken after update, dual-boot, or speed boot",  feat_boot),
     ("21", "battery",   "Battery & Power",    "Improve battery life, fix overheating",          feat_battery),

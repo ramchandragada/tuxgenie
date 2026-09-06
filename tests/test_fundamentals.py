@@ -680,7 +680,7 @@ class TestUbuntuCompleteAndDeHome:
 
 class TestSlowPcFundamentals:
     """Phase 4 promise: 'my PC is slow' is a deterministic one-tap repair —
-    scan locally, propose safe fixes, optional AI only after consent."""
+    scan locally, propose safe fixes, then AI takes over only if leftover."""
 
     def test_phrase_matching(self):
         yes = [
@@ -783,7 +783,7 @@ class TestSlowPcFundamentals:
 
 class TestCrisisPlaybookFundamentals:
     """Phase B promise: day-1 crises (Wi-Fi, NVIDIA, audio, bad update,
-    dual-boot) use deterministic scan → safe plan → optional AI — not AI first."""
+    dual-boot) use deterministic scan → safe plan → AI if leftover — not AI first."""
 
     def test_wifi_phrase_matching(self):
         yes = [
@@ -1053,6 +1053,7 @@ class TestLocalPlaybookFundamentals:
 
     def test_feat_health_does_not_call_ai(self, monkeypatch):
         asked = []
+        needed = []
         monkeypatch.setattr(tg, "health_ctx", lambda: {
             "cpu_usage": "1%", "memory": "Mem: 16G",
             "disk": "/dev/sda2 439G 93G 324G 23% /",
@@ -1064,7 +1065,13 @@ class TestLocalPlaybookFundamentals:
         monkeypatch.setattr(tg, "_health_issue_collect",
                             lambda u: {"vbox_mod": "", "secure_boot": "SecureBoot disabled"})
         monkeypatch.setattr(tg, "_apply_approved_plan", lambda *a, **k: 0)
-        monkeypatch.setattr(tg, "_offer_optional_ai", lambda *a, **k: asked.append("offer") or False)
+
+        def _cap(*a, **k):
+            asked.append("offer")
+            needed.append(k.get("needed", a[4] if len(a) > 4 else True))
+            return False
+
+        monkeypatch.setattr(tg, "_offer_optional_ai", _cap)
         monkeypatch.setattr(tg, "_r", lambda *a, **k: "")
         monkeypatch.setattr(tg, "ask_ai", lambda *a, **k: asked.append("ask") or "")
         monkeypatch.setattr(tg, "fix_engine", lambda *a, **k: asked.append("fix"))
@@ -1072,6 +1079,70 @@ class TestLocalPlaybookFundamentals:
                               "arch": "x86_64", "uptime": "1h", "pkg_mgr": "apt"}, [])
         assert "ask" not in asked and "fix" not in asked
         assert "offer" in asked
+        assert needed == [False]
+
+    def test_feat_health_ai_takes_over_when_leftover(self, monkeypatch):
+        asked = []
+        monkeypatch.setattr(tg, "health_ctx", lambda: {
+            "cpu_usage": "1%", "memory": "Mem: 16G",
+            "disk": "/dev/sda2 439G 93G 324G 23% /",
+            "failed_services":
+                "● virtualbox.service loaded failed failed LSB: VirtualBox\n"
+                "1 loaded units listed.",
+            "temps": "",
+        })
+        monkeypatch.setattr(tg, "_health_issue_collect",
+                            lambda u: {"vbox_mod": "", "secure_boot": "SecureBoot disabled"})
+        monkeypatch.setattr(tg, "_apply_approved_plan", lambda *a, **k: 0)
+        monkeypatch.setattr(
+            tg, "_r",
+            lambda *a, **k: "virtualbox.service loaded failed failed LSB: VirtualBox")
+        monkeypatch.setattr(tg, "ask_ai", lambda *a, **k: asked.append("ask") or "")
+        monkeypatch.setattr(tg, "fix_engine", lambda *a, **k: asked.append("fix"))
+        tg.feat_health(object(), {"os": "Zorin OS 18.1", "kernel": "7.0.0",
+                                  "arch": "x86_64", "uptime": "1h", "pkg_mgr": "apt"}, [])
+        assert "fix" in asked
+        assert "ask" not in asked
+
+    def test_offer_optional_ai_never_prompts(self, monkeypatch):
+        prompted = []
+        called = []
+        monkeypatch.setattr("builtins.input", lambda *a, **k: prompted.append(a) or "n")
+        monkeypatch.setattr(tg, "fix_engine", lambda *a, **k: called.append("fix"))
+        tg._offer_optional_ai(object(), {}, [], "leftover problem", needed=True)
+        assert called == ["fix"]
+        assert prompted == []
+        called.clear()
+        tg._offer_optional_ai(object(), {}, [], "already fine", needed=False)
+        assert called == []
+        assert prompted == []
+
+    def test_df_critical_full_and_disk_leftover(self, monkeypatch):
+        assert tg._df_critical_full("/dev/sda2 439G 93G 324G 23% /") is False
+        assert tg._df_critical_full("/dev/sda2 439G 400G 10G 94% /") is True
+        assert tg._df_critical_full("/dev/sdb1 20G 19G 1G 96% /mnt/backup") is False
+        monkeypatch.setattr(tg, "_r", lambda *a, **k: "/dev/sda2 439G 93G 324G 23% /")
+        assert tg._leftover_disk({"df": "/dev/sda2 439G 400G 10G 94% /"}, 0, []) is False
+        monkeypatch.setattr(tg, "_r", lambda *a, **k: "")
+        assert tg._leftover_disk({"df": "/dev/sda2 439G 400G 10G 94% /"}, 0, []) is True
+
+    def test_crisis_leftover_wifi_and_nvidia(self, monkeypatch):
+        monkeypatch.setattr(tg, "_r", lambda *a, **k: "2 packets transmitted, 2 received, 0% packet loss")
+        assert tg._leftover_crisis("wifi", {"ping_ip": "100% packet loss"}, 0, ["x"]) is False
+        monkeypatch.setattr(tg, "_r", lambda *a, **k: "100% packet loss")
+        assert tg._leftover_crisis("wifi", {"ping_ip": "100% packet loss"}, 0, ["x"]) is True
+        assert tg._leftover_crisis("wifi", {"ping_ip": "bytes from 8.8.8.8"}, 0, ["x"]) is False
+        assert tg._leftover_crisis(
+            "nvidia",
+            {"gpu": "NVIDIA GT 710", "nvidia_smi": "NVIDIA-SMI 535"},
+            0, ["x"],
+        ) is False
+        monkeypatch.setattr(tg, "_r", lambda *a, **k: "command not found")
+        assert tg._leftover_crisis(
+            "nvidia",
+            {"gpu": "NVIDIA GT 710", "nvidia_smi": "command not found"},
+            0, ["x"],
+        ) is True
 
     def test_passthrough_routes_disk_and_vbox(self, monkeypatch):
         seen = []
