@@ -1413,7 +1413,7 @@ class TestUnifiedShell:
         assert "webkit.messageHandlers.tuxgenie" in html
         assert mod.VERSION in html
         assert "Brave Browser" in html  # catalog embedded
-        # Aspera company wordmark on the dark status bar (TuxGenie stays hero)
+        # Aspera company wordmark on the status bar (TuxGenie stays hero)
         assert 'id="asperaLink"' in html
         assert "aspera-mark" in html
         assert "aria-label=\"Aspera\"" in html
@@ -1468,11 +1468,18 @@ class TestUnifiedShell:
         assert "alloc.width * 0.30" not in src
         assert "compose_home_actions" in src
         assert "This desktop" in src or "de_home_actions" in src
-        # Ubuntu / Debian GUI polish — no color-mix, solid fallbacks, dark + motion
+        assert "_apply_light_chrome" in src
+        # Ubuntu / Debian GUI polish — no color-mix; always-light deck (ignore desktop dark)
         assert "color-mix(" not in html
         assert "Ubuntu Sans" in html
         assert "prefers-reduced-motion" in html
-        assert "prefers-color-scheme: dark" in html
+        assert "color-scheme: light only" in html
+        assert 'name="color-scheme" content="light only"' in html
+        assert "prefers-color-scheme: dark" not in html
+        assert "Always-light flagship deck" in html
+        assert "logo-contrast" in html
+        assert "color: #03313c" in html
+        assert ".status-bar" in html and "background: #ffffff" in html
         assert "-webkit-font-smoothing: antialiased" in html
         assert "devicePixelRatio" in html
         assert "blank white buttons" in html

@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.9.0"
+VERSION = "7.10.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -186,27 +186,30 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>TuxGenie</title>
+<meta name="color-scheme" content="light only"/>
 <style>
+  /* Always-light flagship deck — never follow the desktop dark theme. */
   :root {
-    --ink: #07131a;
-    --ink2: #1a2c36;
-    --muted: #5c7380;
-    --fog: #eef5f7;
-    --paper: #f7fbfc;
-    --panel: rgba(255,255,255,.82);
+    color-scheme: light only;
+    --ink: #102028;
+    --ink2: #243844;
+    --muted: #4a6572;
+    --fog: #f4f8fb;
+    --paper: #f4fafc;
+    --panel: #ffffff;
     --ember: #e85d04;
     --ember2: #ff8a2a;
-    --tide0: #032830;
-    --tide1: #065a66;
-    --tide2: #0a8a96;
-    --tide3: #1ec8d4;
-    --line: rgba(7,45,56,.10);
-    --danger: #b23a22;
-    --shadow: 0 24px 60px rgba(3,40,48,.14);
+    --tide0: #043844;
+    --tide1: #0a6e7a;
+    --tide2: #0d8a96;
+    --tide3: #2bb8c4;
+    --line: rgba(16,48,60,.16);
+    --danger: #c2410c;
+    --shadow: 0 18px 44px rgba(16,48,64,.10);
     --ease: cubic-bezier(.22,.9,.24,1);
-    --chip-bg: rgba(255,255,255,.88);
-    --card-bg: rgba(255,255,255,.90);
-    --input-bg: #fff;
+    --chip-bg: #ffffff;
+    --card-bg: #ffffff;
+    --input-bg: #ffffff;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -217,15 +220,16 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     text-rendering: optimizeLegibility;
     color: var(--ink);
     background: var(--fog);
+    color-scheme: light only;
     overflow: hidden;
   }
   .app {
     display: flex; flex-direction: column; height: 100%; min-height: 0;
     position: relative;
     background:
-      radial-gradient(900px 420px at 0% 0%, #1ec8d433, transparent 55%),
-      radial-gradient(700px 380px at 100% 8%, #ff8a2a22, transparent 50%),
-      linear-gradient(168deg, #f4fafb 0%, #e7f0f3 48%, #dce8ec 100%);
+      radial-gradient(880px 380px at 0% -10%, #b8f4f866, transparent 58%),
+      radial-gradient(720px 360px at 100% 0%, #ffd7b055, transparent 52%),
+      linear-gradient(180deg, #fbfefe 0%, #f3f8fb 46%, #eef4f8 100%);
   }
   .app::before {
     content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .35;
@@ -245,16 +249,17 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .brandrow {
     display: flex; align-items: flex-end; justify-content: space-between; gap: 12px;
   }
+  /* logo-contrast: ink-teal on white — no pale clip-text washout */
   .logo {
     font-size: clamp(2rem, 4.2vw, 2.7rem);
     font-weight: 800; letter-spacing: -.04em; line-height: .95;
     margin: 0;
-    color: var(--tide0);
+    color: #03313c;
     animation: brandIn .7s var(--ease) both;
   }
   @supports ((-webkit-background-clip: text) or (background-clip: text)) {
     .logo {
-      background: linear-gradient(115deg, var(--tide0) 10%, var(--tide2) 55%, var(--tide1) 100%);
+      background: linear-gradient(115deg, #03232c 8%, #054450 52%, #0a5c68 100%);
       -webkit-background-clip: text; background-clip: text;
       -webkit-text-fill-color: transparent; color: transparent;
     }
@@ -311,19 +316,20 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   /* ── HOME (soft-tighten: compact hero so dials sit closer to Ask) ── */
   .hero {
-    position: relative; margin: 8px 14px 0; border-radius: 16px;
+    position: relative; margin: 8px 14px 0; border-radius: 18px;
     overflow: hidden; min-height: 78px;
-    color: #fff;
-    background: linear-gradient(135deg, var(--tide0) 0%, var(--tide1) 48%, #0b6f7c 100%);
-    box-shadow: var(--shadow);
+    color: var(--ink);
+    background: linear-gradient(125deg, #e8fafc 0%, #f7fcff 46%, #fff7ef 100%);
+    border: 1px solid rgba(18, 140, 152, .14);
+    box-shadow: 0 10px 28px rgba(16,48,64,.07);
     isolation: isolate;
   }
   .hero .aurora {
     position: absolute; inset: -30%;
     background:
-      radial-gradient(circle at 20% 30%, #1ec8d455, transparent 40%),
-      radial-gradient(circle at 80% 20%, #ff8a2a33, transparent 42%),
-      radial-gradient(circle at 60% 80%, #14b8c440, transparent 45%);
+      radial-gradient(circle at 18% 28%, #7ee8f066, transparent 42%),
+      radial-gradient(circle at 82% 18%, #ffc48a55, transparent 44%),
+      radial-gradient(circle at 62% 82%, #9be4ec55, transparent 46%);
     animation: aurora 10s ease-in-out infinite alternate;
   }
   @keyframes aurora {
@@ -341,6 +347,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .hero h2 {
     margin: 0; font-size: clamp(1.05rem, 2.3vw, 1.35rem);
     font-weight: 700; letter-spacing: -.02em; line-height: 1.15;
+    color: var(--ink);
   }
   .hero p {
     margin: 4px 0 0; font-size: clamp(.74rem, 1.5vw, .84rem); opacity: .88; line-height: 1.3;
@@ -359,11 +366,11 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
 
   .ask {
     margin: -18px 14px 0; position: relative; z-index: 3;
-    background: #f7fbfc;
-    border: 1px solid rgba(255,255,255,.7);
-    border-radius: 16px;
+    background: #ffffff;
+    border: 1px solid rgba(16,48,60,.10);
+    border-radius: 18px;
     padding: 10px 11px 8px;
-    box-shadow: 0 14px 32px rgba(3,40,48,.12);
+    box-shadow: 0 16px 36px rgba(16,48,64,.10);
   }
   @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
     .ask {
@@ -446,10 +453,11 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     gap: clamp(5px, 1vw, 10px);
   }
   .pulse-card {
-    appearance: none; border: 1px solid var(--line); border-radius: 16px;
+    appearance: none; border: 1px solid rgba(16,48,60,.16); border-radius: 16px;
     background:
-      radial-gradient(120% 90% at 50% 0%, rgba(30,200,212,.10), transparent 55%),
-      rgba(255,255,255,.92);
+      radial-gradient(120% 90% at 50% 0%, rgba(10,140,152,.10), transparent 55%),
+      #ffffff;
+    box-shadow: 0 2px 10px rgba(16,48,64,.06);
     padding: clamp(8px, 1.3vw, 14px) 6px clamp(7px, 1vw, 11px);
     cursor: pointer; text-align: center;
     font: inherit; color: inherit; min-width: 0;
@@ -490,7 +498,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     transform: rotate(-90deg);
   }
   .dial .track {
-    fill: none; stroke: #e2eef1; stroke-width: 7;
+    fill: none; stroke: #c5d4da; stroke-width: 7;
   }
   .dial .arc {
     fill: none; stroke: var(--tide2); stroke-width: 7;
@@ -584,7 +592,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     gap: 10px;
     width: 100%;
     max-width: none;
-    border: 1px solid var(--line);
+    border: 1px solid rgba(16,48,60,.16);
     border-radius: 14px;
     background: var(--card-bg);
     background-image: none;
@@ -596,7 +604,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     font: inherit;
     box-sizing: border-box;
     position: relative;
-    box-shadow: none;
+    box-shadow: 0 1px 3px rgba(16,48,64,.06);
     transition: transform .16s var(--ease), box-shadow .16s, border-color .16s,
       background .16s;
     animation: tileIn .35s var(--ease) both;
@@ -708,7 +716,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .card {
     display: grid; grid-template-columns: 1fr auto; gap: 8px 14px;
     border: 1px solid var(--line); border-radius: 16px;
-    background: var(--card-bg);
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(16,48,64,.05);
     padding: 14px 14px 14px 16px;
     align-items: center;
     transition: transform .18s var(--ease), box-shadow .18s;
@@ -752,8 +761,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     -webkit-box-pack: justify; -webkit-justify-content: space-between; justify-content: space-between;
     gap: 12px;
     padding: 8px 14px 9px 16px;
-    background: linear-gradient(90deg, #031820, #0a1628 55%, #0b1a2e);
-    color: #a9c8d0; font-size: .74rem; letter-spacing: .01em;
+    background: #ffffff;
+    border-top: 1px solid rgba(16,48,60,.12);
+    color: var(--muted); font-size: .74rem; letter-spacing: .01em;
     position: relative; z-index: 2;
   }
   .status {
@@ -763,8 +773,8 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     white-space: nowrap;
     text-overflow: ellipsis;
   }
-  .status strong { color: #fff; font-weight: 700; }
-  /* Aspera wordmark — company attribution on the dark bar (logo-native colors) */
+  .status strong { color: var(--ink); font-weight: 700; }
+  /* Aspera wordmark — company attribution (logo-native colors on the light bar) */
   a.aspera-mark {
     -webkit-flex: 0 0 auto; flex: 0 0 auto;
     display: -webkit-box; display: -webkit-flex; display: flex;
@@ -777,7 +787,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   a.aspera-mark:hover { opacity: 1; }
   a.aspera-mark .by {
     font-size: .62rem; font-weight: 700; letter-spacing: .08em;
-    text-transform: uppercase; color: #6d8494;
+    text-transform: uppercase; color: #7a90a0;
   }
   a.aspera-mark svg { display: block; height: 14px; width: auto; }
   @media (max-width: 420px) {
@@ -859,55 +869,6 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       transition: none !important;
     }
   }
-  /* Ubuntu 24.04 / GNOME dark — keep brand teal, invert surfaces */
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --ink: #e8f4f7;
-      --ink2: #c5d8de;
-      --muted: #8aa3ad;
-      --fog: #0b161b;
-      --paper: #122026;
-      --panel: rgba(18,32,38,.90);
-      --line: rgba(180,220,230,.14);
-      --shadow: 0 24px 60px rgba(0,0,0,.42);
-      --chip-bg: rgba(21,36,43,.92);
-      --card-bg: rgba(21,36,43,.94);
-      --input-bg: #15242b;
-    }
-    html, body { background: #0b161b; }
-    .app {
-      background:
-        radial-gradient(900px 420px at 0% 0%, #1ec8d422, transparent 55%),
-        radial-gradient(700px 380px at 100% 8%, #ff8a2a16, transparent 50%),
-        linear-gradient(168deg, #0d1a20 0%, #0b161b 48%, #081318 100%);
-    }
-    .ask { background: #15242b; border-color: rgba(180,220,230,.14); }
-    .tile {
-      background: rgba(21,36,43,.94);
-      background-image: none;
-      border-color: rgba(180,220,230,.14);
-    }
-    .tile:hover { background: #1a2c32; }
-    .tile .name { color: #e8f4f7; }
-    .tile .tip { color: #8aa3ad; }
-    .btn-ghost { background: #15242b; color: var(--ink2); }
-    .pulse-card {
-      background:
-        radial-gradient(120% 90% at 50% 0%, rgba(30,200,212,.12), transparent 55%),
-        rgba(21,36,43,.94);
-    }
-    .dial .track { stroke: #243840; }
-    .badge { background: #1a3338; color: #9ee7ee; }
-    .health-cta { background: linear-gradient(135deg, #163238, #1a2c32); color: #d7f4f6; }
-    .logo { color: #8ee7ee; }
-    @supports ((-webkit-background-clip: text) or (background-clip: text)) {
-      .logo {
-        background: linear-gradient(115deg, #b8f4f8 10%, #1ec8d4 55%, #8ee7ee 100%);
-        -webkit-background-clip: text; background-clip: text;
-        -webkit-text-fill-color: transparent; color: transparent;
-      }
-    }
-  }
 </style>
 </head>
 <body>
@@ -928,7 +889,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     <div class="hero">
       <div class="aurora" aria-hidden="true"></div>
       <svg class="wave" viewBox="0 0 1200 80" preserveAspectRatio="none" aria-hidden="true">
-        <path fill="rgba(247,251,252,.22)" d="M0,40 C200,80 400,0 600,40 C800,80 1000,10 1200,40 L1200,80 L0,80 Z">
+        <path fill="rgba(255,255,255,.72)" d="M0,40 C200,80 400,0 600,40 C800,80 1000,10 1200,40 L1200,80 L0,80 Z">
           <animate attributeName="d" dur="8s" repeatCount="indefinite"
             values="M0,40 C200,80 400,0 600,40 C800,80 1000,10 1200,40 L1200,80 L0,80 Z;
                     M0,48 C220,10 420,70 620,30 C820,0 1020,60 1200,36 L1200,80 L0,80 Z;
@@ -1039,7 +1000,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       <svg viewBox="0 0 118 22" role="img" aria-label="Aspera">
         <!-- Stylized A (no crossbar) + SPERA — matches Aspera wordmark -->
         <path d="M11 2.2 L1.6 19.8 H5.4 L11 8.2 L16.6 19.8 H20.4 L11 2.2 Z" fill="#8FA4FF"/>
-        <text x="26" y="16.2" fill="#FFFFFF" font-family="Ubuntu, Cantarell, Noto Sans, DejaVu Sans, sans-serif" font-size="13.5" font-weight="700" letter-spacing="2.2">SPERA</text>
+        <text x="26" y="16.2" fill="#1a3048" font-family="Ubuntu, Cantarell, Noto Sans, DejaVu Sans, sans-serif" font-size="13.5" font-weight="700" letter-spacing="2.2">SPERA</text>
       </svg>
     </a>
   </footer>
@@ -1571,10 +1532,30 @@ class UnifiedShell:
         paned.pack1(left, False, True)
         paned.pack2(right, True, False)
         self.win.add(paned)
+        self._apply_light_chrome()
         self.win.connect("size-allocate", self._on_size)
         self.win.show_all()
         self.win.present()
         self._spawn_tuxgenie()
+
+    def _apply_light_chrome(self):
+        """Keep GTK chrome light even when the desktop theme is dark."""
+        try:
+            css = self.Gtk.CssProvider()
+            css.load_from_data(
+                b"""
+                window, frame, paned, box, headerbar {
+                  background-color: #f4f8fb;
+                  color: #102028;
+                }
+                """
+            )
+            screen = self.Gdk.Screen.get_default()
+            self.Gtk.StyleContext.add_provider_for_screen(
+                screen, css, self.Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            )
+        except Exception:
+            pass
 
     def _on_size(self, _w, alloc):
         if self._pos_set or alloc.width < 200:
@@ -1894,7 +1875,7 @@ class UnifiedShell:
         header.set_xalign(0)
         try:
             header.set_markup(
-                '  <span foreground="#9fd8de" size="small">'
+                '  <span foreground="#0a6e7a" size="small">'
                 "<b>Live terminal</b> — approve installs here (y/n)</span>"
             )
         except Exception:
@@ -1902,7 +1883,7 @@ class UnifiedShell:
         hdr_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         try:
             hdr_box.override_background_color(
-                Gtk.StateFlags.NORMAL, Gdk.RGBA(0.03, 0.09, 0.12, 1)
+                Gtk.StateFlags.NORMAL, Gdk.RGBA(0.95, 0.97, 0.98, 1)
             )
         except Exception:
             pass
