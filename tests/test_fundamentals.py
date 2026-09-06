@@ -1436,6 +1436,9 @@ class TestUnifiedShell:
         assert "pc-strip" not in html  # full-width strip removed
         assert 'data-pulse="pc"' in html and "pc-badge" in html
         assert "repeat(4, minmax(0, 1fr))" in html
+        assert "single-tier" in html
+        assert "grid-auto-flow: column" in html
+        assert "repeat(2, minmax(0, 1fr))" not in html  # never wrap This PC to 2×2
         assert "severity" in html  # teal / ember / danger dial states
         assert "sec-inline" in html  # Quick action section headers
         assert "Suggest a setup" in html and "Webcam fix" in html
@@ -1458,7 +1461,7 @@ class TestUnifiedShell:
         assert "max-height: 720px" in html
         assert "max-height: 900px" in html
         assert "min-width: 720px" in html
-        assert "max-width: 560px" in html  # 2×2 pulse on narrow
+        assert "max-width: 720px" in html  # compact 1×4 pulse on the split pane
         # Soft-tighten: compact hero so dials sit closer to Ask
         assert "soft-tighten" in html
         assert "min-height: 78px" in html

@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.11.0"
+VERSION = "7.12.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -434,7 +434,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     text-transform: uppercase; color: var(--muted); font-weight: 800;
   }
 
-  /* System pulse — 4 cards (3 dials + PC badge); no full-width strip */
+  /* System pulse — single-tier 1×4 (never wrap to 2×2; frees Quick Actions) */
   .pulse-wrap {
     flex: 0 0 auto;
     padding: 2px 12px 0;
@@ -443,7 +443,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .pulse {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: clamp(5px, 1vw, 10px);
+    grid-template-rows: auto;
+    grid-auto-flow: column;
+    gap: clamp(4px, .8vw, 8px);
   }
   .pulse-card {
     appearance: none; border: 1px solid rgba(16,48,60,.16); border-radius: 16px;
@@ -472,8 +474,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   .pulse-card:active { transform: none; }
   .pulse-card .k {
-    font-size: .6rem; font-weight: 800; letter-spacing: .1em;
+    font-size: .58rem; font-weight: 800; letter-spacing: .08em;
     text-transform: uppercase; color: var(--muted); margin: 1px 0 0;
+    max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .pulse-card .s {
     margin: 0; font-size: clamp(.58rem, 1.15vw, .7rem); color: var(--muted); line-height: 1.2;
@@ -534,9 +537,9 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   }
   .pulse-card.pc .v {
     margin: 0; max-width: 100%;
-    font-size: clamp(.62rem, 1.2vw, .74rem); font-weight: 800;
-    letter-spacing: -.01em; color: var(--ink); line-height: 1.2;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    font-size: clamp(.58rem, 1.1vw, .7rem); font-weight: 800;
+    letter-spacing: -.01em; color: var(--ink); line-height: 1.15;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1;
     overflow: hidden;
   }
 
@@ -797,9 +800,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     .qa-row { gap: 10px; }
     .tile { padding: 12px 13px; }
   }
-  /* Narrow: 2×2 pulse */
-  @media (max-width: 560px) {
-    .pulse { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Narrow split: keep the 1×4 row, shrink dials so Quick Actions stay visible */
+  @media (max-width: 720px) {
+    .dial, .pc-badge-wrap { width: 46px; height: 46px; }
+    .dial-val { font-size: .72rem; }
+    .pulse-card { padding: 6px 3px 5px; gap: 2px; border-radius: 12px; }
+    .pulse-card .s { display: none; }
   }
   /* Narrow laptops / small window split */
   @media (max-width: 480px) {
