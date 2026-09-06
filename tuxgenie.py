@@ -9874,6 +9874,8 @@ def _df_critical_full(df_text: str, threshold=90) -> bool:
 
 def _ping_ok(text: str) -> bool:
     t = text or ""
+    if "100% packet loss" in t:
+        return False
     return "0% packet loss" in t or "bytes from" in t
 
 
@@ -10759,8 +10761,8 @@ def _crisis_wifi_build_plan(results: dict, bctx: dict) -> list:
             break
     ping_ip = results.get("ping_ip") or ""
     ping_dns = results.get("ping_dns") or ""
-    ip_ok = "0% packet loss" in ping_ip or "bytes from" in ping_ip
-    dns_ok = "0% packet loss" in ping_dns or "bytes from" in ping_dns
+    ip_ok = _ping_ok(ping_ip)
+    dns_ok = _ping_ok(ping_dns)
     if ip_ok and not dns_ok:
         plan.append((
             "Restart DNS resolver",

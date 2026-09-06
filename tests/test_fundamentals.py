@@ -1127,6 +1127,8 @@ class TestLocalPlaybookFundamentals:
         assert tg._leftover_disk({"df": "/dev/sda2 439G 400G 10G 94% /"}, 0, []) is True
 
     def test_crisis_leftover_wifi_and_nvidia(self, monkeypatch):
+        assert tg._ping_ok("2 received, 0% packet loss") is True
+        assert tg._ping_ok("100% packet loss") is False
         monkeypatch.setattr(tg, "_r", lambda *a, **k: "2 packets transmitted, 2 received, 0% packet loss")
         assert tg._leftover_crisis("wifi", {"ping_ip": "100% packet loss"}, 0, ["x"]) is False
         monkeypatch.setattr(tg, "_r", lambda *a, **k: "100% packet loss")
