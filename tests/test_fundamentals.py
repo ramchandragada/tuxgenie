@@ -62,6 +62,7 @@ class TestStartupFundamentals:
         assert tg._debian_flavour({"ID": "linuxmint", "ID_LIKE": "ubuntu debian"}) == "mint"
         assert tg._debian_flavour({"ID": "pop", "ID_LIKE": "ubuntu"}) == "pop"
         assert tg._debian_flavour({"ID": "debian", "ID_LIKE": ""}) == "debian"
+        assert tg._debian_flavour({"ID": "zorin", "ID_LIKE": "ubuntu debian"}) == "zorin"
 
     def test_all_free_backends_construct(self):
         # Every free default must always be constructable with a dummy key.
@@ -1064,7 +1065,7 @@ class TestLocalPlaybookFundamentals:
         })
         monkeypatch.setattr(tg, "_health_issue_collect",
                             lambda u: {"vbox_mod": "", "secure_boot": "SecureBoot disabled"})
-        monkeypatch.setattr(tg, "_apply_approved_plan", lambda *a, **k: 0)
+        monkeypatch.setattr(tg, "_apply_approved_plan", lambda *a, **k: (0, False))
 
         def _cap(*a, **k):
             asked.append("offer")
@@ -1093,7 +1094,7 @@ class TestLocalPlaybookFundamentals:
         })
         monkeypatch.setattr(tg, "_health_issue_collect",
                             lambda u: {"vbox_mod": "", "secure_boot": "SecureBoot disabled"})
-        monkeypatch.setattr(tg, "_apply_approved_plan", lambda *a, **k: 0)
+        monkeypatch.setattr(tg, "_apply_approved_plan", lambda *a, **k: (0, False))
         monkeypatch.setattr(
             tg, "_r",
             lambda *a, **k: "virtualbox.service loaded failed failed LSB: VirtualBox")
@@ -1116,6 +1117,30 @@ class TestLocalPlaybookFundamentals:
         tg._offer_optional_ai(object(), {}, [], "already fine", needed=False)
         assert called == []
         assert prompted == []
+        called.clear()
+        tg._offer_optional_ai(object(), {}, [], "leftover", needed=True, aborted=True)
+        assert called == []
+        assert prompted == []
+
+    def test_apply_plan_q_does_not_run_and_marks_aborted(self, monkeypatch):
+        ran = []
+        monkeypatch.setattr("builtins.input", lambda *_a, **_k: "q")
+        monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: ran.append(a[0]) or (0, "", ""))
+        plan = [("Unblock Wi-Fi", "sudo rfkill unblock wifi", "safe", "radio off")]
+        applied, aborted = tg._apply_approved_plan(plan, [], source="test")
+        assert applied == 0 and aborted is True
+        assert ran == []
+
+    def test_crisis_q_does_not_start_ai(self, monkeypatch):
+        called = []
+        monkeypatch.setattr(tg, "_crisis_audio_collect", lambda: {"pactl_sink": ""})
+        monkeypatch.setattr(tg, "_crisis_audio_build_plan", lambda *_a, **_k: [
+            ("Restart PipeWire", "true", "safe", "no sinks")])
+        monkeypatch.setattr(tg, "_apply_approved_plan", lambda *a, **k: (0, True))
+        monkeypatch.setattr(tg, "_leftover_crisis", lambda *a, **k: True)
+        monkeypatch.setattr(tg, "fix_engine", lambda *a, **k: called.append("fix"))
+        tg._run_crisis_playbook("audio", object(), {"pkg_mgr": "apt"}, [])
+        assert called == []
 
     def test_df_critical_full_and_disk_leftover(self, monkeypatch):
         assert tg._df_critical_full("/dev/sda2 439G 93G 324G 23% /") is False

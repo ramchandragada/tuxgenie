@@ -1575,6 +1575,69 @@ class TestAppUpdateRouting:
         assert tg._app_update_cmd_for_phrase("update cursor") is None
 
 
+class TestOsUpgradeHonesty:
+    """[13] and typed do-release-upgrade must not scare Zorin / already-current Ubuntu."""
+
+    def test_no_new_release_text(self):
+        assert tg._no_new_release("Checking for a new Ubuntu release\nNo new release found.\n")
+        assert tg._no_new_release("NO NEW RELEASE FOUND")
+        assert not tg._no_new_release("New release '26.04' available.")
+        assert not tg._no_new_release("")
+
+    def test_own_distro_map(self):
+        z = tg._os_upgrade_own_distro("zorin")
+        assert z and z["name"] == "Zorin OS" and z["tool"] is None
+        assert tg._os_upgrade_own_distro("mint")["tool"] == "mintupgrade"
+        assert tg._os_upgrade_own_distro("ubuntu") is None
+
+    def test_feat_os_upgrade_zorin_skips_ubuntu_tool(self, capsys, monkeypatch):
+        monkeypatch.setattr(tg, "_debian_flavour", lambda osr=None: "zorin")
+        # If do-release-upgrade or apt is invoked, the test must fail.
+        monkeypatch.setattr(tg.os, "system", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("dru")))
+        monkeypatch.setattr(tg, "run_cmd_live", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("apt")))
+        monkeypatch.setattr(tg, "get_or_cache_sudo_password", lambda: (_ for _ in ()).throw(AssertionError("sudo")))
+        tg.feat_os_upgrade(None, {"pkg_mgr": "apt", "os": "Zorin OS 18.1"}, [])
+        out = capsys.readouterr().out
+        assert "256" not in out
+        assert "MAJOR upgrade" not in out
+        assert "Zorin" in out
+        assert "already" in out.lower() or "current" in out.lower()
+        assert "[12]" in out
+
+    def test_feat_os_upgrade_ubuntu_already_current(self, capsys, monkeypatch):
+        monkeypatch.setattr(tg, "_debian_flavour", lambda osr=None: "ubuntu")
+        monkeypatch.setattr(tg, "_os_upgrade_own_distro", lambda flavour=None: None)
+        monkeypatch.setattr(tg, "_probe_release_upgrade",
+                            lambda: ("current", "No new release found."))
+        monkeypatch.setattr(tg.os, "system", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("dru")))
+        tg.feat_os_upgrade(None, {"pkg_mgr": "apt", "os": "Ubuntu 24.04.3 LTS"}, [])
+        out = capsys.readouterr().out
+        assert "256" not in out
+        assert "MAJOR upgrade" not in out
+        assert "already" in out.lower() or "latest" in out.lower()
+
+    def test_run_dist_upgrade_zorin_does_not_launch(self, capsys, monkeypatch):
+        monkeypatch.setattr(tg, "_debian_flavour", lambda osr=None: "zorin")
+        monkeypatch.setattr(tg.shutil, "which", lambda n: "/usr/bin/do-release-upgrade")
+        monkeypatch.setattr(tg.os, "system", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("dru")))
+        tg._run_dist_upgrade()
+        out = capsys.readouterr().out
+        assert "256" not in out
+        assert "Zorin" in out
+        assert "already" in out.lower() or "current" in out.lower()
+
+    def test_run_dist_upgrade_ubuntu_current(self, capsys, monkeypatch):
+        monkeypatch.setattr(tg, "_os_upgrade_own_distro", lambda flavour=None: None)
+        monkeypatch.setattr(tg.shutil, "which", lambda n: "/usr/bin/do-release-upgrade")
+        monkeypatch.setattr(tg, "_probe_release_upgrade",
+                            lambda: ("current", "No new release found."))
+        monkeypatch.setattr(tg.os, "system", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("dru")))
+        tg._run_dist_upgrade()
+        out = capsys.readouterr().out
+        assert "256" not in out
+        assert "already" in out.lower() or "latest" in out.lower()
+
+
 class TestUpdateHonesty:
     """[12] Check for Updates must not claim 'fully updated' when Ubuntu has
     phased/held some packages back."""

@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.14.0"
+__version__ = "7.15.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -4315,16 +4315,126 @@ def _system_update_cmd_for_phrase(text: str):
     return None
 
 
+def _no_new_release(text):
+    """True when Ubuntu's upgrader reports the machine is already current."""
+    t = (text or "").lower()
+    return "no new release found" in t
+
+
+# Distros that ship their own major-version path. Ubuntu's do-release-upgrade
+# looks for the next *Ubuntu* and will not upgrade these — it either says
+# "No new release found" (exit 1 → os.system 256) or, worse, tries to turn
+# them into Ubuntu and breaks the desktop.
+_OS_UPGRADE_OWN = {
+    "zorin": {
+        "name": "Zorin OS",
+        "tool": None,
+        "cmd": None,
+        "why": "Zorin publishes its own major versions. Ubuntu's do-release-upgrade "
+               "looks for the next Ubuntu — it will not upgrade Zorin, and running "
+               "it when a new Ubuntu exists can break the desktop.",
+    },
+    "mint": {
+        "name": "Linux Mint",
+        "tool": "mintupgrade",
+        "cmd": "sudo mintupgrade",
+        "why": "Linux Mint upgrades with mintupgrade, not Ubuntu's do-release-upgrade.",
+    },
+    "pop": {
+        "name": "Pop!_OS",
+        "tool": "pop-upgrade",
+        "cmd": "sudo pop-upgrade release upgrade",
+        "why": "Pop!_OS upgrades with pop-upgrade, not Ubuntu's do-release-upgrade.",
+    },
+    "elementary": {
+        "name": "elementary OS",
+        "tool": None,
+        "cmd": None,
+        "why": "elementary OS publishes its own major versions. Ubuntu's "
+               "do-release-upgrade will not upgrade elementary.",
+    },
+}
+
+
+def _os_upgrade_own_distro(flavour=None):
+    """Meta for Mint/Zorin/Pop/elementary, or None on vanilla Ubuntu/Debian."""
+    return _OS_UPGRADE_OWN.get(flavour if flavour is not None else _debian_flavour())
+
+
+def _probe_release_upgrade():
+    """Check-only: ('current'|'available'|'unavailable'|'unknown', output)."""
+    if not shutil.which("do-release-upgrade"):
+        return "unavailable", ""
+    try:
+        r = subprocess.run(
+            ["do-release-upgrade", "-c"],
+            capture_output=True, text=True, timeout=90,
+        )
+        blob = ((r.stdout or "") + "\n" + (r.stderr or "")).strip()
+    except Exception as exc:
+        return "unknown", str(exc)
+    if _no_new_release(blob):
+        return "current", blob
+    if r.returncode == 0:
+        return "available", blob
+    return "unknown", blob
+
+
+def _os_upgrade_report_own(own, os_str=""):
+    """Tell derivative users the truth — no fake 'code 256' failure."""
+    name = own.get("name") or "This OS"
+    label = os_str or name
+    ok(f"{label} is already on its current release.")
+    info("Everyday patches are [12] Check for Updates — that is what keeps the system current.")
+    print(f"  {DIM}{own.get('why', '')}{R}")
+    tool = own.get("tool")
+    cmd = own.get("cmd")
+    if tool and shutil.which(tool) and cmd:
+        print(f"\n  {DIM}Official upgrade tool found: {tool}{R}")
+        try:
+            ch = input(f"  {BOLD}Run {tool} now? [y/n]:{R} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if ch in ("y", "yes"):
+            print()
+            os.system(cmd)
+            return
+    info(f"A new {name} version will show up here when {name} publishes it.")
+
+
+def _os_upgrade_report_current(os_str=""):
+    label = os_str or "This system"
+    ok(f"{label} is already the latest release.")
+    info("Use [12] Check for Updates for everyday package updates — nothing more to do.")
+
+
 def _run_dist_upgrade():
     """Run an Ubuntu/Debian distribution upgrade via do-release-upgrade.
     Uses os.system() so the interactive TUI gets the real terminal TTY —
     subprocess.Popen with pipes would break the interactive installer."""
+    own = _os_upgrade_own_distro()
+    if own:
+        print()
+        _os_upgrade_report_own(own)
+        return
+
     if not shutil.which("do-release-upgrade"):
         err("'do-release-upgrade' is not available on this system.")
         info("This upgrade tool is Ubuntu/Debian-specific.")
         return
 
+    status, blob = _probe_release_upgrade()
+    if status == "current":
+        print()
+        _os_upgrade_report_current()
+        return
+
     print(f"\n  {BG_NAVY}{BWHITE}{BOLD}  🚀 Ubuntu Distribution Upgrade  {R}\n")
+    if blob and status == "available":
+        for line in blob.splitlines():
+            if line.strip():
+                print(f"  {DIM}{line.strip()}{R}")
+        print()
 
     # Quick disk-space pre-check
     free_gb = "?"
@@ -4371,9 +4481,18 @@ def _run_dist_upgrade():
     if rc == 0:
         ok(f"{BOLD}Upgrade complete!{R} Welcome to the new Ubuntu release.")
         info("A reboot is recommended: sudo reboot")
-    else:
-        warn(f"Upgrade exited with code {rc}. Some steps may need attention.")
-        info("Check the log: /var/log/dist-upgrade/main.log")
+        return
+    # do-release-upgrade exits 1 (os.system → 256) when already current.
+    if rc in (1, 256):
+        try:
+            status2, blob2 = _probe_release_upgrade()
+        except Exception:
+            status2, blob2 = "unknown", ""
+        if status2 == "current" or _no_new_release(blob2):
+            _os_upgrade_report_current()
+            return
+    warn(f"Upgrade exited with code {rc}. Some steps may need attention.")
+    info("Check the log: /var/log/dist-upgrade/main.log")
 
 
 # ── Update a single named app (deterministic — never ask the AI) ───────────────
@@ -6689,9 +6808,10 @@ def feat_health(backend, bctx, slog):
     if plan:
         print(f"\n  {CYAN}{BOLD}Safe fixes ready{R}  "
               f"{DIM}({len(plan)} — each shown before it runs){R}\n")
-        applied = _apply_approved_plan(plan, slog, source="health")
+        applied, aborted = _apply_approved_plan(plan, slog, source="health")
     else:
         info("No safe automatic fix for this exact issue yet.")
+        aborted = False
 
     still = _parse_failed_units(
         _r("systemctl --failed --plain --no-legend --no-pager 2>/dev/null"))
@@ -6712,6 +6832,7 @@ def feat_health(backend, bctx, slog):
         backend, {**ctx, **extra}, slog, prompt,
         needed=bool(still) or disk_still_hot,
         done_msg="Health playbook finished — nothing leftover for AI.",
+        aborted=aborted,
     )
 
 # ── FEATURE 3: Package Wizard ─────────────────────────────────────────────────
@@ -6990,20 +7111,41 @@ def feat_os_upgrade(backend, bctx, slog):
     os_str = bctx.get('os', 'Unknown OS')
 
     print(f"\n  {BOLD}Current OS:{R} {DIM}{os_str}{R}")
-    print(f"\n  {YELLOW}{BOLD}⚠  This is a MAJOR upgrade — not just package updates.{R}")
-    print(f"  {DIM}It will move your entire OS to the next major version.{R}")
-    print(f"  {DIM}• Can take 30–90 minutes{R}")
-    print(f"  {DIM}• Requires a reboot when done{R}")
-    print(f"  {DIM}• Close all other applications first{R}")
-    print(f"  {DIM}• Keep your laptop plugged in{R}")
-    print(f"  {DIM}• Do NOT interrupt once started{R}")
 
-    try:
-        ch = input(f"\n  {BOLD}Continue? [y/n]:{R} ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        return
-    if ch not in ('y', 'yes'):
-        return
+    # Check first — Zorin/Mint/Pop and an already-current Ubuntu must not be
+    # told this is a failing "MAJOR" jump (do-release-upgrade exits 1 → 256).
+    blob = ""
+    if pkg == 'apt':
+        own = _os_upgrade_own_distro()
+        if own:
+            print()
+            _os_upgrade_report_own(own, os_str)
+            return
+        status, blob = _probe_release_upgrade()
+        if status == "current":
+            print()
+            _os_upgrade_report_current(os_str)
+            return
+
+    if pkg != 'pacman':
+        print(f"\n  {YELLOW}{BOLD}⚠  This is a MAJOR upgrade — not just package updates.{R}")
+        print(f"  {DIM}It will move your entire OS to the next major version.{R}")
+        print(f"  {DIM}• Can take 30–90 minutes{R}")
+        print(f"  {DIM}• Requires a reboot when done{R}")
+        print(f"  {DIM}• Close all other applications first{R}")
+        print(f"  {DIM}• Keep your laptop plugged in{R}")
+        print(f"  {DIM}• Do NOT interrupt once started{R}")
+        if pkg == 'apt' and blob:
+            for line in (blob or "").splitlines():
+                if line.strip():
+                    print(f"  {CYAN}{line.strip()}{R}")
+
+        try:
+            ch = input(f"\n  {BOLD}Continue? [y/n]:{R} ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return
+        if ch not in ('y', 'yes'):
+            return
 
     sudo_pw = None
     try:
@@ -7027,6 +7169,12 @@ def feat_os_upgrade(backend, bctx, slog):
         run_cmd_live("sudo apt-get install -y update-manager-core", sudo_password=sudo_pw, timeout=120)
 
         if has_release_upgrade:
+            # Re-check after package updates — a new release may still be absent.
+            status2, blob2 = _probe_release_upgrade()
+            if status2 == "current" or _no_new_release(blob2):
+                print()
+                _os_upgrade_report_current(os_str)
+                return
             # Ubuntu: hand off to do-release-upgrade for a proper interactive upgrade
             print(f"\n  {CYAN}Step 3/3 — Starting Ubuntu release upgrade…{R}")
             print(f"  {DIM}TuxGenie will hand off to the Ubuntu upgrade tool.{R}")
@@ -7035,6 +7183,13 @@ def feat_os_upgrade(backend, bctx, slog):
             if rc == 0:
                 ok("OS upgrade complete! Please reboot your system.")
                 print(f"\n  {BOLD}Run: {CYAN}sudo reboot{R}")
+            elif rc in (1, 256):
+                status3, blob3 = _probe_release_upgrade()
+                if status3 == "current" or _no_new_release(blob3):
+                    _os_upgrade_report_current(os_str)
+                else:
+                    warn(f"Upgrade finished with code {rc}. Review the output above for details.")
+                    print(f"  {DIM}You can retry later with: sudo do-release-upgrade{R}")
             else:
                 warn(f"Upgrade finished with code {rc}. Review the output above for details.")
                 print(f"  {DIM}You can retry later with: sudo do-release-upgrade{R}")
@@ -7827,7 +7982,10 @@ def feat_rollback(backend, bctx, current_slog):
     if plan:
         print(f"\n  {CYAN}{BOLD}Safe automatic undo steps{R}  "
               f"{DIM}({len(plan)} — each shown before it runs){R}\n")
-        applied = _apply_approved_plan(plan, current_slog, source="rollback")
+        applied, aborted = _apply_approved_plan(plan, current_slog, source="rollback")
+        if aborted:
+            info("Stopped. Remaining undo steps were not sent to AI.")
+            return
         if applied:
             ok(f"Applied {applied} undo step(s).")
     else:
@@ -9766,10 +9924,12 @@ def show_history():
 
 def _apply_approved_plan(plan, slog, source="playbook"):
     """Interactive y/s/a/q approval loop for [(desc, cmd, risk, reason), ...].
-    Returns number of commands that exited 0."""
+    Returns (applied_count, aborted). aborted is True on q / Ctrl+C — callers
+    must not start AI after an explicit stop."""
     if not plan:
-        return 0
+        return 0, False
     applied = 0
+    aborted = False
     i = 0
     while i < len(plan):
         desc, cmd, risk, reason = plan[i]
@@ -9783,8 +9943,10 @@ def _apply_approved_plan(plan, slog, source="playbook"):
                         f"{C('q',RED,BOLD)}=stop]: ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print()
+            aborted = True
             break
         if ans in ("q", "quit", "stop"):
+            aborted = True
             break
         if ans in ("s", "skip", "n", "no"):
             print(f"  {DIM}↳ Skipped.{R}\n")
@@ -9804,7 +9966,10 @@ def _apply_approved_plan(plan, slog, source="playbook"):
                 sudo_pw = get_or_cache_sudo_password()
                 run_cmd_live("sudo -v", sudo_password=sudo_pw, timeout=30)
             except KeyboardInterrupt:
+                aborted = True
                 break
+        if aborted:
+            break
         for desc2, cmd2, _risk2, _reason2 in batch:
             print(f"  {CYAN}▶ Applying: {desc2}{R}")
             pw = sudo_pw if cmd2.lstrip().startswith("sudo") else None
@@ -9821,12 +9986,17 @@ def _apply_approved_plan(plan, slog, source="playbook"):
             break
         i += 1
         print()
-    return applied
+    return applied, aborted
 
 
 def _handoff_ai_if_needed(backend, bctx, slog, prompt, needed,
-                          done_msg="Done. Built-in fixes were enough."):
-    """AI takes over automatically only after local playbooks leave a problem."""
+                          done_msg="Done. Built-in fixes were enough.",
+                          aborted=False):
+    """AI takes over automatically only after local playbooks leave a problem.
+    An explicit q / Ctrl+C means stop — never spend AI after that."""
+    if aborted:
+        info("Stopped. AI was not started — run this again if you want more help.")
+        return False
     if not needed:
         info(done_msg)
         return False
@@ -9841,9 +10011,12 @@ def _handoff_ai_if_needed(backend, bctx, slog, prompt, needed,
 
 
 def _offer_optional_ai(backend, bctx, slog, prompt, needed=True, *,
-                       done_msg="Done. You can re-run this anytime."):
-    """If a leftover problem remains, start AI automatically — no y/N prompt."""
-    return _handoff_ai_if_needed(backend, bctx, slog, prompt, needed, done_msg)
+                       done_msg="Done. You can re-run this anytime.",
+                       aborted=False):
+    """If a leftover problem remains, start AI automatically — no y/N prompt.
+    aborted=True (user typed q) always skips AI."""
+    return _handoff_ai_if_needed(
+        backend, bctx, slog, prompt, needed, done_msg, aborted=aborted)
 
 
 def _parse_failed_units(text: str) -> list:
@@ -10583,11 +10756,12 @@ def _run_local_playbook(title, collect, show, build, backend, bctx, slog,
     if plan:
         print(f"\n  {CYAN}{BOLD}Safe fixes ready{R}  "
               f"{DIM}({len(plan)} — each shown before it runs){R}\n")
-        applied = _apply_approved_plan(plan, slog, source=source)
+        applied, aborted = _apply_approved_plan(plan, slog, source=source)
         if applied:
             print(f"\n  {GREEN}{BOLD}✓ Applied {applied} fix(es).{R}")
     else:
         info("No safe automatic fixes looked necessary from this scan.")
+        aborted = False
     ctx = dict(bctx or {})
     for k, v in (results or {}).items():
         ctx[k] = str(v)[:800]
@@ -10595,7 +10769,7 @@ def _run_local_playbook(title, collect, show, build, backend, bctx, slog,
     if callable(prompt):
         prompt = prompt(results, applied)
     needed = False
-    if leftover:
+    if leftover and not aborted:
         try:
             needed = bool(leftover(results, applied, plan))
         except Exception:
@@ -10604,6 +10778,7 @@ def _run_local_playbook(title, collect, show, build, backend, bctx, slog,
         backend, ctx, slog, prompt,
         needed=needed,
         done_msg=done_msg or "Done. You can re-run this from the menu anytime.",
+        aborted=aborted,
     )
 
 
@@ -11160,12 +11335,13 @@ def _run_crisis_playbook(kind, backend, bctx, slog):
 
     plan = build(results, bctx or {})
     applied = 0
+    aborted = False
     if not plan:
         info("No safe automatic fixes looked necessary from this scan.")
     else:
         print(f"\n  {CYAN}{BOLD}Step 2/2  Safe fixes ready{R}  "
               f"{DIM}({len(plan)} — each shown before it runs){R}\n")
-        applied = _apply_approved_plan(plan, slog, source=f"crisis-{kind}")
+        applied, aborted = _apply_approved_plan(plan, slog, source=f"crisis-{kind}")
 
     if applied:
         print(f"\n  {GREEN}{BOLD}✓ Applied {applied} fix(es).{R}  "
@@ -11179,14 +11355,16 @@ def _run_crisis_playbook(kind, backend, bctx, slog):
         "Explain each fix in plain English."
     )
     needed = False
-    try:
-        needed = bool(_leftover_crisis(kind, results, applied, plan))
-    except Exception:
-        needed = False
+    if not aborted:
+        try:
+            needed = bool(_leftover_crisis(kind, results, applied, plan))
+        except Exception:
+            needed = False
     _offer_optional_ai(
         backend, bctx or {}, slog, prompt,
         needed=needed,
         done_msg="Done. You can re-run this from the menu anytime.",
+        aborted=aborted,
     )
 
 
@@ -11395,12 +11573,13 @@ def feat_performance(backend, bctx, slog):
 
     plan = _slow_pc_build_plan(results, bctx or {})
     applied = 0
+    aborted = False
     if not plan:
         info("No safe automatic speed tweaks looked necessary from this scan.")
     else:
         print(f"\n  {CYAN}{BOLD}Step 2/2  Safe speed fixes ready{R}  "
               f"{DIM}({len(plan)} — each shown before it runs){R}\n")
-        applied = _apply_approved_plan(plan, slog, source="slow-pc")
+        applied, aborted = _apply_approved_plan(plan, slog, source="slow-pc")
 
     if applied:
         print(f"\n  {GREEN}{BOLD}✓ Applied {applied} speed fix(es).{R}  "
@@ -11431,14 +11610,16 @@ DO NOT suggest: upgrading RAM, replacing apps, reinstalling the OS.
 Set needs_synthesis: true so a full before/after summary is generated."""
 
     needed = False
-    try:
-        needed = bool(_leftover_slow_pc(results, applied, plan))
-    except Exception:
-        needed = False
+    if not aborted:
+        try:
+            needed = bool(_leftover_slow_pc(results, applied, plan))
+        except Exception:
+            needed = False
     _offer_optional_ai(
         backend, bctx or {}, slog, perf_prompt,
         needed=needed,
         done_msg="Done. Type \"my PC is slow\" anytime — or press 18 for Performance Boost.",
+        aborted=aborted,
     )
 
 
@@ -14517,7 +14698,7 @@ MENU_ITEMS = [
     # ── INSTALL & UPDATE ─────────────────────────────────────────
     ("11", "packages",  "Install Software",   "Find & install software by description",         feat_packages),
     ("12", "updates",   "Check for Updates",  "Safe upgrade analysis & ordering",               feat_updates),
-    ("13", "osupgrade", "Upgrade OS Version", "Upgrade Ubuntu/Fedora/Debian to latest release", feat_os_upgrade),
+    ("13", "osupgrade", "Upgrade OS Version", "Next OS release when one exists (honest on Zorin/Mint)", feat_os_upgrade),
     ("14", "appswitch", "Find Linux App",     "Find Linux equivalents of Windows apps",         feat_appswitch),
     # ── PROTECT & RECOVER ────────────────────────────────────────
     ("15", "security",  "Security Check",     "Harden firewall, SSH, open ports",               feat_security),
@@ -14650,7 +14831,7 @@ def show_menu(compact=False):
     _cat(BG_ORANGE, "📦", "INSTALL & UPDATE", "Get software and stay up to date")
     _item("11", "Install Software",    '"I need a video editor" → installed')
     _item("12", "Check for Updates",   "Keep your system safe and current")
-    _item("13", "Upgrade OS Version",  "Move to Ubuntu 26 / Fedora 42 / latest release")
+    _item("13", "Upgrade OS Version",  "Next OS release when one exists — already-current is OK")
     _item("14", "Find Linux App",      '"What replaces Photoshop / Word / iTunes?"')
 
     _cat(BG_NAVY, "🛡️ ", "PROTECT & RECOVER", "Stay safe and reversible")
