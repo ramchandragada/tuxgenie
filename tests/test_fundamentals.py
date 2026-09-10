@@ -1491,7 +1491,14 @@ class TestUnifiedShell:
         assert "storeBlurb" in html
         assert "repeat(3, minmax(0, 1fr))" in html  # App Store 3-up
         assert "makeAppIcon" in html and 'className = "app-ico"' in html
-        assert "APP_MARKS" in html
+        assert "APP_MARKS" not in html  # official artwork, not invented marks
+        assert "appInitials" not in html
+        assert "window.__setCatalog" in html
+        assert "object-fit: contain" in html
+        assert "data:image" in html or 'className += " missing"' in html
+        assert "ensure_catalog_icons" in src
+        assert "window, frame, paned, box, headerbar" not in src
+        assert "menuitem:hover" in src
 
     def test_gui_system_pulse_shape(self):
         p = tg.gui_system_pulse()
@@ -1519,6 +1526,8 @@ class TestUnifiedShell:
         assert '"./usr/lib/tuxgenie/tuxgenie_shell.py"' in src or \
                "./usr/lib/tuxgenie/tuxgenie_shell.py" in src
         assert "Unified Shell" in src or "unified" in src.lower()
+        assert "./usr/share/tuxgenie/app-icons/" in src
+        assert "_bundle_store_icons" in src or "ensure_catalog_icons" in src
 
 
 class TestInteractiveKeywordRouting:
@@ -1551,6 +1560,59 @@ class TestInteractiveKeywordRouting:
         assert tg._gui_open_url("/etc/passwd") is False
 
 
+class TestCatalogOfficialIcons:
+    """App Store shows vendor artwork — never invented monograms."""
+
+    def test_icon_urls_prefer_flathub(self):
+        urls = tg.catalog_icon_urls("Brave Browser")
+        assert any("flathub.org" in u and "com.brave.Browser" in u for u in urls)
+        chrome = tg.catalog_icon_urls("Google Chrome")
+        assert any("com.google.Chrome" in u for u in chrome)
+        vscode = tg.catalog_icon_urls("Visual Studio Code")
+        assert any("com.visualstudio.code" in u for u in vscode)
+
+    def test_icon_slug_and_app_id(self):
+        assert tg.catalog_icon_slug("Brave Browser") == "brave-browser"
+        assert tg.catalog_icon_app_id("Brave Browser") == "com.brave.Browser"
+        assert tg.catalog_icon_app_id("Google Chrome") == "com.google.Chrome"
+
+    def test_ensure_writes_official_png(self, tmp_path, monkeypatch):
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 48
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+            def read(self):
+                return png
+
+        monkeypatch.setattr(tg, "catalog_icon_path", lambda _n: None)
+        monkeypatch.setattr(
+            tg, "catalog_icon_urls",
+            lambda _n: ["https://example.invalid/icon.png"],
+        )
+        monkeypatch.setattr(tg.urllib.request, "urlopen", lambda *_a, **_k: _Resp())
+        n = tg.ensure_catalog_icons(dest=str(tmp_path), names=["Brave Browser"])
+        assert n == 1
+        out = tmp_path / "brave-browser.png"
+        assert out.is_file()
+        assert out.read_bytes().startswith(b"\x89PNG")
+
+    def test_gui_rows_icon_is_local_data_or_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(tg, "catalog_icon_path", lambda _n: None)
+        row = tg.catalog_gui_rows(tg.APP_CATALOG[:1])[0]
+        assert row["icon"] == ""
+        png = tmp_path / "brave-browser.png"
+        png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 48)
+        monkeypatch.setattr(tg, "catalog_icon_path", lambda _n: str(png))
+        row = tg.catalog_gui_rows(tg.APP_CATALOG[:1])[0]
+        assert row["icon"].startswith("data:image/png;base64,")
+        assert "https://" not in row["icon"]
+
+
 class TestGuiAppStoreRouting:
     """In-GUI App Store must reuse catalog engine via install-app / remove-app."""
 
@@ -1558,8 +1620,9 @@ class TestGuiAppStoreRouting:
         rows = tg.catalog_gui_rows(tg.APP_CATALOG)
         assert len(rows) == len(tg.APP_CATALOG)
         r = rows[0]
-        assert set(r) >= {"id", "name", "cat", "desc", "kind", "methods"}
+        assert set(r) >= {"id", "name", "cat", "desc", "kind", "methods", "icon"}
         assert "prompt" not in r
+        assert isinstance(r["icon"], str)
 
     def test_resolve_catalog_entry_by_id_and_name(self):
         e = tg.resolve_catalog_entry("20", tg.APP_CATALOG)

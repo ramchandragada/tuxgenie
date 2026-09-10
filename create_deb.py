@@ -245,7 +245,50 @@ for _sz in (16, 32, 48, 64, 128, 256):
     print(".", end="", flush=True)
 print(f" done ({sum(len(v) for v in ICONS.values())//1024} KB total)")
 
-INSTALLED_KB = max(1, (len(TUXGENIE_PY) + len(TUXGENIE_SHELL) + sum(len(v) for v in ICONS.values()) + len(COMMUNITY_FIXES) + 1023) // 1024 + 8)
+# Official App Store icons — downloaded at package build so the first install
+# already looks like a real store. First GUI launch fills any gaps in user space
+# (Debian postinst cannot use the network).
+def _bundle_store_icons():
+    import types
+    sys.modules.setdefault("anthropic", types.ModuleType("anthropic"))
+    sys.path.insert(0, SCRIPT_DIR)
+    try:
+        import tuxgenie as _tg  # noqa: E402
+    except Exception as exc:
+        print(f"  App Store icons skipped (import failed: {exc})")
+        return []
+    dest = os.path.join(SCRIPT_DIR, "app-icons")
+    os.makedirs(dest, exist_ok=True)
+    print("  Fetching official App Store icons ", end="", flush=True)
+    try:
+        _tg.ensure_catalog_icons(dest=dest, progress=lambda: print(".", end="", flush=True))
+    except Exception as exc:
+        print(f" failed ({exc})")
+    else:
+        print(" done")
+    out = []
+    try:
+        names = sorted(os.listdir(dest))
+    except OSError:
+        names = []
+    for fn in names:
+        if not fn.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".svg", ".ico", ".gif")):
+            continue
+        path = os.path.join(dest, fn)
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+        except OSError:
+            continue
+        if len(raw) < 32:
+            continue
+        out.append((fn, raw))
+    print(f"  Bundled {len(out)} official app icons ({sum(len(b) for _, b in out)//1024} KB)")
+    return out
+
+STORE_ICONS = _bundle_store_icons()
+
+INSTALLED_KB = max(1, (len(TUXGENIE_PY) + len(TUXGENIE_SHELL) + sum(len(v) for v in ICONS.values()) + len(COMMUNITY_FIXES) + sum(len(b) for _, b in STORE_ICONS) + 1023) // 1024 + 8)
 
 # ── File contents (all in-memory) ─────────────────────────────────────────────
 
@@ -717,6 +760,7 @@ data_entries = [
     {"path": f"./usr/share/doc/{PACKAGE}/",              "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/applications/",                "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/tuxgenie/",                    "type": "dir",  "data": None,          "mode": 0o755},
+    {"path": "./usr/share/tuxgenie/app-icons/",           "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/icons/",                       "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/icons/hicolor/",               "type": "dir",  "data": None,          "mode": 0o755},
     {"path": "./usr/share/icons/hicolor/16x16/",         "type": "dir",  "data": None,          "mode": 0o755},
@@ -780,6 +824,10 @@ data_entries = [
      "type": "file", "data": ICONS[128],                                 "mode": 0o644},
     {"path": "./usr/share/icons/hicolor/256x256/apps/com.tuxgenie.TuxGenie.png",
      "type": "file", "data": ICONS[256],                                 "mode": 0o644},
+] + [
+    {"path": f"./usr/share/tuxgenie/app-icons/{fn}",
+     "type": "file", "data": raw, "mode": 0o644}
+    for fn, raw in STORE_ICONS
 ]
 
 # ── Define DEBIAN/ control files ──────────────────────────────────────────────

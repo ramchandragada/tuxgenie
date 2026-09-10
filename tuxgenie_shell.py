@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.13.0"
+VERSION = "7.14.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -714,33 +714,37 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   .card {
     display: -webkit-box; display: -webkit-flex; display: flex;
     -webkit-box-orient: vertical; -webkit-flex-direction: column; flex-direction: column;
-    gap: 8px;
+    gap: 9px;
     min-width: 0;
-    border: 1px solid var(--line); border-radius: 14px;
+    border: 1px solid var(--line); border-radius: 16px;
     background: #ffffff;
     box-shadow: 0 1px 3px rgba(16,48,64,.05);
-    padding: 11px 10px 10px;
+    padding: 12px 12px 11px;
     transition: transform .18s var(--ease), box-shadow .18s;
   }
   .card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 12px 28px rgba(3,40,48,.08);
+    box-shadow: 0 14px 30px rgba(3,40,48,.10);
   }
   .card-top {
     display: -webkit-box; display: -webkit-flex; display: flex;
-    -webkit-box-align: start; -webkit-align-items: flex-start; align-items: flex-start;
-    gap: 8px; min-width: 0;
+    -webkit-box-align: center; -webkit-align-items: center; align-items: center;
+    gap: 10px; min-width: 0;
   }
   .app-ico {
-    -webkit-flex: 0 0 40px; flex: 0 0 40px;
-    width: 40px; height: 40px; border-radius: 11px;
+    -webkit-flex: 0 0 56px; flex: 0 0 56px;
+    width: 56px; height: 56px; border-radius: 14px;
     display: -webkit-box; display: -webkit-flex; display: flex;
     -webkit-box-align: center; -webkit-align-items: center; align-items: center;
     -webkit-box-pack: center; -webkit-justify-content: center; justify-content: center;
-    color: #fff; font-weight: 800; font-size: .78rem; letter-spacing: -.02em;
+    background: #f3f7f9;
+    box-shadow: inset 0 0 0 1px rgba(16,48,60,.08), 0 6px 14px rgba(16,48,64,.07);
     overflow: hidden;
   }
-  .app-ico svg { width: 22px; height: 22px; display: block; }
+  .app-ico img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .app-ico.missing {
+    background: linear-gradient(180deg, #eef6f8, #e4eef2);
+  }
   .card-copy { min-width: 0; -webkit-box-flex: 1; -webkit-flex: 1; flex: 1; }
   .card h3 {
     margin: 0; font-size: .8rem; font-weight: 800; letter-spacing: -.02em;
@@ -822,7 +826,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   @media (max-width: 400px) {
     .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .card { padding: 8px 7px 8px; }
-    .app-ico { width: 34px; height: 34px; -webkit-flex-basis: 34px; flex-basis: 34px; }
+    .app-ico { width: 44px; height: 44px; -webkit-flex-basis: 44px; flex-basis: 44px; }
   }
   /* Wide control deck */
   @media (min-width: 720px) {
@@ -1293,42 +1297,27 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     return storeMode === "ai" ? AI_APPS : STORE_APPS;
   }
 
-  const ICO_PALETTE = ["#0a7c88", "#0b6f9a", "#1b6b4a", "#c45c12",
-                       "#3d5a80", "#7e22ce", "#9a3f08", "#0d6e8c"];
-  const APP_MARKS = {
-    "brave browser": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l7 4v5c0 5-3 8-7 9-4-1-7-4-7-9V7z"/></svg>',
-    "google chrome": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.2"/><path d="M12 8.8h8.2M8.4 14.2L4.2 7.6M15.6 14.2l-4.2 7.3"/></svg>',
-    "mozilla firefox": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M4 10c3 1 6-1 8-4 2 4 6 5 8 3-1 5-5 9-8 9s-7-3-8-8z"/></svg>',
-    "vivaldi": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8l8 12 8-12"/><circle cx="12" cy="8" r="3"/></svg>',
-    "slack": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 8h3v3H8zM13 8h3v3h-3zM8 13h3v3H8zM13 13h3v3h-3z"/></svg>',
-    "discord": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 7c2-1 4-1 5-1s3 0 5 1l2 6c-2 2-4 3-7 3s-5-1-7-3z"/><circle cx="9.5" cy="11" r=".8" fill="currentColor"/><circle cx="14.5" cy="11" r=".8" fill="currentColor"/></svg>',
-    "steam": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="14" r="2.2"/><circle cx="15" cy="9" r="2"/><path d="M10.6 12.6L14 9.6"/></svg>',
-    "vlc": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 5l10 7-10 7z"/></svg>',
-    "visual studio code": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8l7-4 9 4v8l-9 4-7-4V8zM11 4v16"/></svg>',
-    "spotify": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M7.5 11c3-1.4 6-1.4 9 0M8 14c2.4-1 5-1 7.4 0"/></svg>'
-  };
-
-  function appInitials(name) {
-    const parts = String(name || "").replace(/[^A-Za-z0-9 ]/g, " ").trim().split(" ").filter(Boolean);
-    if (parts.length >= 2) return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
-    return String(name || "?").replace(/[^A-Za-z0-9]/g, "").slice(0, 2).toUpperCase() || "?";
+  function iconForName(name) {
+    const all = STORE_APPS.concat(AI_APPS);
+    for (let i = 0; i < all.length; i++) {
+      if (all[i].name === name && all[i].icon) return all[i].icon;
+    }
+    return "";
   }
 
-  function appIcoColor(name) {
-    let h = 0;
-    const s = String(name || "");
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return ICO_PALETTE[h % ICO_PALETTE.length];
-  }
-
-  function makeAppIcon(name) {
+  function makeAppIcon(row) {
     const el = document.createElement("div");
     el.className = "app-ico";
     el.setAttribute("aria-hidden", "true");
-    el.style.background = appIcoColor(name);
-    const mark = APP_MARKS[String(name || "").toLowerCase()];
-    if (mark) el.innerHTML = mark;
-    else el.textContent = appInitials(name);
+    const src = (row && row.icon) || iconForName(row && row.name) || "";
+    if (src && src.indexOf("data:image") === 0) {
+      const img = document.createElement("img");
+      img.src = src;
+      img.alt = "";
+      el.appendChild(img);
+      return el;
+    }
+    el.className += " missing";
     return el;
   }
 
@@ -1400,7 +1389,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       const p = document.createElement("p");
       p.textContent = r.desc || "";
       copy.appendChild(h); copy.appendChild(p);
-      top.appendChild(makeAppIcon(r.name));
+      top.appendChild(makeAppIcon(r));
       top.appendChild(copy);
       const badges = document.createElement("div");
       badges.className = "badges";
@@ -1462,7 +1451,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
       const p = document.createElement("p");
       p.textContent = r.desc || (r.method + " · " + r.target);
       copy.appendChild(h); copy.appendChild(p);
-      top.appendChild(makeAppIcon(r.name));
+      top.appendChild(makeAppIcon(r));
       top.appendChild(copy);
       const badges = document.createElement("div");
       badges.className = "badges";
@@ -1494,6 +1483,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   window.__setInstalled = function(rows) {
     installed = Array.isArray(rows) ? rows : [];
     renderMyApps();
+  };
+  window.__setCatalog = function(store, ai) {
+    if (Array.isArray(store)) STORE_APPS = store;
+    if (Array.isArray(ai)) AI_APPS = ai;
+    if (activeTab === "store") renderStore();
+    if (activeTab === "myapps") renderMyApps();
   };
 
   document.getElementById("tabs").addEventListener("click", (e) => {
@@ -1581,6 +1576,7 @@ class UnifiedShell:
         self._feed_ready = False
         self._feed_queue = []
         self._store_apps, self._ai_apps = _load_store_catalogs()
+        self._start_icon_prefetch()
 
         self.app = Gtk.Application(
             application_id=APP_ID,
@@ -1626,8 +1622,19 @@ class UnifiedShell:
             css = self.Gtk.CssProvider()
             css.load_from_data(
                 b"""
-                window, frame, paned, box, headerbar {
+                window, headerbar {
                   background-color: #f4f8fb;
+                  color: #102028;
+                }
+                menu, .menu, popover {
+                  background-color: #ffffff;
+                  color: #102028;
+                }
+                menuitem, menu menuitem, menuitem label {
+                  color: #102028;
+                }
+                menuitem:hover, menuitem:prelight, menuitem:selected {
+                  background-color: #d7eef0;
                   color: #102028;
                 }
                 """
@@ -1638,6 +1645,41 @@ class UnifiedShell:
             )
         except Exception:
             pass
+
+    def _start_icon_prefetch(self):
+        """Download official catalog icons on first launch, then refresh the store."""
+        def work():
+            tg = _import_tuxgenie()
+            if tg is None or not hasattr(tg, "ensure_catalog_icons"):
+                return
+            try:
+                tg.ensure_catalog_icons()
+            except Exception as e:
+                print("tuxgenie-app: icon fetch failed:", e, file=sys.stderr)
+                return
+            apps, ai = _load_store_catalogs()
+            self._store_apps, self._ai_apps = apps, ai
+            if self.GLib is None:
+                return
+            self.GLib.idle_add(self._push_catalog_js, apps, ai)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _push_catalog_js(self, apps, ai):
+        if self.webview is None:
+            return False
+        payload_store = json.dumps(apps, ensure_ascii=False)
+        payload_ai = json.dumps(ai, ensure_ascii=False)
+        js = "window.__setCatalog && window.__setCatalog(%s, %s);" % (
+            payload_store, payload_ai)
+        try:
+            self.webview.run_javascript(js, None, None, None)
+        except Exception:
+            try:
+                self.webview.evaluate_javascript(js, -1, None, None, None, None, None)
+            except Exception as e:
+                print("tuxgenie-app: catalog JS push failed:", e, file=sys.stderr)
+        return False
 
     def _on_size(self, _w, alloc):
         if self._pos_set or alloc.width < 200:

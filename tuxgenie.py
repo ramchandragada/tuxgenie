@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.13.0"
+__version__ = "7.14.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -12569,6 +12569,331 @@ def feat_install_apps(backend, bctx, slog):
     )
 
 
+# ── Official App Store icons (never invented monograms) ──────────────────────
+# Real vendor artwork, downloaded once at package build / first GUI launch.
+# The shell only ever embeds local data URIs — no remote CDNs in the HTML.
+
+_ICON_FLATPAK_EXTRA = {
+    "Google Chrome": "com.google.Chrome",
+    "Vivaldi": "com.vivaldi.Vivaldi",
+    "Microsoft Edge": "com.microsoft.Edge",
+    "Visual Studio Code": "com.visualstudio.code",
+    "Sublime Text": "com.sublimetext.three",
+    "AnyDesk": "com.anydesk.Anydesk",
+    "GNOME Tweaks": "org.gnome.tweaks",
+    "Plex Media Server": "tv.plex.PlexDesktop",
+    "balenaEtcher": "io.balena.etcher",
+    "Proton VPN": "com.protonvpn.www",
+    "Mullvad VPN": "net.mullvad.MullvadVPN",
+    "NordVPN": "com.nordvpn.NordVPN",
+    "Caffeine": "net.launchpad.caffeine",
+    "GParted": "org.gnome.GParted",
+    "Timeshift": "io.github.teejee2008.timeshift",
+    "Stacer": "com.github.oguzhaninan.Stacer",
+    "Syncthing": "me.kozec.syncthingtk",
+    "JetBrains Toolbox": "com.jetbrains.Toolbox",
+    "DaVinci Resolve": "com.blackmagicdesign.resolve",
+}
+
+_ICON_DIRECT = {
+    "Git": ("https://git-scm.com/images/logos/downloads/Git-Icon-1788C.png",),
+    "Cursor": ("https://www.cursor.com/apple-touch-icon.png",),
+    "Ollama": ("https://ollama.com/public/ollama.png",),
+    "Docker": ("https://github.com/docker.png?size=128",),
+    "Node.js (LTS)": ("https://github.com/nodejs.png?size=128",),
+    "GitHub CLI (gh)": ("https://github.com/cli.png?size=128",),
+    "Zoho Mail": ("https://www.zoho.com/mail/images/zoho-mail-logo.png",
+                  "https://www.zoho.com/mail/img/favicon.ico"),
+    "Ulaa Browser": ("https://ulaa.com/favicon.ico",),
+    "Windsurf": ("https://windsurf.com/favicon.ico",),
+    "Claude Code": ("https://www.anthropic.com/favicon.ico",),
+    "GitHub Copilot CLI": ("https://github.githubassets.com/favicons/favicon.png",),
+    "Cline": ("https://github.com/cline.png?size=128",),
+    "Continue.dev": ("https://github.com/continuedev.png?size=128",),
+    "Aider": ("https://github.com/Aider-AI.png?size=128",),
+    "Goose": ("https://github.com/block.png?size=128",),
+    "Msty": ("https://msty.ai/favicon.ico",),
+    "Open WebUI": ("https://github.com/open-webui.png?size=128",),
+    "LocalAI": ("https://github.com/mudler.png?size=128",),
+    "Whisper": ("https://github.com/openai.png?size=128",),
+    "FFmpeg": ("https://github.com/FFmpeg.png?size=128",),
+    "yt-dlp": ("https://github.com/yt-dlp.png?size=128",),
+    "Starship": ("https://starship.rs/icon.png",),
+    "Zellij": ("https://github.com/zellij-org.png?size=128",),
+    "Podman": ("https://github.com/containers.png?size=128",),
+    "Fish Shell": ("https://github.com/fish-shell.png?size=128",),
+    "tmux": ("https://github.com/tmux.png?size=128",),
+    "Kitty Terminal": ("https://sw.kovidgoyal.net/kitty/_static/kitty.svg",
+                       "https://github.com/kovidgoyal.png?size=128"),
+    "Rclone": ("https://github.com/rclone.png?size=128",),
+    "Ventoy": ("https://github.com/ventoy.png?size=128",),
+    "Tailscale": ("https://github.com/tailscale.png?size=128",),
+    "Aspera Hub": ("https://www.tuxgenie.com/tuxgenie-256.png",),
+    "Aspera Connect": ("https://www.tuxgenie.com/tuxgenie-256.png",),
+    "Rambox": ("https://github.com/ramboxapp.png?size=128",),
+    "TeamViewer": ("https://www.teamviewer.com/favicon.ico",),
+    "Lazygit": ("https://github.com/jesseduffield.png?size=128",),
+    "Timeshift": ("https://github.com/linuxmint.png?size=128",),
+    "Stacer": ("https://github.com/oguzhaninan.png?size=128",),
+    "GParted": ("https://github.com/GNOME.png?size=128",),
+    "Synaptic": ("https://github.com/mvo5.png?size=128",),
+    "btop / htop": ("https://github.com/aristocratos.png?size=128",),
+    "neofetch": ("https://github.com/dylanaraps.png?size=128",),
+    "Tabby Terminal": ("https://github.com/Eugeny.png?size=128",),
+    "JetBrains Toolbox": (
+        "https://resources.jetbrains.com/storage/products/company/brand/logos/Toolbox_icon.svg",),
+    "Alacritty": ("https://github.com/alacritty.png?size=128",),
+    "GNOME Tweaks": ("https://github.com/GNOME.png?size=128",),
+    "Cockpit": ("https://github.com/cockpit-project.png?size=128",),
+    "Fastfetch": ("https://github.com/fastfetch-cli.png?size=128",),
+    "balenaEtcher": ("https://github.com/balena-io.png?size=128",),
+    "Gufw Firewall": ("https://github.com/thefanclub.png?size=128",),
+    "ClamAV + ClamTk": ("https://github.com/Cisco-Talos.png?size=128",),
+    "DaVinci Resolve": ("https://www.blackmagicdesign.com/favicon.ico",),
+    "VirtualBox": ("https://www.virtualbox.org/graphics/vbox_logo2_gradient.png",),
+    "virt-manager": ("https://github.com/virt-manager.png?size=128",),
+    "TLP": ("https://github.com/linrunner.png?size=128",),
+    "KDE Connect": ("https://github.com/KDE.png?size=128",),
+    "Proton Pass": ("https://proton.me/favicons/apple-touch-icon.png",),
+    "Ulauncher": ("https://github.com/Ulauncher.png?size=128",),
+    "Espanso": ("https://github.com/espanso.png?size=128",),
+    "Variety": ("https://github.com/varietywalls.png?size=128",),
+    "Mullvad VPN": ("https://github.com/mullvad.png?size=128",),
+    "OpenSnitch": ("https://github.com/evilsocket.png?size=128",),
+    "Warp": ("https://github.com/warpdotdev.png?size=128",),
+    "Ghostty": ("https://github.com/ghostty-org.png?size=128",),
+    "Distrobox": ("https://github.com/89luca89.png?size=128",),
+    "Waydroid": ("https://github.com/waydroid.png?size=128",),
+    "Jellyfin Server": ("https://github.com/jellyfin.png?size=128",),
+    "Flatpak + Flathub": ("https://github.com/flatpak.png?size=128",
+                          "https://flathub.org/favicon.ico"),
+    "VeraCrypt": ("https://github.com/veracrypt.png?size=128",),
+    "CoreCtrl": ("https://github.com/corectrl.png?size=128",),
+    "Arattai": ("https://github.com/zoho.png?size=128",),
+    "MEGA Sync": ("https://github.com/meganz.png?size=128",),
+    "NordVPN": ("https://github.com/NordSecurity.png?size=128",),
+    "1Password": ("https://1password.com/favicon.ico",),
+    "Proton Drive": ("https://proton.me/favicons/apple-touch-icon.png",),
+    "Trayscale": ("https://github.com/DeedleFake.png?size=128",),
+    "OpenAI Codex CLI": ("https://github.com/openai.png?size=128",),
+    "Gemini CLI": ("https://www.google.com/images/branding/product/2x/gemini_48dp.png",),
+    "ChatGPT Desktop": ("https://github.com/openai.png?size=128",),
+    "Local AI Starter Pack": ("https://ollama.com/public/ollama.png",),
+}
+
+
+def catalog_icon_slug(name):
+    """Stable filename stem for a catalog app (brave-browser, google-chrome)."""
+    s = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return s or "app"
+
+
+def catalog_icon_app_id(name):
+    """Flathub app-id used only to fetch the official icon (not to install)."""
+    spec = _CATALOG_INSTALL.get(name) or {}
+    fp = spec.get("flatpak")
+    if isinstance(fp, str) and fp.strip():
+        return fp.strip()
+    extra = _ICON_FLATPAK_EXTRA.get(name)
+    return extra if extra else None
+
+
+def catalog_icon_urls(name):
+    """Candidate official-icon URLs, Flathub first, then vendor artwork."""
+    urls = []
+    app_id = catalog_icon_app_id(name)
+    if app_id:
+        urls.append(
+            f"https://dl.flathub.org/repo/appstream/x86_64/icons/128x128/{app_id}.png")
+        urls.append(
+            f"https://dl.flathub.org/repo/appstream/x86_64/icons/64x64/{app_id}.png")
+    for u in _ICON_DIRECT.get(name, ()):
+        if u and u not in urls:
+            urls.append(u)
+    return urls
+
+
+def catalog_icon_dirs():
+    """Search paths: user cache, packaged icons, source checkout."""
+    xdg = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return [
+        os.path.join(xdg, "tuxgenie", "app-icons"),
+        "/usr/share/tuxgenie/app-icons",
+        "/usr/local/share/tuxgenie/app-icons",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "app-icons"),
+    ]
+
+
+def catalog_icon_user_dir():
+    xdg = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return os.path.join(xdg, "tuxgenie", "app-icons")
+
+
+def _icon_ext_for(data):
+    if not data or len(data) < 16:
+        return None
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return ".gif"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return ".webp"
+    if data[:4] in (b"\x00\x00\x01\x00", b"\x00\x00\x02\x00"):
+        return ".ico"
+    head = data.lstrip()[:64].lower()
+    if head.startswith(b"<svg") or head.startswith(b"<?xml"):
+        if b"<svg" in data[:400].lower():
+            return ".svg"
+    return None
+
+
+def catalog_icon_path(name):
+    """Absolute path of a cached official icon, or None."""
+    slug = catalog_icon_slug(name)
+    for folder in catalog_icon_dirs():
+        if not os.path.isdir(folder):
+            continue
+        for ext in (".png", ".jpg", ".webp", ".svg", ".ico", ".gif"):
+            path = os.path.join(folder, slug + ext)
+            if os.path.isfile(path) and os.path.getsize(path) > 32:
+                return path
+    return None
+
+
+def catalog_icon_data_uri(name):
+    """data: URI for the shell (empty string when the icon is not cached yet)."""
+    path = catalog_icon_path(name)
+    if not path:
+        return ""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return ""
+    ext = _icon_ext_for(raw)
+    if not ext:
+        return ""
+    mime = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif",
+        ".webp": "image/webp", ".svg": "image/svg+xml", ".ico": "image/x-icon",
+    }[ext]
+    import base64
+    return "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode("ascii"))
+
+
+def _icon_http_get(url, timeout=18):
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": f"TuxGenie/{__version__} (+https://www.tuxgenie.com)",
+            "Accept": "image/png,image/*,application/json;q=0.8,*/*;q=0.5",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
+
+
+def _flathub_icon_from_api(app_id):
+    """Resolve the current official Flathub media URL for an app-id."""
+    if not app_id or not re.match(r"^[\w.-]+$", app_id):
+        return ""
+    try:
+        raw = _icon_http_get(f"https://flathub.org/api/v2/appstream/{app_id}", timeout=12)
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except Exception:
+        return ""
+    icon = data.get("icon") if isinstance(data, dict) else None
+    if isinstance(icon, str) and icon.startswith("https://"):
+        return icon
+    return ""
+
+
+def _write_icon_file(dest_dir, name, data):
+    ext = _icon_ext_for(data)
+    if not ext:
+        return None
+    os.makedirs(dest_dir, exist_ok=True)
+    path = os.path.join(dest_dir, catalog_icon_slug(name) + ext)
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, path)
+    return path
+
+
+def catalog_icon_names():
+    seen, names = set(), []
+    for e in list(APP_CATALOG) + list(AI_CATALOG):
+        n = e.get("name")
+        if n and n not in seen:
+            seen.add(n)
+            names.append(n)
+    return names
+
+
+def ensure_catalog_icons(dest=None, names=None, progress=None):
+    """Download missing official icons into dest (user cache by default).
+
+    Safe to call from the GUI (user space) or create_deb.py (package build).
+    Debian postinst must NOT call this — maintainer scripts cannot use the
+    network. Returns the number of icons newly written.
+    """
+    dest = dest or catalog_icon_user_dir()
+    names = list(names or catalog_icon_names())
+    os.makedirs(dest, exist_ok=True)
+    written = 0
+
+    def _already(name):
+        slug = catalog_icon_slug(name)
+        for ext in (".png", ".jpg", ".webp", ".svg", ".ico", ".gif"):
+            path = os.path.join(dest, slug + ext)
+            if os.path.isfile(path) and os.path.getsize(path) > 32:
+                return True
+        return False
+
+    def _one(name):
+        if _already(name):
+            return False
+        tried = []
+        for url in catalog_icon_urls(name):
+            tried.append(url)
+            try:
+                data = _icon_http_get(url)
+                if _write_icon_file(dest, name, data):
+                    return True
+            except Exception:
+                continue
+        app_id = catalog_icon_app_id(name)
+        if app_id:
+            api = _flathub_icon_from_api(app_id)
+            if api and api not in tried:
+                try:
+                    data = _icon_http_get(api)
+                    if _write_icon_file(dest, name, data):
+                        return True
+                except Exception:
+                    pass
+        return False
+
+    # Parallel fetch — first install should feel instant, not a crawl.
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        futs = {pool.submit(_one, n): n for n in names}
+        for fut in as_completed(futs):
+            try:
+                if fut.result():
+                    written += 1
+            except Exception:
+                pass
+            if progress:
+                try:
+                    progress()
+                except Exception:
+                    pass
+    return written
+
+
 def catalog_gui_rows(catalog, *, kind="app"):
     """Slim catalog rows for the Unified Shell App Store (no prompts/secrets)."""
     rows = []
@@ -12593,6 +12918,7 @@ def catalog_gui_rows(catalog, *, kind="app"):
             "desc": e.get("desc") or "",
             "kind": kind,
             "methods": methods,
+            "icon": catalog_icon_data_uri(e.get("name") or ""),
         })
     return rows
 
