@@ -1677,3 +1677,32 @@ class TestGuiAppStoreRouting:
         ok = tg.cli_install_catalog_ref("20", backend=None, bctx={"pkg_mgr": "apt"}, slog=[])
         assert ok is True
         assert seen == ["VLC Media Player"]
+
+
+class TestUpdateCheckFundamentals:
+    """[12] Check for Updates must not kill apt at 120s, orphan the process, or
+    treat a dpkg lock / timeout as 'fully updated' or 'N still pending'."""
+
+    def test_live_commands_kill_the_process_group(self):
+        import inspect
+        src = inspect.getsource(tg.run_cmd_live)
+        assert "start_new_session=True" in src
+        assert "_kill_cmd_tree" in src
+
+    def test_feat_updates_gives_upgrades_an_hour(self):
+        import inspect
+        src = inspect.getsource(tg.feat_updates)
+        assert "timeout=3600" in src
+        assert "_wait_pkg_mgr" in src
+        assert "_apt_list_upgradable" in src
+        # Autoremove only after a successful upgrade — never on top of a live apt.
+        assert "if _rc == 0" in src
+
+    def test_lock_errors_are_busy_not_pending(self):
+        remaining = [
+            "E: Could not get lock /var/lib/dpkg/lock-frontend. "
+            "It is held by process 1 (apt-get)",
+        ]
+        assert tg._classify_apt_upgrade("", remaining) == "busy"
+        assert tg._classify_apt_upgrade("Timed out after 120s", []) == "timeout"
+        assert tg._live_cmd_timeout("sudo apt-get upgrade -y", 120) == 3600

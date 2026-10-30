@@ -29,7 +29,7 @@ www.tuxgenie.com
 """
 
 import os, sys, json, re, stat, tarfile, datetime, textwrap, time, shlex, argparse
-import math
+import math, signal
 import subprocess, urllib.request, urllib.error, threading, shutil, traceback
 try:
     import termios, tty as _tty
@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.15.0"
+__version__ = "7.16.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3263,16 +3263,8 @@ def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=
 
         # Heavy package-manager / release-upgrade commands need a much longer
         # timeout than the default — apt upgrade routinely takes 10-60 minutes.
-        # Without this Claude's tool-call would be SIGKILLed at 120s.
-        _HEAVY_RE = re.compile(
-            r'^\s*(?:sudo\s+)?'
-            r'(?:apt(?:-get)?|dnf|yum|pacman|zypper|snap|flatpak)'
-            r'(?:\s+-{1,2}[A-Za-z0-9-]+)*'
-            r'\s+(?:upgrade|full-upgrade|dist-upgrade|install|reinstall|remove|autoremove|'
-            r'purge|update|refresh|-S\b|-Syu\b|system-upgrade|do-release-upgrade)',
-            re.IGNORECASE)
-        _RELEASE_RE = re.compile(r'^\s*(?:sudo\s+)?do-release-upgrade\b', re.IGNORECASE)
-        tool_timeout = 3600 if (_HEAVY_RE.search(actual_cmd) or _RELEASE_RE.search(actual_cmd)) else 300
+        # Without this the tool-call would be SIGKILLed at 120s.
+        tool_timeout = 3600 if _is_heavy_pkg_cmd(actual_cmd) else 300
 
         rc, stdout, stderr = run_cmd_live(
             actual_cmd,
@@ -5102,8 +5094,8 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
                 sudo_pw = get_or_cache_sudo_password()
             except KeyboardInterrupt:
                 return True
-        # System updates can take 5+ minutes; allow a generous timeout
-        rc, _stdout, _stderr = run_cmd_live(sys_update_cmd, sudo_password=sudo_pw, timeout=900)
+        # System updates routinely take 10–60 minutes; never kill apt at 120s.
+        rc, _stdout, _stderr = run_cmd_live(sys_update_cmd, sudo_password=sudo_pw, timeout=3600)
         if rc == 0:
             ok("System is up to date.")
         else:
@@ -5934,9 +5926,219 @@ def _apt_noninteractive(cmd):
     return cmd
 
 
+# Package ops that routinely run longer than run_cmd_live's 120s default.
+# Killing them mid-flight orphans apt/dpkg and holds the lock — [12] then
+# reports "N updates still pending" (or "fully updated") from a lock error.
+_HEAVY_PKG_RE = re.compile(
+    r'(?:^|&&|;|\n)\s*(?:sudo\s+)?'
+    r'(?:apt(?:-get)?|dnf|yum|pacman|zypper|snap|flatpak|apk)'
+    r'(?:\s+-{1,2}[A-Za-z0-9-]+)*'
+    r'\s+(?:upgrade|full-upgrade|dist-upgrade|install|reinstall|remove|autoremove|'
+    r'purge|update|refresh|-S\b|-Syu\b|system-upgrade|do-release-upgrade)',
+    re.IGNORECASE | re.MULTILINE)
+_RELEASE_UPGRADE_RE = re.compile(
+    r'(?:^|&&|;|\n)\s*(?:sudo\s+)?do-release-upgrade\b', re.IGNORECASE | re.MULTILINE)
+
+# Live apt/dpkg (not the always-on packagekitd daemon — that would look "busy"
+# on every Ubuntu/Zorin box even when idle).
+_APT_BUSY_COMMS = frozenset({
+    "apt", "apt-get", "aptitude", "dpkg", "unattended-upgr",
+})
+_DNF_BUSY_COMMS = frozenset({"dnf", "dnf-3", "yum"})
+_PACMAN_BUSY_COMMS = frozenset({"pacman", "pamac"})
+_ZYPPER_BUSY_COMMS = frozenset({"zypper"})
+_APK_BUSY_COMMS = frozenset({"apk"})
+
+
+def _is_heavy_pkg_cmd(cmd: str) -> bool:
+    c = cmd or ""
+    return bool(_HEAVY_PKG_RE.search(c) or _RELEASE_UPGRADE_RE.search(c))
+
+
+def _live_cmd_timeout(cmd, timeout):
+    """Give apt/dnf/pacman upgrade+install the hour they often need.
+
+    Callers may pass a *longer* timeout (dist-upgrade at 7200). A shorter
+    timeout on a heavy command is treated as a mistake — the 120s default is
+    what made [12] Check for Updates kill apt mid-download.
+    """
+    try:
+        timeout = int(timeout)
+    except (TypeError, ValueError):
+        timeout = 120
+    if _is_heavy_pkg_cmd(cmd) and timeout < 3600:
+        return 3600
+    return timeout
+
+
+def _kill_cmd_tree(proc):
+    """Stop a live command and every child it spawned.
+
+    run_cmd_live uses shell=True, so proc.kill() only kills the shell and
+    leaves apt-get holding the dpkg lock. Commands start with
+    start_new_session=True so the shell is the process-group leader and
+    killpg cleans the tree.
+    """
+    if proc is None or proc.poll() is not None:
+        return
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                if sig == signal.SIGKILL:
+                    proc.kill()
+                else:
+                    proc.terminate()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=5 if sig == signal.SIGTERM else 3)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+        except Exception:
+            return
+
+
+def _proc_comm_names():
+    """Short names from /proc/*/comm (15-char kernel limit)."""
+    names = set()
+    try:
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            try:
+                with open(os.path.join("/proc", entry, "comm"), "r",
+                          encoding="utf-8", errors="replace") as fh:
+                    names.add(fh.read().strip())
+            except (OSError, IOError):
+                continue
+    except OSError:
+        pass
+    return names
+
+
+def _apt_lockfile_held() -> bool:
+    """True when dpkg/apt lock files are exclusively locked (best-effort)."""
+    try:
+        import fcntl
+    except ImportError:
+        return False
+    for path in (
+        "/var/lib/dpkg/lock-frontend",
+        "/var/lib/dpkg/lock",
+        "/var/lib/apt/lists/lock",
+        "/var/cache/apt/archives/lock",
+    ):
+        fd = None
+        try:
+            fd = os.open(path, os.O_RDWR)
+        except PermissionError:
+            try:
+                fd = os.open(path, os.O_RDONLY)
+            except OSError:
+                continue
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except (BlockingIOError, OSError):
+            return True
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+    return False
+
+
+def _pkg_mgr_busy(pkg="apt") -> bool:
+    """True if this distro's package manager looks like it's still running."""
+    names = _proc_comm_names()
+    table = {
+        "apt": _APT_BUSY_COMMS,
+        "dnf": _DNF_BUSY_COMMS,
+        "yum": _DNF_BUSY_COMMS,
+        "pacman": _PACMAN_BUSY_COMMS,
+        "zypper": _ZYPPER_BUSY_COMMS,
+        "apk": _APK_BUSY_COMMS,
+    }
+    if names & table.get(pkg, _APT_BUSY_COMMS):
+        return True
+    if pkg == "apt" and _apt_lockfile_held():
+        return True
+    return False
+
+
+def _wait_pkg_mgr(pkg="apt", timeout=90, interval=2) -> bool:
+    """Wait until the package manager is no longer holding the system.
+
+    Returns True if the lock is free (or never was held).
+    """
+    deadline = time.time() + max(0, int(timeout))
+    while True:
+        if not _pkg_mgr_busy(pkg):
+            return True
+        if time.time() >= deadline:
+            return not _pkg_mgr_busy(pkg)
+        time.sleep(interval)
+
+
+def _apt_output_lock_busy(text: str) -> bool:
+    """True when apt/dpkg output is a lock error, not a package list."""
+    t = (text or "").lower()
+    return (
+        "could not get lock" in t
+        or "unable to acquire the dpkg frontend lock" in t
+        or "unable to lock the administration directory" in t
+        or "is another process using it" in t
+        or "could not lock /var/lib/dpkg" in t
+    )
+
+
+def _is_upgradable_line(line: str) -> bool:
+    """True for a real `apt list --upgradable` package row, not an error."""
+    s = (line or "").strip()
+    if not s:
+        return False
+    low = s.lower()
+    if low.startswith("listing"):
+        return False
+    if s.startswith(("E:", "W:", "N:")):
+        return False
+    if _apt_output_lock_busy(s):
+        return False
+    if "upgradable" in low:
+        return True
+    # name/suite version arch [upgradable from: old]
+    if "/" in s and not s.startswith("/") and "[" in s:
+        return True
+    return False
+
+
+def _parse_upgradable(out: str) -> list:
+    return [ln.strip() for ln in (out or "").splitlines() if _is_upgradable_line(ln)]
+
+
+def _apt_list_upgradable():
+    """Return (package_lines, combined_output, lock_busy)."""
+    _rc, out, err = run_cmd_live("apt list --upgradable", sudo_password=None, timeout=60)
+    blob = (out or "") + "\n" + (err or "")
+    remaining = _parse_upgradable(out)
+    busy = _apt_output_lock_busy(blob) or (_rc not in (0, None) and _pkg_mgr_busy("apt"))
+    return remaining, blob, busy
+
+
 def run_cmd_live(cmd, sudo_password=None, timeout=120):
     """Run a command and stream its output line-by-line in real time.
     Returns (returncode, stdout_str, stderr_str)."""
+    timeout = _live_cmd_timeout(cmd, timeout)
     actual_cmd = cmd
     if sudo_password is not None:
         # sudo -S reads the password from stdin (one line)
@@ -6073,6 +6275,7 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
             stderr=subprocess.PIPE,
             env=proc_env,
             bufsize=0,
+            start_new_session=True,
         )
         if sudo_password is not None:
             try:
@@ -6090,15 +6293,24 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
         t_prog = threading.Thread(target=progress.loop, daemon=True)
         t_out.start(); t_err.start(); t_prog.start()
 
+        timed_out = False
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            timed_out = True
+            _kill_cmd_tree(proc)
+            try:
+                proc.wait(timeout=8)
+            except Exception:
+                pass
+            stderr_lines.append(f"Timed out after {timeout}s")
         except KeyboardInterrupt:
-            # Ctrl+C — kill the child process but don't exit TuxGenie
-            proc.kill()
-            proc.wait()
+            # Ctrl+C — kill the child process tree but don't exit TuxGenie
+            _kill_cmd_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
             progress.done.set(); t_prog.join(1)
             t_out.join(2); t_err.join(2)
             _restore_terminal()
@@ -6107,7 +6319,10 @@ def run_cmd_live(cmd, sudo_password=None, timeout=120):
         progress.done.set(); t_prog.join(1)
         t_out.join(5); t_err.join(5)
 
-        return proc.returncode, '\n'.join(stdout_lines), '\n'.join(stderr_lines)
+        rc = proc.returncode
+        if timed_out and (rc is None or rc == 0):
+            rc = -124
+        return rc, '\n'.join(stdout_lines), '\n'.join(stderr_lines)
     except KeyboardInterrupt:
         progress.done.set()
         _restore_terminal()
@@ -6992,14 +7207,25 @@ def feat_logs(backend, bctx, slog):
 def _classify_apt_upgrade(upgrade_output: str, remaining: list) -> str:
     """Report an apt upgrade honestly. Given the upgrade command's output and the
     packages STILL upgradable afterwards, return one of:
+      'busy'    — dpkg lock held / another apt still running (not a package list)
+      'timeout' — upgrade was stopped because it took too long
       'done'    — nothing left, genuinely fully updated
       'phased'  — held back by Ubuntu's gradual (phased) rollout
       'held'    — kept back (need extra packages added/removed)
       'pending' — still upgradable for some other reason
-    Prevents the misleading 'System fully updated' when updates are still pending."""
-    if not remaining:
-        return "done"
+    Prevents the misleading 'System fully updated' when updates are still pending,
+    and the equally misleading 'N updates still pending' when apt list failed
+    because a killed-too-early upgrade still holds the lock."""
     blob = (upgrade_output or "").lower()
+    rem_list = list(remaining or [])
+    rem_blob = "\n".join(str(x) for x in rem_list).lower()
+    if _apt_output_lock_busy(blob) or _apt_output_lock_busy(rem_blob):
+        return "busy"
+    if "timed out after" in blob:
+        return "timeout"
+    pkgs = [x for x in rem_list if _is_upgradable_line(str(x))]
+    if not pkgs:
+        return "done"
     if "phasing" in blob:
         return "phased"
     if "kept back" in blob:
@@ -7019,10 +7245,19 @@ def feat_updates(backend, bctx, slog):
     except KeyboardInterrupt:
         return
 
+    if _pkg_mgr_busy(pkg):
+        info("Another package operation is still running. Waiting for it to finish…")
+        if not _wait_pkg_mgr(pkg, timeout=120):
+            warn("Couldn't get the package lock. Close Software Updater or wait "
+                 "for apt to finish, then try again.")
+            return
+
     if pkg == 'apt':
-        run_cmd_live("sudo apt-get update -q", sudo_password=sudo_pw)
-        rc, out, _ = run_cmd_live("apt list --upgradable 2>/dev/null | tail -n +2", sudo_password=None)
-        lines = [l for l in out.splitlines() if l.strip()]
+        run_cmd_live("sudo apt-get update -q", sudo_password=sudo_pw, timeout=180)
+        lines, list_blob0, list_busy0 = _apt_list_upgradable()
+        if list_busy0 or _apt_output_lock_busy(list_blob0):
+            warn("apt is busy (another install still holds the lock). Try again in a minute.")
+            return
         if lines:
             print(f"\n  {YELLOW}{BOLD}{len(lines)} update(s) available:{R}")
             for l in lines[:20]: print(f"  {DIM}{l}{R}")
@@ -7031,19 +7266,35 @@ def feat_updates(backend, bctx, slog):
             except (EOFError, KeyboardInterrupt):
                 return
             if ch in ('y', 'yes'):
-                print(f"\n  {CYAN}▶ Installing updates…{R}")
-                _rc, up_out, up_err = run_cmd_live("sudo apt-get upgrade -y", sudo_password=sudo_pw)
-                run_cmd_live("sudo apt-get autoremove -y", sudo_password=sudo_pw)
-                # Be honest about what actually got installed. Ubuntu "phases" some
-                # updates (rolls them out gradually), so they stay listed as
-                # upgradable but apt won't install them yet — don't claim "fully
-                # updated" when packages are still pending.
-                _, rem_out, _ = run_cmd_live("apt list --upgradable 2>/dev/null | tail -n +2",
-                                             sudo_password=None)
-                remaining = [l for l in rem_out.splitlines() if l.strip()]
-                status = _classify_apt_upgrade((up_out or "") + (up_err or ""), remaining)
+                print(f"\n  {CYAN}▶ Installing updates… this can take a while.{R}")
+                _rc, up_out, up_err = run_cmd_live(
+                    "sudo apt-get upgrade -y", sudo_password=sudo_pw, timeout=3600)
+                up_blob = (up_out or "") + "\n" + (up_err or "")
+                # Autoremove needs the lock — never start it on top of a live
+                # (or just-killed) upgrade; that is what produced false "pending".
+                if _rc == 0:
+                    run_cmd_live("sudo apt-get autoremove -y", sudo_password=sudo_pw,
+                                 timeout=300)
+                elif _pkg_mgr_busy("apt") or _apt_output_lock_busy(up_blob):
+                    info("Waiting for apt to release the package lock…")
+                    _wait_pkg_mgr("apt", timeout=90)
+
+                remaining, list_blob, list_busy = _apt_list_upgradable()
+                status = _classify_apt_upgrade(up_blob + "\n" + list_blob, remaining)
+                if list_busy:
+                    status = "busy"
                 if status == "done":
                     ok("System fully updated.")
+                elif status == "busy":
+                    warn("apt is still running or the package lock is held. "
+                         "This is not a failed update — wait a minute and run [12] again.")
+                elif status == "timeout":
+                    extra = (f" {len(remaining)} package(s) still listed as upgradable."
+                             if remaining else "")
+                    warn("The upgrade was still running when the time limit was reached "
+                         "and had to be stopped." + extra)
+                    print(f"  {DIM}Large upgrades can take a long time; nothing was marked failed.{R}")
+                    print(f"  {DIM}Run [12] Check for Updates again; apt will continue.{R}")
                 elif status == "phased":
                     warn(f"{len(remaining)} update(s) are being rolled out gradually by "
                          f"Ubuntu (\"phased updates\") and are held back for now.")
@@ -7055,11 +7306,14 @@ def feat_updates(backend, bctx, slog):
                     except (EOFError, KeyboardInterrupt):
                         force = "n"
                     if force in ('y', 'yes'):
-                        run_cmd_live("sudo apt-get upgrade -y -o APT::Get::Always-Include-Phased-Updates=true",
-                                     sudo_password=sudo_pw)
-                        _, rem2, _ = run_cmd_live("apt list --upgradable 2>/dev/null | tail -n +2",
-                                                  sudo_password=None)
-                        if not [l for l in rem2.splitlines() if l.strip()]:
+                        run_cmd_live(
+                            "sudo apt-get upgrade -y "
+                            "-o APT::Get::Always-Include-Phased-Updates=true",
+                            sudo_password=sudo_pw, timeout=3600)
+                        rem2, _, busy2 = _apt_list_upgradable()
+                        if busy2:
+                            warn("apt is still busy — check again in a minute.")
+                        elif not rem2:
                             ok("System fully updated (including phased updates).")
                         else:
                             warn("A few updates still couldn't be applied — they may depend on held packages.")
@@ -7073,11 +7327,14 @@ def feat_updates(backend, bctx, slog):
                     except (EOFError, KeyboardInterrupt):
                         full = "n"
                     if full in ('y', 'yes'):
-                        run_cmd_live("sudo apt-get full-upgrade -y", sudo_password=sudo_pw)
-                        _, rem3, _ = run_cmd_live("apt list --upgradable 2>/dev/null | tail -n +2",
-                                                  sudo_password=None)
-                        ok("System fully updated." if not [l for l in rem3.splitlines() if l.strip()]
-                           else "Most updates applied; a few remain.")
+                        run_cmd_live("sudo apt-get full-upgrade -y", sudo_password=sudo_pw,
+                                     timeout=3600)
+                        rem3, _, busy3 = _apt_list_upgradable()
+                        if busy3:
+                            warn("apt is still busy — check again in a minute.")
+                        else:
+                            ok("System fully updated." if not rem3
+                               else "Most updates applied; a few remain.")
                     else:
                         ok("Done. Some updates remain — you can run this again later.")
                 else:
@@ -7086,17 +7343,31 @@ def feat_updates(backend, bctx, slog):
         else:
             ok("System is up to date.")
     elif pkg in ('dnf', 'yum'):
-        run_cmd_live(f"sudo {pkg} check-update", sudo_password=sudo_pw)
+        run_cmd_live(f"sudo {pkg} check-update", sudo_password=sudo_pw, timeout=180)
         try:
             ch = input(f"\n  {BOLD}Install all updates? [y/n]:{R} ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             return
         if ch in ('y', 'yes'):
-            run_cmd_live(f"sudo {pkg} upgrade -y", sudo_password=sudo_pw)
-            ok("System updated.")
+            rc, _, err = run_cmd_live(f"sudo {pkg} upgrade -y", sudo_password=sudo_pw,
+                                      timeout=3600)
+            if rc == 0:
+                ok("System updated.")
+            elif "timed out after" in (err or "").lower() or rc in (-9, -15, -124):
+                warn("The upgrade was still running when the time limit was reached. "
+                     "Run this again in a few minutes — it will continue.")
+            else:
+                warn(f"Upgrade finished with code {rc}. Review the output above.")
     elif pkg == 'pacman':
-        run_cmd_live("sudo pacman -Syu --noconfirm", sudo_password=sudo_pw)
-        ok("System updated.")
+        rc, _, err = run_cmd_live("sudo pacman -Syu --noconfirm", sudo_password=sudo_pw,
+                                  timeout=3600)
+        if rc == 0:
+            ok("System updated.")
+        elif "timed out after" in (err or "").lower() or rc in (-9, -15, -124):
+            warn("The upgrade was still running when the time limit was reached. "
+                 "Run this again in a few minutes — it will continue.")
+        else:
+            warn(f"Upgrade finished with code {rc}. Review the output above.")
     else:
         # Fallback for unknown package managers — let AI handle
         with Spinner("Checking for updates…"):

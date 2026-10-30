@@ -1640,7 +1640,8 @@ class TestOsUpgradeHonesty:
 
 class TestUpdateHonesty:
     """[12] Check for Updates must not claim 'fully updated' when Ubuntu has
-    phased/held some packages back."""
+    phased/held some packages back, and must not treat a dpkg lock / timeout
+    as either 'done' or 'N updates still pending'."""
 
     def test_phased_updates_not_reported_as_done(self):
         out = ("Calculating upgrade...\n"
@@ -1660,6 +1661,68 @@ class TestUpdateHonesty:
 
     def test_other_remaining_is_pending(self):
         assert tg._classify_apt_upgrade("some output", ["foo/... [upgradable ...]"]) == "pending"
+
+    def test_lock_error_remaining_is_busy_not_pending(self):
+        remaining = [
+            "E: Could not get lock /var/lib/dpkg/lock-frontend. "
+            "It is held by process 12345 (apt-get)",
+            "E: Unable to acquire the dpkg frontend lock "
+            "(/var/lib/dpkg/lock-frontend), is another process using it?",
+        ]
+        assert tg._classify_apt_upgrade("", remaining) == "busy"
+        assert tg._classify_apt_upgrade(
+            "E: Could not get lock /var/lib/apt/lists/lock", []) == "busy"
+
+    def test_timeout_with_empty_remaining_is_not_done(self):
+        assert tg._classify_apt_upgrade("Timed out after 120s", []) == "timeout"
+        remaining = ["code/stable 1.2 amd64 [upgradable from: 1.1]"]
+        assert tg._classify_apt_upgrade("Timed out after 3600s", remaining) == "timeout"
+
+    def test_parse_upgradable_ignores_lock_noise(self):
+        out = (
+            "Listing...\n"
+            "E: Could not get lock /var/lib/dpkg/lock-frontend. "
+            "It is held by process 1 (apt-get)\n"
+            "code/stable 1.96.0 amd64 [upgradable from: 1.95.0]\n"
+        )
+        assert tg._parse_upgradable(out) == [
+            "code/stable 1.96.0 amd64 [upgradable from: 1.95.0]"]
+        assert tg._parse_upgradable(
+            "E: Unable to acquire the dpkg frontend lock, is another process using it?"
+        ) == []
+
+    def test_upgrade_commands_get_an_hour(self):
+        assert tg._live_cmd_timeout("sudo apt-get upgrade -y", 120) == 3600
+        assert tg._live_cmd_timeout("sudo apt-get full-upgrade -y", 300) == 3600
+        assert tg._live_cmd_timeout("sudo dnf upgrade -y", 120) == 3600
+        assert tg._live_cmd_timeout("sudo pacman -Syu --noconfirm", 120) == 3600
+        assert tg._live_cmd_timeout("sudo apt-get dist-upgrade -y", 7200) == 7200
+        assert tg._live_cmd_timeout("ls /tmp", 120) == 120
+        assert tg._live_cmd_timeout("sudo -v", 30) == 30
+        assert tg._is_heavy_pkg_cmd("sudo apt-get update -q && sudo apt-get upgrade -y")
+
+    def test_kill_cmd_tree_stops_shell_and_child(self):
+        import subprocess
+        import time
+        proc = subprocess.Popen(
+            "sleep 60",
+            shell=True,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            time.sleep(0.2)
+            assert proc.poll() is None
+            tg._kill_cmd_tree(proc)
+            proc.wait(timeout=8)
+            assert proc.poll() is not None
+        finally:
+            if proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, 9)
+                except OSError:
+                    proc.kill()
 
 
 class TestScopeExplosionGuard:
