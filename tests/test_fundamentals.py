@@ -344,9 +344,11 @@ class TestCatalogFundamentals:
             {"name": "Aspera Connect"}, {"pkg_mgr": "apt"})
         assert root is True
         assert "AsperaConnect-Phone-Play.aab" in cmd
-        assert "ramchandragada/asperaconnect" in cmd
+        assert "ramchandragada/AsperaConnect" in cmd
         assert "AsperaConnect-Desktop.deb" in cmd
         assert "aspera-connect.deb" in cmd
+        # Must not depend only on a dead lowercase /releases API with no fallbacks.
+        assert "releases/latest" in cmd
 
     def test_ventoy_installs_without_ai(self, monkeypatch):
         # Ventoy is a portable tarball tool — it now installs deterministically by
@@ -964,6 +966,32 @@ class TestCrisisPlaybookFundamentals:
             seen.clear()
             assert tg.try_passthrough(phrase, [], backend=None, bctx={"pkg_mgr": "apt"}) is True
             assert seen == [kind], (phrase, seen)
+
+    def test_dns_and_wrong_clock_route_without_ai(self, monkeypatch):
+        net = []
+        clock = []
+        monkeypatch.setattr(tg, "feat_network",
+                            lambda *a, **k: net.append(1))
+        monkeypatch.setattr(tg, "feat_time_sync",
+                            lambda *a, **k: clock.append(1))
+        monkeypatch.setattr(tg, "_run_crisis_playbook",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("crisis")))
+        assert tg._looks_like_dns_crisis("can't resolve hostnames")
+        assert tg._looks_like_time_sync("my clock is wrong")
+        # Dual-boot clock phrases stay on dual-boot, not plain NTP.
+        assert not tg._looks_like_time_sync("wrong time after windows")
+        assert tg.try_passthrough("dns not working", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert net == [1]
+        assert tg.try_passthrough("clock is wrong", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert clock == [1]
+
+    def test_plex_uses_current_repo_not_retired_mirror(self):
+        spec = tg._CATALOG_INSTALL["Plex Media Server"]["deb"]
+        assert "repo.plex.tv" in spec["repo"]
+        assert "PlexSign.v2.key" in spec["key"]
+        assert "downloads.plex.tv/repo/deb" not in spec["repo"]
 
     def test_menu_crisis_entries_wired(self):
         assert next(r for r in tg.MENU_ITEMS if r[0] == "3")[4] is tg.feat_network

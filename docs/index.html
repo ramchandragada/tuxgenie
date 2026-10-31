@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. Say “my PC is slow” for one-tap speed fixes. Free AI (Gemini · Groq · SambaNova · OpenRouter), 43 tools, app &amp; AI catalogs. Free forever.">
+<meta name="description" content="TuxGenie — AI-powered Linux assistant. Fix any Linux problem in plain English. Say “my PC is slow” for one-tap speed fixes. Free AI (Gemini · Groq · Z.ai · SambaNova · OpenRouter), 40+ tools, app &amp; AI catalogs. Free forever.">
 <meta name="author" content="Aspera Technologies">
 <meta property="og:title" content="TuxGenie — AI-Powered Linux Assistant">
-<meta property="og:description" content="Fix Linux in plain English. Free AI options (Gemini · Groq · SambaNova · OpenRouter) or Claude. One-tap Slow-PC repair, reliable catalogs, verified auto-updates. Free forever.">
+<meta property="og:description" content="Fix Linux in plain English. Free AI options (Gemini · Groq · Z.ai · SambaNova · OpenRouter) or Claude. One-tap Slow-PC repair, reliable catalogs, verified auto-updates. Free forever.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://tuxgenie.com/">
 <meta property="og:image" content="https://opengraph.githubassets.com/1/ramchandragada/tuxgenie">
@@ -14,7 +14,7 @@
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="TuxGenie — AI-Powered Linux Assistant">
-<meta name="twitter:description" content="Fix Linux in plain English. Free AI, one-tap Slow-PC repair, 43 tools, app &amp; AI catalogs. Free forever.">
+<meta name="twitter:description" content="Fix Linux in plain English. Free AI, one-tap Slow-PC repair, 40+ tools, app &amp; AI catalogs. Free forever.">
 <meta name="twitter:image" content="https://opengraph.githubassets.com/1/ramchandragada/tuxgenie">
 <meta name="theme-color" content="#f8f7ff">
 <link rel="icon" type="image/svg+xml" href="tuxgenie.svg">
@@ -98,6 +98,10 @@ img{max-width:100%}
 .distros-grid{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
 .dlogo{display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 12px;border-radius:var(--r);border:1px solid transparent;min-width:96px;transition:all .2s}
 .dlogo:hover{background:#f5f4ff;border-color:var(--border)}
+/* Brand-colored icons via CSS mask — cdn.simpleicons.org returns 403 to many clients. */
+.dlogo .dico{width:36px;height:36px;display:block;background:var(--c,#64748b);opacity:.9;transition:opacity .2s;
+  -webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
+.dlogo:hover .dico{opacity:1}
 .dlogo img{width:36px;height:36px;object-fit:contain;opacity:.85;transition:opacity .2s}
 .dlogo:hover img{opacity:1}
 .dlogo span{font-size:11px;font-weight:600;color:var(--t2)}
@@ -298,7 +302,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
   "description": "AI-powered Linux assistant. Fix any Linux problem in plain English. One-tap Slow-PC repair, free AI providers, app catalog, AI tools installer, cross-session memory.",
   "url": "https://tuxgenie.com/",
   "downloadUrl": "https://github.com/ramchandragada/tuxgenie/releases/latest",
-  "softwareVersion": "7.17.0",
+  "softwareVersion": "7.18.0",
   "author": {
     "@type": "Organization",
     "name": "Aspera Technologies",
@@ -324,7 +328,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     <a href="#top" class="nav-logo" aria-label="TuxGenie home">
       <img src="tuxgenie.svg" alt="TuxGenie" width="30" height="30" style="display:block;border-radius:7px">
       <span style="font-family:var(--fd);font-size:18px;font-weight:800" class="grad">TuxGenie</span>
-      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v7.17.0</span>
+      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">v7.18.0</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
@@ -355,13 +359,13 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
   <div class="container">
     <div class="hero-grid">
       <div>
-        <span class="hero-tag">✨ Free · Open Source · MIT · Gemini · Groq · SambaNova · OpenRouter · Claude</span>
+        <span class="hero-tag">✨ Free · Open Source · MIT · Gemini · Groq · Z.ai · SambaNova · OpenRouter · Claude</span>
         <h1 class="hero-h1" aria-label="Linux, made effortlessly simple.">Linux,<br> made <span class="grad">effortlessly</span><br> simple.</h1>
         <p class="hero-sub">TuxGenie is an AI-powered Linux assistant. Describe what you need in plain English — it diagnoses, fixes, installs, and configures your system for you. Try <em>“my PC is slow”</em> for safe one-tap speed fixes. No experience required.</p>
         <div class="api-note">
           <span style="font-size:16px;flex-shrink:0;line-height:1.3">🆓</span>
           <div style="font-size:13px;line-height:1.6">
-            <strong>Free to run — no credit card.</strong> Use <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a>, <a href="https://cloud.sambanova.ai/apis" target="_blank" rel="noopener">SambaNova</a> or <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a> (all free), or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> for best quality (~$0.01/session). Pick on first launch.
+            <strong>Free to run — no credit card.</strong> Use <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a>, <a href="https://z.ai/manage-apikey/apikey-list" target="_blank" rel="noopener">Z.ai</a>, <a href="https://cloud.sambanova.ai/apis" target="_blank" rel="noopener">SambaNova</a> or <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a> (all free), or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> for best quality (~$0.01/session). Pick on first launch.
           </div>
         </div>
         <div class="hero-ctas">
@@ -424,18 +428,19 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     <!-- Single base set. JS clones it to ≥2× the viewport and shifts by exactly
          one set, so the scroll is seamless at any screen width (no blank gap). -->
     <div class="mq-track" id="mq-track">
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/ubuntu/E95420" alt="Ubuntu" loading="lazy"><span>Ubuntu</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/debian/A81D33" alt="Debian" loading="lazy"><span>Debian</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/fedora/51A2DA" alt="Fedora" loading="lazy"><span>Fedora</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/archlinux/1793D1" alt="Arch" loading="lazy"><span>Arch</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/linuxmint/87CF3E" alt="Mint" loading="lazy"><span>Mint</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/popos/48B9C7" alt="Pop!_OS" loading="lazy"><span>Pop!_OS</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/manjaro/35BF5C" alt="Manjaro" loading="lazy"><span>Manjaro</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/kalilinux/268BEE" alt="Kali" loading="lazy"><span>Kali</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/opensuse/73BA25" alt="openSUSE" loading="lazy"><span>openSUSE</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/raspberrypi/A22846" alt="Raspberry Pi" loading="lazy"><span>Raspberry Pi</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/centos/262577" alt="CentOS" loading="lazy"><span>CentOS</span></div>
-      <div class="dlogo"><img src="https://cdn.simpleicons.org/rockylinux/10B981" alt="Rocky" loading="lazy"><span>Rocky</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#E95420;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/ubuntu.svg)" role="img" aria-label="Ubuntu"></span><span>Ubuntu</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#A81D33;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/debian.svg)" role="img" aria-label="Debian"></span><span>Debian</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#0CC;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/zorin.svg)" role="img" aria-label="Zorin"></span><span>Zorin</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#51A2DA;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/fedora.svg)" role="img" aria-label="Fedora"></span><span>Fedora</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#1793D1;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/archlinux.svg)" role="img" aria-label="Arch"></span><span>Arch</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#87CF3E;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/linuxmint.svg)" role="img" aria-label="Mint"></span><span>Mint</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#48B9C7;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/popos.svg)" role="img" aria-label="Pop!_OS"></span><span>Pop!_OS</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#35BF5C;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/manjaro.svg)" role="img" aria-label="Manjaro"></span><span>Manjaro</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#268BEE;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/kalilinux.svg)" role="img" aria-label="Kali"></span><span>Kali</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#73BA25;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/opensuse.svg)" role="img" aria-label="openSUSE"></span><span>openSUSE</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#A22846;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/raspberrypi.svg)" role="img" aria-label="Raspberry Pi"></span><span>Raspberry Pi</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#262577;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/centos.svg)" role="img" aria-label="CentOS"></span><span>CentOS</span></div>
+      <div class="dlogo"><span class="dico" style="--c:#10B981;--i:url(https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/rockylinux.svg)" role="img" aria-label="Rocky"></span><span>Rocky</span></div>
     </div>
   </div>
 </section>
@@ -456,7 +461,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       <div class="step step-2 fade">
         <div class="step-num">2</div>
         <h3>Pick your AI — four free options</h3>
-        <p>On first launch, choose a <strong>free</strong> key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Groq</a>, <a href="https://cloud.sambanova.ai/apis" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">SambaNova</a> or <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">OpenRouter</a> (no credit card), or <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Claude</a> for best quality. Change it anytime with <code style="background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-family:var(--fm);font-weight:600">k</code>.</p>
+        <p>On first launch, choose a <strong>free</strong> key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Groq</a>, <a href="https://z.ai/manage-apikey/apikey-list" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Z.ai</a>, <a href="https://cloud.sambanova.ai/apis" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">SambaNova</a> or <a href="https://openrouter.ai/keys" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">OpenRouter</a> (no credit card), or <a href="https://console.anthropic.com" target="_blank" rel="noopener" style="color:var(--green-2);text-decoration:none;font-weight:600">Claude</a> for best quality. Change it anytime with <code style="background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-family:var(--fm);font-weight:600">k</code>.</p>
       </div>
       <div class="step step-3 fade">
         <div class="step-num">3</div>
@@ -691,12 +696,12 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
         <div class="faq-body"><p>Your API key is stored locally in <code>~/.config/tuxgenie/config.json</code> with owner-only permissions (<code>chmod 600</code>) and never leaves your machine. <strong>TuxGenie has no backend and collects zero telemetry</strong> — nothing is sent anywhere unless you run an AI task, and then only your chosen provider (Anthropic or Google) sees it, never us. Your sudo password is held in memory for the session only — never saved, never sent. Full details on our <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a> page.</p></div>
       </div>
       <div class="faq-item">
-        <button class="faq-btn" aria-expanded="false">Which AI should I pick — Gemini, Groq, SambaNova, OpenRouter or Claude? Any privacy difference?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p><strong>They all work great.</strong> You have <strong>four free options</strong> — <strong>Google Gemini</strong>, <strong>Groq</strong>, <strong>SambaNova</strong> and <strong>OpenRouter</strong> (fast Llama models) — all no credit card, perfect for everyday use. Prefer top quality or a confidential machine? Use <strong>Claude</strong> — Anthropic does <strong>not</strong> train on API data. One honest note: free tiers (Gemini, Groq, SambaNova, OpenRouter) may use your prompts to improve their products, so pick Claude for sensitive systems. We tell you this at the point you choose, too. <strong>Bonus:</strong> if you add keys for more than one free provider, TuxGenie can <strong>auto-switch between them</strong> when one hits its rate limit — so you're never stuck (and it never falls back to paid Claude without asking). See <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a>.</p></div>
+        <button class="faq-btn" aria-expanded="false">Which AI should I pick — Gemini, Groq, Z.ai, SambaNova, OpenRouter or Claude? Any privacy difference?<span class="faq-chevron">+</span></button>
+        <div class="faq-body"><p><strong>They all work great.</strong> You have <strong>five free options</strong> — <strong>Google Gemini</strong>, <strong>Groq</strong>, <strong>Z.ai</strong> (GLM Flash), <strong>SambaNova</strong> and <strong>OpenRouter</strong> — all no credit card, perfect for everyday use. Prefer top quality or a confidential machine? Use <strong>Claude</strong> — Anthropic does <strong>not</strong> train on API data. One honest note: some free tiers may use your prompts to improve their products, so pick Claude for sensitive systems. We tell you this at the point you choose, too. <strong>Bonus:</strong> if you add keys for more than one free provider, TuxGenie can <strong>auto-switch between them</strong> when one hits its rate limit — so you're never stuck (and it never falls back to paid Claude without asking). See <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a>.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">What does it actually cost per month?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p><strong>It can be completely free.</strong> Pick a free tier on first launch — <strong>Google Gemini</strong>, <strong>Groq</strong>, <strong>SambaNova</strong> or <strong>OpenRouter</strong> — no credit card, nothing to pay. Prefer top quality? Use Claude and you pay Anthropic only for what it uses — typically <strong>~$0.01 per session</strong> ($5 lasts months). Either way, simple commands (ls, apt, systemctl…) bypass the AI entirely and cost nothing.</p></div>
+        <div class="faq-body"><p><strong>It can be completely free.</strong> Pick a free tier on first launch — <strong>Google Gemini</strong>, <strong>Groq</strong>, <strong>Z.ai</strong>, <strong>SambaNova</strong> or <strong>OpenRouter</strong> — no credit card, nothing to pay. Prefer top quality? Use Claude and you pay Anthropic only for what it uses — typically <strong>~$0.01 per session</strong> ($5 lasts months). Either way, simple commands (ls, apt, systemctl…) bypass the AI entirely and cost nothing.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Can it break my system or run dangerous commands?<span class="faq-chevron">+</span></button>
@@ -704,7 +709,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Does it work offline?<span class="faq-chevron">+</span></button>
-        <div class="faq-body"><p>Common commands (apt, systemctl, ls, grep, etc.) run offline instantly — TuxGenie only calls the AI for complex diagnostics and fixes. So basic usage works without internet. Full AI-powered fixes need a connection to reach your chosen AI provider (Gemini, Groq, SambaNova, OpenRouter or Claude).</p></div>
+        <div class="faq-body"><p>Common commands (apt, systemctl, ls, grep, etc.) run offline instantly — TuxGenie only calls the AI for complex diagnostics and fixes. So basic usage works without internet. Full AI-powered fixes need a connection to reach your chosen AI provider (Gemini, Groq, Z.ai, SambaNova, OpenRouter or Claude). Local <strong>Ollama</strong> works fully offline.</p></div>
       </div>
       <div class="faq-item">
         <button class="faq-btn" aria-expanded="false">Which Linux distributions are supported?<span class="faq-chevron">+</span></button>
@@ -750,8 +755,9 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       <span style="font-size:18px;flex-shrink:0;line-height:1.3">💡</span>
       <div style="font-size:14px;color:var(--t2);line-height:1.7">
         <strong style="color:var(--t1)">TuxGenie is free and open source.</strong> On first run, pick your AI —
-        four free options: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>,
+        five free options: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>,
         <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a>,
+        <a href="https://z.ai/manage-apikey/apikey-list" target="_blank" rel="noopener">Z.ai</a>,
         <a href="https://cloud.sambanova.ai/apis" target="_blank" rel="noopener">SambaNova</a> or
         <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a> (all free, no credit card), or
         <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> (best quality, ~$0.01/session).
@@ -779,7 +785,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       </div>
     </div>
     <div class="trust-grid">
-      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>At first run, pick a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a>, <a href="https://cloud.sambanova.ai/apis" target="_blank" rel="noopener">SambaNova</a> or <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a>, or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> (~$0.01/session — $5 lasts months). Paste the key and you're done.</p></div>
+      <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔑</div><h4 style="color:#4338ca">One-Time Setup</h4><p>At first run, pick a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google Gemini</a>, <a href="https://console.groq.com/keys" target="_blank" rel="noopener">Groq</a>, <a href="https://z.ai/manage-apikey/apikey-list" target="_blank" rel="noopener">Z.ai</a>, <a href="https://cloud.sambanova.ai/apis" target="_blank" rel="noopener">SambaNova</a> or <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a>, or <a href="https://console.anthropic.com" target="_blank" rel="noopener">Claude</a> (~$0.01/session — $5 lasts months). Paste the key and you're done.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">⚡</div><h4 style="color:#b45309">Smart &amp; Fast</h4><p>Common commands bypass AI entirely. On Claude, smart routing picks the cheapest model that fits — Haiku first, escalating to Sonnet only when a task needs it.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔒</div><h4 style="color:#7e22ce">Privacy First</h4><p>No backend. No telemetry. No accounts. Your data goes directly from your machine to the AI provider you chose — never to us. Read the whole thing: it's one file. See our <a href="https://github.com/ramchandragada/tuxgenie/blob/main/PRIVACY.md" target="_blank" rel="noopener">Privacy &amp; Transparency</a> page.</p></div>
       <div class="tcard fade"><div style="font-size:22px;margin-bottom:10px">🔄</div><h4 style="color:#4338ca">Verified Auto-Updates</h4><p>New versions verify a <strong>SHA-256 checksum</strong> before installing. Downloads retry with curl/wget if needed, and the updater picks <code>.deb</code> or pip to match how you installed. A corrupted download is refused — never installed as root.</p></div>
@@ -791,7 +797,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
       <span class="badge">🐍 Python 3.8+</span>
       <span class="badge badge-green">✓ No telemetry</span>
       <span class="badge">🐧 Any Linux distro</span>
-      <span class="badge badge-green">✓ v7.17.0</span>
+      <span class="badge badge-green">✓ v7.18.0</span>
       <span class="badge">⭐ <span class="gh-stars">…</span> GitHub stars</span>
     </div>
   </div>
@@ -832,7 +838,7 @@ code,.mono,pre{overflow-wrap:anywhere;word-break:break-word}
     </div>
     <div class="foot-divider"></div>
     <div class="foot-bottom">
-      <span>© 2026 Aspera Technologies · TuxGenie v7.17.0 · MIT License</span>
+      <span>© 2026 Aspera Technologies · TuxGenie v7.18.0 · MIT License</span>
       <span><a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">⭐ <span class="gh-stars">…</span> stars on GitHub</a></span>
     </div>
   </div>
@@ -866,19 +872,21 @@ document.addEventListener('click',e=>{const n=document.querySelector('.nav');if(
   let rt; window.addEventListener('resize',()=>{ clearTimeout(rt); rt=setTimeout(fill,200); });
 })();
 
+const _ico=s=>`https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/${s}.svg`;
 const distros=[
-  {id:'ubuntu',name:'Ubuntu',icon:'https://cdn.simpleicons.org/ubuntu/E95420',family:'deb'},
-  {id:'debian',name:'Debian',icon:'https://cdn.simpleicons.org/debian/A81D33',family:'deb'},
-  {id:'mint',name:'Mint',icon:'https://cdn.simpleicons.org/linuxmint/87CF3E',family:'deb'},
-  {id:'popos',name:'Pop!_OS',icon:'https://cdn.simpleicons.org/popos/48B9C7',family:'deb'},
-  {id:'kali',name:'Kali',icon:'https://cdn.simpleicons.org/kalilinux/268BEE',family:'deb'},
-  {id:'rpi',name:'Raspberry Pi',icon:'https://cdn.simpleicons.org/raspberrypi/A22846',family:'deb'},
-  {id:'fedora',name:'Fedora',icon:'https://cdn.simpleicons.org/fedora/51A2DA',family:'rpm'},
-  {id:'centos',name:'CentOS',icon:'https://cdn.simpleicons.org/centos/262577',family:'rpm'},
-  {id:'rocky',name:'Rocky',icon:'https://cdn.simpleicons.org/rockylinux/10B981',family:'rpm'},
-  {id:'arch',name:'Arch',icon:'https://cdn.simpleicons.org/archlinux/1793D1',family:'arch'},
-  {id:'manjaro',name:'Manjaro',icon:'https://cdn.simpleicons.org/manjaro/35BF5C',family:'arch'},
-  {id:'opensuse',name:'openSUSE',icon:'https://cdn.simpleicons.org/opensuse/73BA25',family:'suse'}
+  {id:'ubuntu',name:'Ubuntu',icon:_ico('ubuntu'),family:'deb'},
+  {id:'debian',name:'Debian',icon:_ico('debian'),family:'deb'},
+  {id:'zorin',name:'Zorin',icon:_ico('zorin'),family:'deb'},
+  {id:'mint',name:'Mint',icon:_ico('linuxmint'),family:'deb'},
+  {id:'popos',name:'Pop!_OS',icon:_ico('popos'),family:'deb'},
+  {id:'kali',name:'Kali',icon:_ico('kalilinux'),family:'deb'},
+  {id:'rpi',name:'Raspberry Pi',icon:_ico('raspberrypi'),family:'deb'},
+  {id:'fedora',name:'Fedora',icon:_ico('fedora'),family:'rpm'},
+  {id:'centos',name:'CentOS',icon:_ico('centos'),family:'rpm'},
+  {id:'rocky',name:'Rocky',icon:_ico('rockylinux'),family:'rpm'},
+  {id:'arch',name:'Arch',icon:_ico('archlinux'),family:'arch'},
+  {id:'manjaro',name:'Manjaro',icon:_ico('manjaro'),family:'arch'},
+  {id:'opensuse',name:'openSUSE',icon:_ico('opensuse'),family:'suse'}
 ];
 const curlCmd='curl -fsSL https://tuxgenie.com/install.sh | bash';
 const debManual='wget $(curl -s https://api.github.com/repos/ramchandragada/tuxgenie/releases/latest \\\n  | grep "browser_download_url.*\\.deb" | cut -d\'"\' -f4)\nsudo dpkg -i tuxgenie_*.deb';
@@ -942,7 +950,7 @@ function copyCmd(btn,txt){
 // Terminal animation
 const lines=[
   {t:'p',v:'tuxgenie'},
-  {t:'o',v:'🐧 TuxGenie v7.17.0 — Your Linux AI assistant',c:'#a5b4fc'},
+  {t:'o',v:'🐧 TuxGenie v7.18.0 — Your Linux AI assistant',c:'#a5b4fc'},
   {t:'b'},
   {t:'i',v:'my wifi is not working'},
   {t:'o',v:'  🔍 Scanning network interfaces...',c:'#93c5fd'},

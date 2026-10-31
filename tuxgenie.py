@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.17.0"
+__version__ = "7.18.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -5070,6 +5070,22 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
                 warn(f"{_label} playbook hit a snag ({e}) — asking the AI instead.")
                 return False
             return True
+
+    # DNS / wrong clock — everyday failures that must not burn AI tokens first.
+    if _looks_like_dns_crisis(cmd):
+        try:
+            feat_network(backend, _ctx, session_log)
+        except Exception as e:
+            warn(f"DNS/network playbook hit a snag ({e}) — asking the AI instead.")
+            return False
+        return True
+    if _looks_like_time_sync(cmd):
+        try:
+            feat_time_sync(backend, _ctx, session_log)
+        except Exception as e:
+            warn(f"Clock sync hit a snag ({e}) — asking the AI instead.")
+            return False
+        return True
 
     # Known menu playbooks — natural language should not burn AI tokens.
     for _rx, _label, _fn in (
@@ -11182,6 +11198,28 @@ _DUALBOOT_RE = re.compile(
     r")\s*[.!?]?\s*$"
 )
 
+# Everyday DNS / hostname failures — route to the network playbook, not AI first.
+_DNS_CRISIS_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"(?:dns|hostname|name\s+resolution).{0,40}(?:not\s+)?(?:working|failing|failed|broken)"
+    r"|can'?t\s+resolve(?:\s+(?:hostnames?|domains?|dns))?"
+    r"|temporary\s+failure\s+in\s+name\s+resolution"
+    r"|wrong\s+dns"
+    r"|dns\s+(?:server|servers?)\s+(?:not\s+)?(?:working|responding)"
+    r")\s*[.!?]?\s*$"
+)
+
+# Wrong clock without dual-boot context — enable NTP (most common Linux fix).
+_TIME_SYNC_RE = re.compile(
+    r"(?is)^\s*(?:"
+    r"(?:my\s+)?(?:clock|time|system\s+time)\s+(?:is\s+)?(?:wrong|incorrect|off|skewed|slow|fast)"
+    r"|(?:wrong|incorrect)\s+(?:clock|time|system\s+time)"
+    r"|fix\s+(?:the\s+)?(?:clock|time)"
+    r"|enable\s+ntp"
+    r"|sync(?:hronize)?\s+(?:the\s+)?(?:clock|time)"
+    r")\s*[.!?]?\s*$"
+)
+
 
 def _looks_like_wifi_crisis(text: str) -> bool:
     return bool(_WIFI_CRISIS_RE.match((text or "").strip()))
@@ -11201,6 +11239,60 @@ def _looks_like_bad_update_crisis(text: str) -> bool:
 
 def _looks_like_dualboot_crisis(text: str) -> bool:
     return bool(_DUALBOOT_RE.match((text or "").strip()))
+
+
+def _looks_like_dns_crisis(text: str) -> bool:
+    return bool(_DNS_CRISIS_RE.match((text or "").strip()))
+
+
+def _looks_like_time_sync(text: str) -> bool:
+    # Dual-boot clock phrases stay on the dual-boot playbook (RTC skew).
+    if _looks_like_dualboot_crisis(text):
+        return False
+    return bool(_TIME_SYNC_RE.match((text or "").strip()))
+
+
+def feat_time_sync(backend, bctx, slog):
+    """Fix a wrong system clock via NTP — no AI needed for the common case."""
+    hdr("System Clock — Sync time with the internet")
+    print(f"\n  {DIM}Most “wrong time” issues are fixed by turning NTP back on.{R}")
+    plan = [
+        ("Show current clock / NTP status",
+         "timedatectl status 2>/dev/null || timedatectl",
+         "safe",
+         "See whether NTP is active and what time the system thinks it is."),
+        ("Enable network time sync (NTP)",
+         "sudo timedatectl set-ntp true",
+         "safe",
+         "Asks systemd-timesyncd (or chrony) to keep the clock correct automatically."),
+        ("Confirm clock after sync",
+         "timedatectl status 2>/dev/null || timedatectl; date",
+         "safe",
+         "Verify NTP is active and the local time looks right."),
+    ]
+    applied, aborted = _apply_approved_plan(plan, slog, source="time-sync")
+    if aborted:
+        info("Stopped.")
+        return
+    # Dual-boot machines often need local RTC — offer only when Windows is present.
+    has_win = False
+    try:
+        _, out, _ = run_cmd(
+            "ls /boot/efi/EFI 2>/dev/null | tr '[:upper:]' '[:lower:]'; "
+            "grep -Eiq 'microsoft|windows' && echo yes || true",
+            timeout=5,
+        )
+        has_win = "yes" in (out or "").lower()
+    except Exception:
+        has_win = False
+    if has_win:
+        info("Windows was detected. If the clock drifts again after rebooting into Windows, "
+             "run menu 20 → Dual-boot / wrong clock (sets local RTC).")
+    if applied:
+        ok("Clock sync steps finished. If the time is still wrong, say "
+           "“dual-boot wrong clock” or check your timezone with timedatectl.")
+    else:
+        info("No changes applied. You can run this again, or describe the dual-boot case.")
 
 
 def _crisis_collect(probes: list) -> dict:
@@ -12139,7 +12231,7 @@ APP_CATALOG = [
     {"id": 136,"name": "Evolution",           "cat": "Office & Notes", "prompt": "Install GNOME Evolution, a full email + calendar + contacts client with Exchange support. Prefer apt (evolution, plus evolution-ews for Exchange) or flatpak from Flathub: org.gnome.Evolution.", "desc": "Email, calendar & contacts (Exchange-capable)"},
 
     {"id": 137,"name": "Kodi",                "cat": "Media",          "prompt": "Install Kodi, the home-theatre media center, via flatpak from Flathub: tv.kodi.Kodi (or apt: kodi).", "desc": "Home-theatre media center"},
-    {"id": 138,"name": "Plex Media Server",   "cat": "Media",          "prompt": "Install Plex Media Server to stream a home media library. Add Plex's official apt repository (downloads.plex.tv) and install plexmediaserver, or download the .deb from plex.tv/media-server-downloads. Then tell the user to open http://localhost:32400/web to set it up.", "desc": "Stream your media library to any device"},
+    {"id": 138,"name": "Plex Media Server",   "cat": "Media",          "prompt": "Install Plex Media Server to stream a home media library. Add Plex's current official apt repository (https://repo.plex.tv/deb/ with PlexSign.v2.key — not the retired downloads.plex.tv/repo/deb) and install plexmediaserver, or download the .deb from plex.tv/media-server-downloads. Then tell the user to open http://localhost:32400/web to set it up.", "desc": "Stream your media library to any device"},
     {"id": 139,"name": "FreeTube",            "cat": "Media",          "prompt": "Install FreeTube, a private YouTube desktop client (no ads/tracking), via flatpak from Flathub: io.freetubeapp.FreeTube (or the official AppImage/.deb from freetubeapp.io).", "desc": "Private, ad-free YouTube client"},
     {"id": 140,"name": "Rhythmbox",           "cat": "Media",          "prompt": "Install Rhythmbox, the classic GNOME music player and library manager. Prefer apt (rhythmbox) or flatpak from Flathub: org.gnome.Rhythmbox3.", "desc": "Classic music player & library"},
 
@@ -12246,7 +12338,7 @@ APP_CATALOG = [
     {"id": 231,"name": "Caffeine",            "cat": "Utilities",      "prompt": "Install Caffeine so the screen does not sleep during videos or presentations. On Ubuntu/Debian prefer apt: caffeine (or gnome-shell-extension-caffeine on GNOME).", "desc": "Keep the screen awake"},
     {"id": 232,"name": "Google Earth Pro",    "cat": "Utilities",      "prompt": "Install Google Earth Pro via flatpak from Flathub: com.google.EarthPro.", "desc": "Satellite maps and globe (Google)"},
     {"id": 233,"name": "FFmpeg",              "cat": "AV Creation",    "prompt": "Install FFmpeg, the command-line Swiss-army knife for convert/record/stream audio and video, via apt (ffmpeg) on Debian/Ubuntu.", "desc": "Convert and record audio/video (CLI)"},
-    {"id": 234,"name": "Aspera Connect",      "cat": "Communication",  "prompt": "Install Aspera Connect, the free Linux + Android companion that mirrors and controls your phone (USB/wireless, click-to-call, files). Download AsperaConnect-Desktop.deb from https://github.com/ramchandragada/asperaconnect (prefer GitHub Releases .deb, else dist/release/AsperaConnect-Desktop.deb) and install with apt, plus adb and scrcpy. Also save AsperaConnect-Phone-Play.aab to ~/Downloads for the phone/Play companion. Distinct from Aspera Hub already in the catalog.", "desc": "Mirror & control your Android phone from Linux (by Aspera)"},
+    {"id": 234,"name": "Aspera Connect",      "cat": "Communication",  "prompt": "Install Aspera Connect, the free Linux + Android companion that mirrors and controls your phone (USB/wireless, click-to-call, files). Download AsperaConnect-Desktop.deb from https://github.com/ramchandragada/AsperaConnect (prefer GitHub Releases .deb, else dist/release/AsperaConnect-Desktop.deb) and install with apt, plus adb and scrcpy. Also save AsperaConnect-Phone-Play.aab to ~/Downloads for the phone/Play companion. Distinct from Aspera Hub already in the catalog.", "desc": "Mirror & control your Android phone from Linux (by Aspera)"},
 
 ]
 
@@ -12371,17 +12463,28 @@ _CATALOG_INSTALL = {
                                     "[ -n \"$url\" ]; curl -fL -o /tmp/aspera-hub.deb \"$url\"; "
                                     "sudo apt-get install -y /tmp/aspera-hub.deb",
                          "script_root": True},
+    # Prefer GitHub Releases; if none exist yet, try known release-branch artifacts
+    # (repo name is AsperaConnect — API is case-sensitive for /releases).
     "Aspera Connect":   {"script": "set -e; "
+                                    "REPO=ramchandragada/AsperaConnect; "
                                     "mkdir -p \"$HOME/Downloads\"; "
-                                    "curl -fL --http1.1 -o \"$HOME/Downloads/AsperaConnect-Phone-Play.aab\" "
-                                    "\"https://github.com/ramchandragada/asperaconnect/raw/cursor/phone-contacts-sync-5b4f/dist/release/AsperaConnect-Phone-Play.aab\" "
-                                    "|| true; "
+                                    "for aab in "
+                                    "\"https://github.com/$REPO/releases/latest/download/AsperaConnect-Phone-Play.aab\" "
+                                    "\"https://github.com/$REPO/raw/main/dist/release/AsperaConnect-Phone-Play.aab\" "
+                                    "\"https://github.com/$REPO/raw/cursor/phone-contacts-sync-5b4f/dist/release/AsperaConnect-Phone-Play.aab\"; "
+                                    "do curl -fL --http1.1 -o \"$HOME/Downloads/AsperaConnect-Phone-Play.aab\" \"$aab\" && break || true; "
+                                    "done; "
                                     "url=$(curl -fsSL "
-                                    "https://api.github.com/repos/ramchandragada/asperaconnect/releases/latest "
-                                    "| grep -oE 'https://[^\"[:space:]]+\\.deb' | head -1 || true); "
+                                    "\"https://api.github.com/repos/$REPO/releases/latest\" "
+                                    "| grep -oE 'https://[^\"[:space:]]+AsperaConnect[^\"[:space:]]*\\.deb' | head -1 || true); "
                                     "if [ -z \"$url\" ]; then "
-                                    "url=\"https://github.com/ramchandragada/asperaconnect/raw/cursor/phone-contacts-sync-5b4f/dist/release/AsperaConnect-Desktop.deb\"; "
+                                    "for cand in "
+                                    "\"https://github.com/$REPO/raw/main/dist/release/AsperaConnect-Desktop.deb\" "
+                                    "\"https://github.com/$REPO/raw/cursor/phone-contacts-sync-5b4f/dist/release/AsperaConnect-Desktop.deb\"; "
+                                    "do if curl -fI --http1.1 \"$cand\" >/dev/null 2>&1; then url=$cand; break; fi; "
+                                    "done; "
                                     "fi; "
+                                    "[ -n \"$url\" ]; "
                                     "curl -fL --http1.1 -o /tmp/aspera-connect.deb \"$url\"; "
                                     "sudo apt-get install -y adb scrcpy || true; "
                                     "sudo apt-get install -y /tmp/aspera-connect.deb",
@@ -12413,8 +12516,10 @@ _CATALOG_INSTALL = {
     "Jellyfin Media Player": {"flatpak": "com.github.iwalton3.jellyfin-media-player"},
     "Strawberry":       {"pkg": "strawberry", "flatpak": "org.strawberrymusicplayer.strawberry"},
     "Kodi":             {"pkg": "kodi", "flatpak": "tv.kodi.Kodi"},
-    "Plex Media Server": {"deb": {"name": "plexmediaserver", "key": "https://downloads.plex.tv/plex-keys/PlexSign.key",
-                                  "repo": "https://downloads.plex.tv/repo/deb public main",
+    # Plex migrated off downloads.plex.tv/repo/deb (404) to repo.plex.tv + v2 key.
+    "Plex Media Server": {"deb": {"name": "plexmediaserver",
+                                  "key": "https://downloads.plex.tv/plex-keys/PlexSign.v2.key",
+                                  "repo": "https://repo.plex.tv/deb/ public main",
                                   "pkg": "plexmediaserver"}},
     "FreeTube":         {"flatpak": "io.freetubeapp.FreeTube"},
     "Rhythmbox":        {"pkg": "rhythmbox", "flatpak": "org.gnome.Rhythmbox3"},

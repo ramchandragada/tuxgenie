@@ -102,6 +102,8 @@ just press Enter):
   Get a free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey).
 - **Groq** — **also free, very fast** (Llama models).
   Get a free key at [console.groq.com/keys](https://console.groq.com/keys).
+- **Z.ai** — **free GLM Flash** (`glm-4.7-flash`, no token charge).
+  Get a Standard API Key at [z.ai/manage-apikey](https://z.ai/manage-apikey/apikey-list).
 - **SambaNova** — **also free, no credit card** (Llama models).
   Get a free key at [cloud.sambanova.ai/apis](https://cloud.sambanova.ai/apis).
 - **OpenRouter** — **also free, no credit card** (one key, many models).
@@ -116,6 +118,8 @@ export GEMINI_API_KEY="..."             # Google Gemini (free tier)
 # or
 export GROQ_API_KEY="gsk_..."           # Groq (free tier)
 # or
+export ZAI_API_KEY="..."                # Z.ai GLM Flash (free)
+# or
 export SAMBANOVA_API_KEY="..."          # SambaNova (free tier)
 # or
 export OPENROUTER_API_KEY="sk-or-..."   # OpenRouter (free tier)
@@ -129,7 +133,7 @@ Switch providers anytime from **Settings → Switch AI provider**. Terminal
 commands (apt, systemctl, …) run without any key — always free.
 
 **Auto-switch on limits:** if you add keys for more than one free provider
-(Gemini, Groq, SambaNova, OpenRouter), TuxGenie automatically rotates between them when a
+(Gemini, Groq, Z.ai, SambaNova, OpenRouter), TuxGenie automatically rotates between them when a
 free tier hits its rate limit — so a task never stalls. It never auto-switches to
 paid Claude (no surprise charges). Toggle it in
 **Settings → Auto-switch on limits**.
@@ -290,7 +294,8 @@ a corrupted or tampered download is refused, never installed.
 - Python 3.8+
 - Linux
 - An AI key — a **free** one from **Google Gemini** ([get it](https://aistudio.google.com/apikey)),
-  **Groq** ([get it](https://console.groq.com/keys)), **SambaNova** ([get it](https://cloud.sambanova.ai/apis))
+  **Groq** ([get it](https://console.groq.com/keys)), **Z.ai** ([get it](https://z.ai/manage-apikey/apikey-list)),
+  **SambaNova** ([get it](https://cloud.sambanova.ai/apis))
   or **OpenRouter** ([get it](https://openrouter.ai/keys)),
   or **Anthropic Claude** ([get one](https://console.anthropic.com)) for best quality. Terminal commands
   (apt, systemctl, …) run with no key at all.
