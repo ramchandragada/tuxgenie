@@ -73,21 +73,37 @@ class TestStartupFundamentals:
         assert b.provider == "ollama" and b._prov.get("local")
 
     def test_free_provider_registry_has_expected_providers(self):
-        # The registry must expose Groq as a free OpenAI-compatible provider with
-        # a config key and a non-Chinese default model (project policy: Meta Llama
-        # or OpenAI GPT-OSS only — never Qwen/DeepSeek/…).
+        # Free OpenAI-compatible providers must stay constructable with a cfg_key
+        # + default_model. Llama/gpt-oss providers stay non-Chinese by default;
+        # Z.ai is the opted-in free GLM Flash exception (allow_chinese=True).
         free = {n: p for n, p in tg._OAI_PROVIDERS.items() if p.get("free")}
         assert "groq" in free
-        assert "sambanova" in free    # second free OpenAI-compatible provider
-        assert "openrouter" in free   # third free OpenAI-compatible provider
+        assert "zai" in free
+        assert "sambanova" in free
+        assert "openrouter" in free
         assert "ollama" in free       # Phase C — local / offline
         assert free["ollama"].get("local") and free["ollama"].get("needs_key") is False
+        zai = free["zai"]
+        assert zai.get("allow_chinese") is True
+        assert zai["default_model"] == "glm-4.7-flash"
+        assert zai["base_url"].rstrip("/").endswith("/api/paas/v4")
+        assert zai.get("disable_thinking") is True
         _chinese = ("qwen", "deepseek", "kimi", "glm", "ernie", "minimax", "baichuan")
         for name, prov in free.items():
             assert prov["cfg_key"] and prov["default_model"]
             dm = prov["default_model"].lower()
+            if prov.get("allow_chinese"):
+                assert "glm" in dm and "flash" in dm, f"{name}: {dm}"
+                continue
             assert ("llama" in dm or "gpt-oss" in dm), f"{name}: {dm}"
             assert not any(c in dm for c in _chinese), f"{name}: {dm}"
+
+    def test_zai_glm_flash_backend_constructs(self):
+        b = tg.OpenAICompatBackend(api_key="zai-test-key", provider="zai")
+        assert b.provider == "zai"
+        assert b.model == "glm-4.7-flash"
+        assert "Z.ai" in b.label() and "(free)" in b.label()
+        assert b.base_url == "https://api.z.ai/api/paas/v4"
 
 
 class TestCatalogFundamentals:

@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.16.0"
+__version__ = "7.17.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1050,6 +1050,17 @@ _OAI_PROVIDERS = {
         # staying under the TPM limit.
         "max_tokens": 3072,
     },
+    # Z.ai GLM Flash — standing $0 text models (glm-4.7-flash / glm-4.5-flash).
+    # Chinese-origin, opted in because the free Flash tier outlasts Gemini/Groq
+    # for everyday TuxGenie use. Uses the standard (not Coding Plan) endpoint.
+    "zai": {
+        "label": "Z.ai", "base_url": "https://api.z.ai/api/paas/v4",
+        "default_model": "glm-4.7-flash", "cfg_key": "zai_api_key",
+        "model_key": "zai_model", "keys_url": "https://z.ai/manage-apikey/apikey-list",
+        "env": ("ZAI_API_KEY", "Z_AI_API_KEY", "ZAI_GLM_API_KEY"),
+        "free": True, "allow_chinese": True, "disable_thinking": True,
+        "max_tokens": 4096,
+    },
     "sambanova": {
         "label": "SambaNova", "base_url": "https://api.sambanova.ai/v1",
         "default_model": "Meta-Llama-3.3-70B-Instruct", "cfg_key": "sambanova_api_key",
@@ -1294,23 +1305,46 @@ def _oai_usage(data):
     return _GUsage(u.get("prompt_tokens", 0) or 0, u.get("completion_tokens", 0) or 0)
 
 
-# Model families we deliberately never auto-select. Chinese-origin models are
-# excluded by project policy (kept to Meta Llama / OpenAI GPT-OSS); the rest are
-# non-chat models that would break the agentic loop.
-_OAI_MODEL_BLOCKLIST = (
-    "qwen", "deepseek", "kimi", "glm", "yi-", "ernie", "minimax", "baichuan",  # Chinese-origin
-    "whisper", "embed", "guard", "tts", "vision",                             # non-chat
+# Model families we deliberately never auto-select on providers that stay on
+# Meta Llama / OpenAI GPT-OSS. Providers with allow_chinese=True (Z.ai) skip the
+# Chinese block so their free GLM Flash models can be chosen. Non-chat models
+# are always excluded — they break the agentic loop.
+_OAI_MODEL_BLOCKLIST_CHINESE = (
+    "qwen", "deepseek", "kimi", "glm", "yi-", "ernie", "minimax", "baichuan",
 )
+_OAI_MODEL_BLOCKLIST_NONCHAT = (
+    "whisper", "embed", "guard", "tts", "vision",
+)
+# Back-compat alias used by older tests / callers.
+_OAI_MODEL_BLOCKLIST = _OAI_MODEL_BLOCKLIST_CHINESE + _OAI_MODEL_BLOCKLIST_NONCHAT
 
 
-def _oai_pick_model(available):
-    """Choose the best general chat model from a provider's model list. Prefers
-    Meta Llama, then OpenAI GPT-OSS; never auto-selects a blocklisted family
-    (Chinese-origin models, or non-chat models like whisper/embeddings)."""
+def _oai_pick_model(available, allow_chinese=False):
+    """Choose the best general chat model from a provider's model list.
+
+    Default (allow_chinese=False): prefer Meta Llama, then OpenAI GPT-OSS; never
+    auto-select Chinese-origin or non-chat models.
+    When allow_chinese=True (Z.ai free Flash): prefer glm-*-flash text models.
+    """
     avail = available or []
 
     def blocked(n):
-        return any(x in n.lower() for x in _OAI_MODEL_BLOCKLIST)
+        low = n.lower()
+        if any(x in low for x in _OAI_MODEL_BLOCKLIST_NONCHAT):
+            return True
+        if not allow_chinese and any(x in low for x in _OAI_MODEL_BLOCKLIST_CHINESE):
+            return True
+        return False
+
+    if allow_chinese:
+        for p in ("glm-4.7-flash", "glm-4.5-flash", "glm-4-flash"):
+            if p in avail and not blocked(p):
+                return p
+        flash = [m for m in avail
+                 if not blocked(m) and "glm" in m.lower() and "flash" in m.lower()
+                 and "v-flash" not in m.lower() and "vl" not in m.lower()]
+        if flash:
+            return sorted(flash)[-1]
 
     # Exact-match preferences, covering the naming used by OpenAI-compatible
     # providers. First hit that's present and not blocklisted wins.
@@ -1324,6 +1358,10 @@ def _oai_pick_model(available):
         if blocked(n):
             return -1000
         s = 0
+        if allow_chinese and "glm" in n:
+            s += 55
+            if "flash" in n:
+                s += 25
         if "llama" in n: s += 50
         if "70b" in n or "versatile" in n: s += 20
         if "gpt-oss" in n: s += 15
@@ -1409,7 +1447,10 @@ class OpenAICompatBackend:
 
     def _resolve_model(self):
         try:
-            return _oai_pick_model(self._list_models())
+            return _oai_pick_model(
+                self._list_models(),
+                allow_chinese=bool(self._prov.get("allow_chinese")),
+            )
         except Exception:
             return None
 
@@ -1424,6 +1465,10 @@ class OpenAICompatBackend:
                 # Lower temperature when tools are in play: open models like
                 # Groq's Llama emit far fewer malformed function calls at low temp.
                 "temperature": 0.3 if tools else 0.6}
+        # Z.ai GLM Flash can spend the whole reply on "thinking" and leave the
+        # agentic loop with empty tool calls — force plain answers.
+        if self._prov.get("disable_thinking"):
+            body["thinking"] = {"type": "disabled"}
         if tools:
             body["tools"] = tools
             body["tool_choice"] = "auto"
@@ -1799,7 +1844,7 @@ def _explain_free_exhausted(provider_errors: dict, current=None) -> None:
     connected = _free_provider_labels_with_keys()
     if len(connected) <= 1:
         print(f"  {DIM}  2. Add a {BOLD}second free{R}{DIM} AI key (Settings → 8) so TuxGenie can "
-              f"auto-switch next time — Gemini, Groq, SambaNova, or OpenRouter.{R}")
+              f"auto-switch next time — Gemini, Groq, Z.ai, SambaNova, or OpenRouter.{R}")
     elif others:
         print(f"  {DIM}  2. Your other free key(s) ({', '.join(others)}) were also limited — "
               f"retry shortly.{R}")
@@ -2026,7 +2071,8 @@ def feat_set_api_key(backend):
         cur = "claude"
 
     LABELS = {"claude": "Claude (Anthropic)", "gemini": "Google Gemini",
-              "groq": "Groq", "sambanova": "SambaNova", "openrouter": "OpenRouter"}
+              "groq": "Groq", "zai": "Z.ai", "sambanova": "SambaNova",
+              "openrouter": "OpenRouter", "ollama": "Ollama"}
     HEAD = {
         "claude": ("Claude API Key", "https://console.anthropic.com",
                    "Sign-up is free. Anthropic charges by usage (a few cents/session)."),
@@ -2034,12 +2080,16 @@ def feat_set_api_key(backend):
                    "Gemini's free tier needs no credit card."),
         "groq":   ("Groq API Key", "https://console.groq.com/keys",
                    "Groq's free tier needs no credit card — and it's very fast."),
+        "zai":    ("Z.ai API Key", "https://z.ai/manage-apikey/apikey-list",
+                   "Z.ai GLM Flash is free (no token charge) — create a Standard API Key."),
         "sambanova": ("SambaNova API Key", "https://cloud.sambanova.ai/apis",
                       "SambaNova's free tier needs no credit card (fast Llama models)."),
         "openrouter": ("OpenRouter API Key", "https://openrouter.ai/keys",
                        "OpenRouter's free models need no credit card (one key, many models)."),
+        "ollama": ("Ollama (local)", "https://ollama.com/download",
+                   "Ollama runs on this PC — no cloud API key needed."),
     }
-    title, url, note = HEAD[cur]
+    title, url, note = HEAD.get(cur, (f"{LABELS.get(cur, cur)} API Key", "", ""))
     hdr(title)
     info(f"Current: {backend.label()}")
     print(f"\n  Get your key at: {CYAN}{BOLD}{url}{R}")
@@ -2139,7 +2189,7 @@ def feat_settings(backend, bctx, slog):
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
     print(f"  {C('[7]',CYAN)} Toggle auto-approve  {DIM}(run AI commands without asking — advanced){R}")
-    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq · SambaNova · OpenRouter · Ollama local · Claude){R}")
+    print(f"  {C('[8]',CYAN)} Switch AI provider  {DIM}(Gemini · Groq · Z.ai · SambaNova · OpenRouter · Ollama · Claude){R}")
     print(f"  {C('[9]',CYAN)} Toggle auto-switch on limits  {DIM}(fall back between free providers — never Claude){R}")
     print(f"  {C('[10]',CYAN)} Toggle anonymous error reports  {DIM}(scrubbed crashes/AI errors — helps us fix bugs){R}")
     print(f"  {C('[q]',DIM)} Back to menu")
@@ -2232,17 +2282,19 @@ def feat_settings(backend, bctx, slog):
         print(f"      {DIM}Get a free key: {CYAN}https://aistudio.google.com/apikey{R}")
         print(f"  {C('[2]',CYAN)} Groq — {GREEN}free tier, very fast{R} {DIM}(Llama models){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://console.groq.com/keys{R}")
-        print(f"  {C('[3]',CYAN)} SambaNova — {GREEN}free tier, no credit card{R} {DIM}(Llama models){R}")
+        print(f"  {C('[3]',CYAN)} Z.ai — {GREEN}free GLM Flash (no token charge){R} {DIM}(glm-4.7-flash){R}")
+        print(f"      {DIM}Get a free key: {CYAN}https://z.ai/manage-apikey/apikey-list{R}")
+        print(f"  {C('[4]',CYAN)} SambaNova — {GREEN}free tier, no credit card{R} {DIM}(Llama models){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://cloud.sambanova.ai/apis{R}")
-        print(f"  {C('[4]',CYAN)} OpenRouter — {GREEN}free tier, no credit card{R} {DIM}(one key, many models){R}")
+        print(f"  {C('[5]',CYAN)} OpenRouter — {GREEN}free tier, no credit card{R} {DIM}(one key, many models){R}")
         print(f"      {DIM}Get a free key: {CYAN}https://openrouter.ai/keys{R}")
         ollama_st = f"{GREEN}running{R}" if _ollama_reachable() else f"{YELLOW}not running{R}"
-        print(f"  {C('[5]',CYAN)} Ollama — {GREEN}local / offline, no API key{R}  {DIM}({ollama_st}){R}")
+        print(f"  {C('[6]',CYAN)} Ollama — {GREEN}local / offline, no API key{R}  {DIM}({ollama_st}){R}")
         print(f"      {DIM}Private AI on this PC · install from menu 99 if needed{R}")
-        print(f"  {C('[6]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
+        print(f"  {C('[7]',CYAN)} Claude (Anthropic) — best quality, ~$0.01/session")
         print(f"      {DIM}Get a key: {CYAN}https://console.anthropic.com{R}")
         try:
-            p = input(f"\n  {BOLD}Choose provider [1-6] (or Enter to cancel):{R} ").strip()
+            p = input(f"\n  {BOLD}Choose provider [1-7] (or Enter to cancel):{R} ").strip()
         except (EOFError, KeyboardInterrupt):
             return
         if p == "1":
@@ -2275,6 +2327,22 @@ def feat_settings(backend, bctx, slog):
             save_cfg({"provider": "groq", "groq_api_key": k})
             ok("Switched to Groq (free tier). Restart TuxGenie for it to take effect.")
         elif p == "3":
+            print(f"  {DIM}Note: Z.ai's free Flash models have rate limits (concurrency);")
+            print(f"  {DIM}API content is not used for training unless you opt in. Prefer")
+            print(f"  {DIM}Claude/Ollama for the most sensitive systems.{R}")
+            k = (load_cfg().get("zai_api_key") or "").strip()
+            if not k:
+                print(f"  {DIM}Free Z.ai key: {CYAN}https://z.ai/manage-apikey/apikey-list{R}")
+                print(f"  {DIM}Create a {BOLD}Standard API Key{R}{DIM} (not a Coding Plan key).{R}")
+                try:
+                    k = input("  Paste your Z.ai API key: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    return
+                if not k:
+                    warn("No key entered — provider unchanged."); return
+            save_cfg({"provider": "zai", "zai_api_key": k, "zai_model": "glm-4.7-flash"})
+            ok("Switched to Z.ai GLM Flash (free). Restart TuxGenie for it to take effect.")
+        elif p == "4":
             print(f"  {DIM}Note: SambaNova's free tier is rate-limited (a daily token cap);")
             print(f"  {DIM}check SambaNova's terms for how free-tier data is used. Prefer")
             print(f"  {DIM}Claude/Ollama for sensitive systems.{R}")
@@ -2289,7 +2357,7 @@ def feat_settings(backend, bctx, slog):
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "sambanova", "sambanova_api_key": k})
             ok("Switched to SambaNova (free tier). Restart TuxGenie for it to take effect.")
-        elif p == "4":
+        elif p == "5":
             print(f"  {DIM}Note: OpenRouter's free models are rate-limited (~20/min, ~50/day);")
             print(f"  {DIM}check OpenRouter's terms for how free-tier data is used. Prefer")
             print(f"  {DIM}Claude/Ollama for sensitive systems.{R}")
@@ -2304,7 +2372,7 @@ def feat_settings(backend, bctx, slog):
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "openrouter", "openrouter_api_key": k})
             ok("Switched to OpenRouter (free tier). Restart TuxGenie for it to take effect.")
-        elif p == "5":
+        elif p == "6":
             if not _ollama_reachable():
                 warn("Ollama is not running on this PC yet.")
                 print(f"  {DIM}Install from menu 99 → Ollama, then run:{R}")
@@ -2322,7 +2390,7 @@ def feat_settings(backend, bctx, slog):
                 ok(f"Ollama is running — detected model {model}.")
             save_cfg({"provider": "ollama", "ollama_model": model})
             ok("Switched to Ollama (local). Restart TuxGenie for it to take effect.")
-        elif p == "6":
+        elif p == "7":
             k = (load_cfg().get("api_key") or "").strip()
             if not k:
                 print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
@@ -2343,7 +2411,7 @@ def feat_settings(backend, bctx, slog):
             ok("Auto-switch ON — if a free provider hits its limit, TuxGenie falls back to your other free provider automatically (never Claude, so it never costs you).")
             free_keys = _free_provider_labels_with_keys()
             if len(free_keys) <= 1:
-                info("Tip: save a second free key (Settings → 8 → Gemini/Groq/SambaNova/OpenRouter) so there is something to switch to.")
+                info("Tip: save a second free key (Settings → 8 → Gemini/Groq/Z.ai/…) so there is something to switch to.")
             else:
                 info(f"Ready to rotate between: {', '.join(free_keys)}.")
         else:

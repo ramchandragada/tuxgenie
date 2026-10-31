@@ -1001,17 +1001,48 @@ class TestOpenAICompatBackend:
         ) == "llama-3.3-70b-versatile"
 
     def test_model_picker_never_selects_chinese_models(self):
-        # Project policy: never auto-select a Chinese-origin model. Even when a
+        # Default providers: never auto-select a Chinese-origin model. Even when a
         # Qwen/DeepSeek model would otherwise "win", a Llama/GPT-OSS must be chosen.
         picked = tg._oai_pick_model(["qwen-3-235b", "deepseek-r1", "gpt-oss-120b"])
         assert picked == "gpt-oss-120b", picked
         # And if ONLY blocklisted models are offered, refuse rather than pick one.
         assert tg._oai_pick_model(["qwen-3-235b", "deepseek-r1", "kimi-k2"]) is None
 
+    def test_model_picker_allow_chinese_prefers_glm_flash(self):
+        # Z.ai free tier: allow_chinese unlocks GLM Flash (still skips vision).
+        picked = tg._oai_pick_model(
+            ["glm-4.6v-flash", "glm-4.5-flash", "glm-4.7-flash", "whisper-large"],
+            allow_chinese=True,
+        )
+        assert picked == "glm-4.7-flash", picked
+        assert tg._oai_pick_model(["qwen-3-32b", "glm-4.5-flash"], allow_chinese=True) == "glm-4.5-flash"
+
     def test_model_picker_handles_plain_llama_naming(self):
         # Some providers list Llama without Groq's "-versatile" suffix; it must
         # still win over gpt-oss, and never fall through to a Chinese model.
         assert tg._oai_pick_model(["llama-3.3-70b", "gpt-oss-120b", "qwen-3-32b"]) == "llama-3.3-70b"
+
+    def test_zai_disables_thinking_on_requests(self, monkeypatch):
+        import json
+        be = tg.OpenAICompatBackend(api_key="zai-test-key", provider="zai")
+        captured = {}
+
+        class _R:
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+            def read(s):
+                return json.dumps({"choices": [{"message": {"content": "ok"},
+                                   "finish_reason": "stop"}],
+                                   "usage": {"prompt_tokens": 1, "completion_tokens": 1}}).encode()
+
+        def fake_open(req, timeout=0):
+            captured["body"] = json.loads(req.data.decode())
+            return _R()
+
+        monkeypatch.setattr(tg.urllib.request, "urlopen", fake_open)
+        be._gen("sys", [{"role": "user", "content": "hi"}], tools=None, max_tokens=1024)
+        assert captured["body"]["model"] == "glm-4.7-flash"
+        assert captured["body"].get("thinking") == {"type": "disabled"}
 
     def test_backend_basics(self):
         be = tg.OpenAICompatBackend(api_key=tg._NO_KEY, provider="groq")
@@ -1428,6 +1459,7 @@ class TestProviderFailover:
     def test_provider_labels_are_human_friendly(self):
         assert tg._provider_label("gemini") == "Google Gemini"
         assert tg._provider_label("groq") == "Groq"
+        assert tg._provider_label("zai") == "Z.ai"
         assert tg._provider_label("sambanova") == "SambaNova"
         assert tg._provider_label("openrouter") == "OpenRouter"
         assert tg._provider_label("claude") == "Claude (Anthropic)"
