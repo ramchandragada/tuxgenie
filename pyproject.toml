@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tuxgenie"
-version = "7.18.0"
+version = "7.19.0"
 description = "AI-powered Linux assistant — fix any Linux problem in plain English"
 readme = "README.md"
 license = "MIT"
@@ -35,7 +35,7 @@ tuxgenie = "tuxgenie:main"
 tuxgenie-app = "tuxgenie_shell:main"
 
 [project.urls]
-Homepage    = "https://github.com/ramchandragada/tuxgenie"
+Homepage    = "https://tuxgenie.com"
 Issues      = "https://github.com/ramchandragada/tuxgenie/issues"
 Source      = "https://github.com/ramchandragada/tuxgenie"
 Changelog   = "https://github.com/ramchandragada/tuxgenie/releases"

@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.18.0"
+__version__ = "7.19.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -1647,9 +1647,9 @@ def _load_api_key(cfg):
     return _migrate_old_key()
 
 def _setup_wizard(cfg):
-    """First-run wizard. Lets the user choose Gemini/Groq (free cloud), Ollama
-    (local), Claude (paid), or skip.
-    Returns ('claude'|'gemini'|'groq'|'ollama', key_or_sentinel) | ('skip', None)."""
+    """First-run wizard. Lets the user choose Gemini/Groq/Z.ai (free cloud),
+    Ollama (local), Claude (paid), or skip.
+    Returns ('claude'|'gemini'|'groq'|'zai'|'ollama', key_or_sentinel) | ('skip', None)."""
     _line = f"  {DIM}{'─'*58}{R}"
     ollama_up = _ollama_reachable()
     print(f"\n{_line}")
@@ -1661,14 +1661,16 @@ def _setup_wizard(cfg):
     print(f"      {DIM}Get a free key at aistudio.google.com/apikey{R}")
     print(f"  {C('[2]',CYAN,BOLD)} {BOLD}Groq{R} — {GREEN}also free, very fast{R} {DIM}(Llama models){R}")
     print(f"      {DIM}Get a free key at console.groq.com/keys{R}")
+    print(f"  {C('[3]',CYAN,BOLD)} {BOLD}Z.ai{R} — {GREEN}free GLM Flash (no token charge){R} {DIM}(glm-4.7-flash){R}")
+    print(f"      {DIM}Get a free key at z.ai/manage-apikey/apikey-list{R}")
     ollama_hint = (f"{GREEN}detected on this PC{R}" if ollama_up
                    else f"{DIM}install via menu 99 if needed{R}")
-    print(f"  {C('[3]',CYAN,BOLD)} {BOLD}Ollama{R} — {GREEN}local / offline, no API key{R}  {ollama_hint}")
+    print(f"  {C('[4]',CYAN,BOLD)} {BOLD}Ollama{R} — {GREEN}local / offline, no API key{R}  {ollama_hint}")
     print(f"      {DIM}Runs on your machine — private, works without internet{R}")
-    print(f"  {C('[4]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
+    print(f"  {C('[5]',CYAN,BOLD)} {BOLD}Claude{R} (Anthropic) — best quality")
     print(f"      {DIM}Free trial credit, then ~$0.01/session · console.anthropic.com{R}\n")
     try:
-        choice = input(f"  Choose {BOLD}1{R}–{BOLD}4{R}  {DIM}(Enter = 1, the free cloud option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
+        choice = input(f"  Choose {BOLD}1{R}–{BOLD}5{R}  {DIM}(Enter = 1, the free cloud option · type {BOLD}s{R}{DIM} to skip){R}: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         sys.exit(0)
     if choice in ("", "1"):   # Google Gemini — the free default
@@ -1691,6 +1693,16 @@ def _setup_wizard(cfg):
             return ("skip", None)
         return ("groq", key) if key else ("skip", None)
     if choice == "3":
+        print(f"\n  {DIM}Free Z.ai key: {CYAN}https://z.ai/manage-apikey/apikey-list{R}")
+        print(f"  {DIM}Create a Standard API Key. Z.ai states API content is not used for")
+        print(f"  {DIM}training unless you opt in — still prefer Claude/Ollama for the most")
+        print(f"  {DIM}sensitive systems. Full details: PRIVACY.md{R}")
+        try:
+            key = input("  Paste your Z.ai API key: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return ("skip", None)
+        return ("zai", key) if key else ("skip", None)
+    if choice == "4":
         if not ollama_up:
             print(f"\n  {YELLOW}Ollama is not running yet.{R}")
             print(f"  {DIM}After setup, install from menu 99 → Ollama, then:{R}")
@@ -1706,7 +1718,7 @@ def _setup_wizard(cfg):
             model = _ollama_pick_model()
             ok(f"Ollama ready — will use local model {model}.")
         return ("ollama", _OLLAMA_LOCAL_KEY)
-    if choice == "4":
+    if choice == "5":
         print(f"\n  {DIM}Claude key: {CYAN}https://console.anthropic.com{R}")
         try:
             key = input("  Paste your Anthropic API key: ").strip()
@@ -2036,7 +2048,11 @@ def load_backend():
         save_cfg({"provider": "ollama"})
         return _make_backend(cfg, "ollama", value or _OLLAMA_LOCAL_KEY)
     if kind in _OAI_PROVIDERS:
-        save_cfg({"provider": kind, _OAI_PROVIDERS[kind]["cfg_key"]: value})
+        prov = _OAI_PROVIDERS[kind]
+        patch = {"provider": kind, prov["cfg_key"]: value}
+        if prov.get("model_key") and prov.get("default_model"):
+            patch[prov["model_key"]] = prov["default_model"]
+        save_cfg(patch)
         return _make_backend(cfg, kind, value)
     if kind == "claude":
         save_cfg({"provider": "claude", "backend": "claude", "api_key": value})
@@ -12076,8 +12092,8 @@ APP_CATALOG = [
     {"id": 9,  "name": "Signal Desktop",      "cat": "Communication",  "prompt": "Install Signal Desktop from the official Signal apt repository (signal.org) on Debian/Ubuntu, or flatpak from Flathub otherwise", "desc": "Private, end-to-end encrypted messaging"},
     {"id": 10, "name": "Zoom",                "cat": "Communication",  "prompt": "Install Zoom video conferencing",                                                                                               "desc": "Video meetings"},
     {"id": 11, "name": "Microsoft Teams",     "cat": "Communication",  "prompt": "Install Microsoft Teams for Linux",                                                                                             "desc": "Microsoft's team chat"},
-    {"id": 12, "name": "Rambox",              "cat": "Communication",  "prompt": "Install Rambox multi-service messaging hub — download the latest .deb from https://github.com/ramboxapp/rambox/releases or use flatpak from Flathub", "desc": "All-in-one workspace for messaging apps"},
-    {"id": 13, "name": "Arattai",             "cat": "Communication",  "prompt": "Install Arattai Tamil community chat app — go to https://www.arattai.in/download.html, download the Linux .deb package and install it with dpkg; fall back to AppImage if no .deb is available", "desc": "Tamil community chat app"},
+    {"id": 12, "name": "Rambox",              "cat": "Communication",  "prompt": "Install Rambox Community Edition multi-service messaging hub — download the latest amd64 .deb from https://github.com/ramboxapp/community-edition/releases and install it with apt/dpkg. (No Flathub package.)", "desc": "All-in-one workspace for messaging apps"},
+    {"id": 13, "name": "Arattai",             "cat": "Communication",  "prompt": "Arattai has no official Linux desktop app (only Android/iOS/Mac/Windows/Web). Tell the user honestly, then offer: (1) open https://web.arattai.in in a browser, or (2) install Aspera Hub / Ferdium / Rambox from the catalog to wrap the web app in a desktop window.", "desc": "Tamil community chat (web on Linux)"},
     # ── Office & Notes ───────────────────────────────────────────────────────
     {"id": 14, "name": "LibreOffice",         "cat": "Office & Notes", "prompt": "Install the latest LibreOffice (full suite)",                                                                                   "desc": "Free office suite (Writer, Calc, Impress)"},
     {"id": 15, "name": "OnlyOffice",          "cat": "Office & Notes", "prompt": "Install OnlyOffice Desktop Editors",                                                                                            "desc": "Best MS Office format compatibility"},
@@ -12104,7 +12120,7 @@ APP_CATALOG = [
     {"id": 32, "name": "Blender",             "cat": "Graphics",       "prompt": "Install Blender 3D modelling software via snap (snap install blender --classic) or flatpak from Flathub",                     "desc": "3D modelling, animation, rendering"},
     # ── Remote Access ────────────────────────────────────────────────────────
     {"id": 33, "name": "AnyDesk",             "cat": "Remote Access",  "prompt": "Install AnyDesk remote desktop client",                                                                                         "desc": "Fast remote desktop access"},
-    {"id": 34, "name": "TeamViewer",          "cat": "Remote Access",  "prompt": "Install TeamViewer",                                                                                                            "desc": "Remote desktop and support"},
+    {"id": 34, "name": "TeamViewer",          "cat": "Remote Access",  "prompt": "Install TeamViewer remote desktop — download the official amd64 .deb from https://download.teamviewer.com/download/linux/teamviewer_amd64.deb and install with apt/dpkg. (Not on Flathub.)", "desc": "Remote desktop and support"},
     {"id": 35, "name": "RustDesk",            "cat": "Remote Access",  "prompt": "Install RustDesk",                                                                                                              "desc": "Open-source, self-hostable remote desktop"},
     # ── Developer Tools ──────────────────────────────────────────────────────
     {"id": 36, "name": "Visual Studio Code",  "cat": "Developer",      "prompt": "Install Visual Studio Code (VS Code)",                                                                                          "desc": "Microsoft's code editor"},
@@ -12170,7 +12186,7 @@ APP_CATALOG = [
     {"id": 85, "name": "Insomnia",            "cat": "Developer",      "prompt": "Install Insomnia API client via flatpak from Flathub: rest.insomnia.Insomnia.", "desc": "REST/GraphQL API client (Postman alt)"},
     {"id": 86, "name": "Meld",                "cat": "Developer",      "prompt": "Install Meld visual diff and merge tool via apt (meld) or flatpak from Flathub: org.gnome.meld.", "desc": "Visual diff & merge tool"},
     {"id": 87, "name": "Zellij",              "cat": "Developer",      "prompt": "Install Zellij, a modern terminal workspace/multiplexer, using the official install script: bash <(curl -L https://zellij.dev/launch), or the prebuilt binary from https://github.com/zellij-org/zellij/releases placed in /usr/local/bin.", "desc": "Modern terminal workspace"},
-    {"id": 88, "name": "Tabby Terminal",      "cat": "Developer",      "prompt": "Install Tabby, the open-source terminal & SSH client by Eugeny (NOT TabbyML). Download the latest .deb from https://github.com/Eugeny/tabby/releases and install it with apt/dpkg.", "desc": "Modern terminal & SSH client"},
+    {"id": 88, "name": "Tabby Terminal",      "cat": "Developer",      "prompt": "Install Tabby, the open-source terminal & SSH client by Eugeny (NOT TabbyML). Download the latest amd64 .deb from https://github.com/Eugeny/tabby/releases and install it with apt/dpkg. (Not on Flathub.)", "desc": "Modern terminal & SSH client"},
     {"id": 89, "name": "JetBrains Toolbox",   "cat": "Developer",      "prompt": "Install JetBrains Toolbox (proprietary freeware manager for IntelliJ, PyCharm, etc.) — download the official tarball from https://www.jetbrains.com/toolbox-app/, extract it, and run the jetbrains-toolbox binary.", "desc": "Manager for JetBrains IDEs"},
     {"id": 90, "name": "Podman",              "cat": "Developer",      "prompt": "Install Podman, the daemonless container engine, via apt (podman) on Debian/Ubuntu or the system package manager.", "desc": "Daemonless container engine"},
     {"id": 91, "name": "Modern CLI Pack",     "cat": "Developer",      "prompt": "Install a bundle of fast modern CLI tools via the package manager: ripgrep, fd-find, bat, eza, fzf, zoxide. Note: on Debian/Ubuntu bat runs as 'batcat' and fd-find as 'fdfind'; if eza isn't in the repo, add its official repo or fetch the GitHub binary.", "desc": "ripgrep · fd · bat · eza · fzf · zoxide"},
@@ -12249,7 +12265,7 @@ APP_CATALOG = [
     {"id": 150,"name": "Moonlight",           "cat": "Remote Access",  "prompt": "Install Moonlight, for low-latency game/desktop streaming from a GameStream/Sunshine host, via flatpak from Flathub: com.moonlight_stream.Moonlight.", "desc": "Stream games/desktop from another PC"},
 
     {"id": 151,"name": "Android Studio",      "cat": "Developer",      "prompt": "Install Android Studio, Google's official Android IDE. Prefer 'snap install android-studio --classic'; otherwise download from developer.android.com/studio and extract to /opt, creating a launcher. Note it's a large download and needs a JDK (bundled).", "desc": "Google's official Android IDE"},
-    {"id": 152,"name": "Alacritty",           "cat": "Developer",      "prompt": "Install Alacritty, the fast GPU-accelerated terminal. Prefer apt (alacritty) where available or flatpak from Flathub: org.alacritty.Alacritty.", "desc": "Fast GPU-accelerated terminal"},
+    {"id": 152,"name": "Alacritty",           "cat": "Developer",      "prompt": "Install Alacritty, the fast GPU-accelerated terminal. Prefer the distro package (apt/dnf/pacman: alacritty). There is no official Flathub package.", "desc": "Fast GPU-accelerated terminal"},
     {"id": 153,"name": "Beekeeper Studio",    "cat": "Developer",      "prompt": "Install Beekeeper Studio, a modern open-source SQL database GUI, via flatpak from Flathub: io.beekeeperstudio.Studio (or its official apt repo / AppImage from beekeeperstudio.io).", "desc": "Modern SQL database GUI"},
     {"id": 154,"name": "Zeal",                "cat": "Developer",      "prompt": "Install Zeal, an offline developer documentation browser (Dash-compatible docsets). Prefer apt (zeal) or flatpak from Flathub: org.zealdocs.Zeal.", "desc": "Offline developer documentation"},
     {"id": 155,"name": "GitKraken",           "cat": "Developer",      "prompt": "Install GitKraken, a graphical Git client. Prefer flatpak from Flathub: com.axosoft.GitKraken, or download the official .deb from gitkraken.com.", "desc": "Graphical Git client"},
@@ -12261,14 +12277,14 @@ APP_CATALOG = [
     {"id": 160,"name": "Extension Manager",   "cat": "System Tools",   "prompt": "Install Extension Manager, to browse and install GNOME Shell extensions without a browser, via flatpak from Flathub: com.mattjakeman.ExtensionManager. (Best on GNOME desktops.)", "desc": "Install GNOME extensions easily"},
     {"id": 161,"name": "TLP",                 "cat": "System Tools",   "prompt": "Install TLP for automatic laptop battery/power optimisation: apt install tlp tlp-rdw, then enable and start tlp. Optionally install 'tlpui' for a graphical settings editor. Explain it improves battery life with sensible defaults out of the box.", "desc": "Automatic laptop battery optimisation"},
 
-    {"id": 162,"name": "KDE Connect",         "cat": "Files & Sync",   "prompt": "Install KDE Connect to link a phone with this PC (share files, texts, clipboard, remote control). Prefer apt (kdeconnect) or flatpak from Flathub: org.kde.kdeconnect. On GNOME, mention the 'GSConnect' extension as the native-feeling alternative. Tell the user to install the KDE Connect app on their phone too.", "desc": "Phone ↔ PC: files, texts, clipboard"},
+    {"id": 162,"name": "KDE Connect",         "cat": "Files & Sync",   "prompt": "Install KDE Connect to link a phone with this PC (share files, texts, clipboard, remote control). Prefer the distro package (apt/dnf/pacman: kdeconnect). On GNOME, mention the 'GSConnect' extension as the native-feeling alternative. Tell the user to install the KDE Connect app on their phone too.", "desc": "Phone ↔ PC: files, texts, clipboard"},
     {"id": 163,"name": "Transmission",        "cat": "Files & Sync",   "prompt": "Install Transmission, a simple, lightweight BitTorrent client. Prefer apt (transmission-gtk) or flatpak from Flathub: com.transmissionbt.Transmission.", "desc": "Simple, lightweight torrent client"},
     {"id": 164,"name": "Deluge",              "cat": "Files & Sync",   "prompt": "Install Deluge, a flexible BitTorrent client with plugins and a web UI. Prefer apt (deluge) or flatpak from Flathub: org.deluge_torrent.deluge.", "desc": "Flexible torrent client (plugins, web UI)"},
     {"id": 165,"name": "Pika Backup",         "cat": "Files & Sync",   "prompt": "Install Pika Backup, an easy GUI for encrypted, deduplicated backups (powered by BorgBackup), via flatpak from Flathub: org.gnome.World.PikaBackup.", "desc": "Easy encrypted backups (BorgBackup)"},
-    {"id": 166,"name": "Proton Pass",         "cat": "Files & Sync",   "prompt": "Install Proton Pass, Proton's open-source password manager. Prefer flatpak from Flathub if available (me.proton.pass), otherwise download the official .deb/.rpm from proton.me/pass/download.", "desc": "Open-source password manager (Proton)"},
+    {"id": 166,"name": "Proton Pass",         "cat": "Files & Sync",   "prompt": "Install Proton Pass, Proton's open-source password manager. Prefer flatpak from Flathub: me.proton.Pass, otherwise download the official .deb/.rpm from proton.me/pass/download.", "desc": "Open-source password manager (Proton)"},
 
-    {"id": 167,"name": "Ulauncher",           "cat": "Utilities",      "prompt": "Install Ulauncher, a fast application/everything launcher. Add its official apt repo (ppa:agornostal/ulauncher) or download the .deb from ulauncher.io; enable it to start on login.", "desc": "Fast app & action launcher"},
-    {"id": 168,"name": "Espanso",             "cat": "Utilities",      "prompt": "Install Espanso, a system-wide text expander. Download the official .deb (X11) or use the AppImage from espanso.org; for Wayland use the Wayland build. After install run 'espanso service register' and 'espanso start'.", "desc": "System-wide text expander"},
+    {"id": 167,"name": "Ulauncher",           "cat": "Utilities",      "prompt": "Install Ulauncher, a fast application/everything launcher. Prefer apt (ulauncher) or the official PPA (ppa:agornostal/ulauncher) / .deb from ulauncher.io. Not on Flathub. Enable it to start on login.", "desc": "Fast app & action launcher"},
+    {"id": 168,"name": "Espanso",             "cat": "Utilities",      "prompt": "Install Espanso, a system-wide text expander. Download the official amd64 .deb from https://github.com/espanso/espanso/releases (espanso-debian-x11-amd64.deb on X11, or espanso-debian-wayland-amd64.deb on Wayland) and install with apt/dpkg. After install run 'espanso service register' and 'espanso start'.", "desc": "System-wide text expander"},
     {"id": 169,"name": "Variety",             "cat": "Utilities",      "prompt": "Install Variety, an automatic wallpaper changer/manager. Prefer apt (variety) on Debian/Ubuntu, or flatpak from Flathub if available.", "desc": "Automatic wallpaper changer"},
     {"id": 170,"name": "Gear Lever",          "cat": "Utilities",      "prompt": "Install Gear Lever, to manage and integrate AppImages (menu entries, updates), via flatpak from Flathub: it.mijorus.gearlever.", "desc": "Manage & integrate AppImages"},
 
@@ -12276,7 +12292,7 @@ APP_CATALOG = [
     {"id": 172,"name": "Prism Launcher",      "cat": "Gaming",         "prompt": "Install Prism Launcher, the open-source Minecraft launcher for managing instances and mods, via flatpak from Flathub: org.prismlauncher.PrismLauncher.", "desc": "Open-source Minecraft launcher"},
     {"id": 173,"name": "Cartridges",          "cat": "Gaming",         "prompt": "Install Cartridges, a tidy GTK game library that gathers Steam, Heroic, Lutris and more in one place, via flatpak from Flathub: page.kramo.Cartridges.", "desc": "Unified game library"},
 
-    {"id": 174,"name": "VeraCrypt",           "cat": "Security",       "prompt": "Install VeraCrypt for on-the-fly disk/file encryption (encrypted volumes/containers). Download the official .deb from veracrypt.io (or its PPA), preferring the GUI build. Explain it can create encrypted file containers or encrypt whole drives.", "desc": "Disk & file encryption (encrypted volumes)"},
+    {"id": 174,"name": "VeraCrypt",           "cat": "Security",       "prompt": "Install VeraCrypt for on-the-fly disk/file encryption (encrypted volumes/containers). Prefer apt (veracrypt) where packaged, otherwise download the official installer from https://www.veracrypt.fr/en/Downloads.html (GUI build). Not on Flathub. Explain it can create encrypted file containers or encrypt whole drives.", "desc": "Disk & file encryption (encrypted volumes)"},
     {"id": 175,"name": "Proton VPN",          "cat": "Security",       "prompt": "Install the official Proton VPN app. Add Proton's official apt repository (download the protonvpn-stable-release .deb from protonvpn.com/download-linux), then apt update && apt install proton-vpn-gnome-desktop.", "desc": "Privacy-focused VPN (official app)"},
     {"id": 176,"name": "Mullvad VPN",         "cat": "Security",       "prompt": "Install the Mullvad VPN app via its official apt repository (mullvad.net/download/vpn/linux) or by downloading the official .deb from mullvad.net.", "desc": "Privacy-focused VPN (no-logs)"},
     {"id": 177,"name": "OpenSnitch",          "cat": "Security",       "prompt": "Install OpenSnitch, an application-level firewall that asks before programs connect out. Prefer apt (opensnitch) on newer Debian/Ubuntu, otherwise download the .deb (daemon + python3-opensnitch-ui) from github.com/evilsocket/opensnitch/releases. Enable the opensnitchd service and start the UI.", "desc": "Interactive application firewall"},
@@ -12329,12 +12345,12 @@ APP_CATALOG = [
     # ── Ubuntu / Debian daily-driver gaps (v7.4.0) ──
     {"id": 223,"name": "Wine",                "cat": "Gaming",         "prompt": "Install Wine (and winetricks) so Windows programs can run on Linux. On Debian/Ubuntu prefer apt: wine (or wine64) plus winetricks. Flatpak alternative: org.winehq.Wine. Do not replace Steam/Proton — this is for non-Steam Windows apps.", "desc": "Run Windows programs on Linux"},
     {"id": 224,"name": "Multimedia Codecs",   "cat": "Media",          "prompt": "Install multimedia codecs so videos and MP3s play. On Ubuntu / Mint / Pop use ubuntu-restricted-extras (accept the EULA). On Debian use ffmpeg, libavcodec-extra, gstreamer1.0-libav, gstreamer1.0-plugins-bad and gstreamer1.0-plugins-ugly. Never force Ubuntu-only packages on Debian.", "desc": "Play MP3 / H.264 / DVD on Ubuntu & Debian"},
-    {"id": 225,"name": "1Password",           "cat": "Files & Sync",   "prompt": "Install 1Password desktop via flatpak from Flathub: com.1password.1Password. Distinct from Bitwarden, KeePassXC and Proton Pass already in the catalog.", "desc": "Password manager (1Password official)"},
+    {"id": 225,"name": "1Password",           "cat": "Files & Sync",   "prompt": "Install 1Password desktop via flatpak from Flathub: com.onepassword.OnePassword. Distinct from Bitwarden, KeePassXC and Proton Pass already in the catalog.", "desc": "Password manager (1Password official)"},
     {"id": 226,"name": "Piper",               "cat": "System Tools",   "prompt": "Install Piper, a GUI for gaming mice (Logitech, etc.) via flatpak from Flathub: org.freedesktop.Piper (or apt: piper). Complements Solaar, which is for Logitech unifying receivers.", "desc": "Configure gaming mice"},
     {"id": 227,"name": "Helvum",              "cat": "Media",          "prompt": "Install Helvum, the PipeWire patchbay (route app audio/video/MIDI), via flatpak from Flathub: org.pipewire.Helvum (or apt: helvum). Complements EasyEffects.", "desc": "PipeWire audio/video patchbay"},
     {"id": 228,"name": "qpwgraph",            "cat": "Media",          "prompt": "Install qpwgraph, a Qt PipeWire graph / patchbay (popular on Kubuntu/KDE), via flatpak from Flathub: org.rncbc.qpwgraph (or apt: qpwgraph). Distinct from Helvum (GTK).", "desc": "PipeWire graph (KDE/Qt patchbay)"},
-    {"id": 229,"name": "Proton Drive",        "cat": "Files & Sync",   "prompt": "Install Proton Drive desktop via flatpak from Flathub: me.proton.Drive. Complements Proton Mail, Proton Pass and Proton VPN already in the catalog.", "desc": "Encrypted cloud files (Proton)"},
-    {"id": 230,"name": "Trayscale",           "cat": "Remote Access",  "prompt": "Install Trayscale, an unofficial GTK GUI for Tailscale, via flatpak from Flathub: dev.trayscale.Trayscale. Tailscale itself (the official CLI/daemon) is a separate catalog entry — install that first if missing.", "desc": "Unofficial GUI for Tailscale"},
+    {"id": 229,"name": "Proton Drive",        "cat": "Files & Sync",   "prompt": "Install Proton Drive desktop from the official download page https://proton.me/drive/download (Linux .deb/.rpm when offered). There is no Flathub package yet. Complements Proton Mail, Proton Pass and Proton VPN already in the catalog. If no Linux package is available, tell the user honestly and suggest the web app.", "desc": "Encrypted cloud files (Proton)"},
+    {"id": 230,"name": "Trayscale",           "cat": "Remote Access",  "prompt": "Install Trayscale, an unofficial GTK GUI for Tailscale, via flatpak from Flathub: dev.deedles.Trayscale. Tailscale itself (the official CLI/daemon) is a separate catalog entry — install that first if missing.", "desc": "Unofficial GUI for Tailscale"},
     {"id": 231,"name": "Caffeine",            "cat": "Utilities",      "prompt": "Install Caffeine so the screen does not sleep during videos or presentations. On Ubuntu/Debian prefer apt: caffeine (or gnome-shell-extension-caffeine on GNOME).", "desc": "Keep the screen awake"},
     {"id": 232,"name": "Google Earth Pro",    "cat": "Utilities",      "prompt": "Install Google Earth Pro via flatpak from Flathub: com.google.EarthPro.", "desc": "Satellite maps and globe (Google)"},
     {"id": 233,"name": "FFmpeg",              "cat": "AV Creation",    "prompt": "Install FFmpeg, the command-line Swiss-army knife for convert/record/stream audio and video, via apt (ffmpeg) on Debian/Ubuntu.", "desc": "Convert and record audio/video (CLI)"},
@@ -12448,8 +12464,17 @@ _CATALOG_INSTALL = {
     "Signal Desktop":   {"flatpak": "org.signal.Signal"},
     "Zoom":             {"flatpak": "us.zoom.Zoom"},
     "Microsoft Teams":  {"flatpak": "com.github.IsmaelMartinez.teams_for_linux"},
-    "Rambox":           {"flatpak": "com.rambox.Rambox"},
-    "Arattai":          {"flatpak": "in.arattai.Arattai"},
+    # Rambox CE ships amd64 .deb on GitHub (no Flathub package).
+    "Rambox":           {"script": "set -e; url=$(curl -fsSL "
+                                    "https://api.github.com/repos/ramboxapp/community-edition/releases/latest "
+                                    "| grep -oE 'https://[^\"[:space:]]+linux-amd64\\.deb' | head -1); "
+                                    "[ -n \"$url\" ]; curl -fL -o /tmp/rambox.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/rambox.deb",
+                         "script_root": True},
+    # Arattai has no Linux desktop package — open the official web client.
+    "Arattai":          {"script": "xdg-open https://web.arattai.in >/dev/null 2>&1 || "
+                                    "sensible-browser https://web.arattai.in >/dev/null 2>&1 || "
+                                    "echo 'Open https://web.arattai.in — Arattai has no Linux desktop app.'"},
     "Element":          {"flatpak": "im.riot.Riot"},
     "Ferdium":          {"flatpak": "org.ferdium.Ferdium"},
     "WhatsApp (ZapZap)": {"flatpak": "com.rtosta.zapzap"},
@@ -12554,7 +12579,10 @@ _CATALOG_INSTALL = {
     # ── Remote Access ──
     "AnyDesk":          {"deb": {"name": "anydesk", "key": "https://keys.anydesk.com/repos/DEB-GPG-KEY",
                                  "repo": "http://deb.anydesk.com/ all main", "pkg": "anydesk"}},
-    "TeamViewer":       {"flatpak": "com.teamviewer.TeamViewer"},
+    "TeamViewer":       {"script": "set -e; curl -fL -o /tmp/teamviewer_amd64.deb "
+                                    "https://download.teamviewer.com/download/linux/teamviewer_amd64.deb; "
+                                    "sudo apt-get install -y /tmp/teamviewer_amd64.deb",
+                         "script_root": True},
     "RustDesk":         {"flatpak": "com.rustdesk.RustDesk"},
     "Remmina":          {"pkg": "remmina", "flatpak": "org.remmina.Remmina"},
     "Moonlight":        {"flatpak": "com.moonlight_stream.Moonlight"},
@@ -12579,10 +12607,15 @@ _CATALOG_INSTALL = {
     "Insomnia":         {"flatpak": "rest.insomnia.Insomnia"},
     "Meld":             {"pkg": "meld", "flatpak": "org.gnome.meld"},
     "Zellij":           {"script": "bash <(curl -L https://zellij.dev/launch)"},
-    "Tabby Terminal":   {"flatpak": "org.tabby.Tabby"},
+    "Tabby Terminal":   {"script": "set -e; url=$(curl -fsSL "
+                                    "https://api.github.com/repos/Eugeny/tabby/releases/latest "
+                                    "| grep -oE 'https://[^\"[:space:]]+tabby-[^\"]+-linux-x64\\.deb' | head -1); "
+                                    "[ -n \"$url\" ]; curl -fL -o /tmp/tabby.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/tabby.deb",
+                         "script_root": True},
     "Podman":           {"pkg": "podman"},
     "Modern CLI Pack":  {"pkg": "ripgrep fd-find bat eza fzf zoxide"},
-    "Alacritty":        {"pkg": "alacritty", "flatpak": "org.alacritty.Alacritty"},
+    "Alacritty":        {"pkg": "alacritty"},
     "Beekeeper Studio": {"flatpak": "io.beekeeperstudio.Studio"},
     "Zeal":             {"pkg": "zeal", "flatpak": "org.zealdocs.Zeal"},
     "GitKraken":        {"flatpak": "com.axosoft.GitKraken"},
@@ -12598,7 +12631,13 @@ _CATALOG_INSTALL = {
     "Fish Shell":       {"pkg": "fish"},
     "tmux":             {"pkg": "tmux"},
     "Starship":         {"script": "curl -sS https://starship.rs/install.sh | sh -s -- -y", "script_root": True},
-    "JetBrains Toolbox": {"flatpak": "com.jetbrains.Toolbox"},
+    "JetBrains Toolbox": {"script": "set -e; mkdir -p \"$HOME/Applications\"; "
+                                    "curl -fL -o /tmp/jetbrains-toolbox.tar.gz "
+                                    "https://download.jetbrains.com/toolbox/jetbrains-toolbox-linux.tar.gz; "
+                                    "tar xzf /tmp/jetbrains-toolbox.tar.gz -C \"$HOME/Applications\"; "
+                                    "bin=$(find \"$HOME/Applications\" -maxdepth 2 -type f -name jetbrains-toolbox | head -1); "
+                                    "[ -n \"$bin\" ]; \"$bin\" &"
+                                    "echo \"JetBrains Toolbox launched from $bin\""},
     "Android Studio":   {"flatpak": "com.google.AndroidStudio",
                          "snap": "android-studio", "classic": True},
     # ── System Tools ──
@@ -12646,11 +12685,11 @@ _CATALOG_INSTALL = {
     "Cryptomator":      {"flatpak": "org.cryptomator.Cryptomator"},
     "Bitwarden":        {"flatpak": "com.bitwarden.desktop"},
     "Déjà Dup Backups": {"pkg": "deja-dup", "flatpak": "org.gnome.DejaDup"},
-    "KDE Connect":      {"pkg": "kdeconnect", "flatpak": "org.kde.kdeconnect"},
+    "KDE Connect":      {"pkg": "kdeconnect"},
     "Transmission":     {"pkg": "transmission-gtk", "flatpak": "com.transmissionbt.Transmission"},
     "Deluge":           {"pkg": "deluge", "flatpak": "org.deluge_torrent.deluge"},
     "Pika Backup":      {"flatpak": "org.gnome.World.PikaBackup"},
-    "Proton Pass":      {"flatpak": "me.proton.pass"},
+    "Proton Pass":      {"flatpak": "me.proton.Pass"},
     # ── Utilities ──
     "Flameshot":        {"pkg": "flameshot", "flatpak": "org.flameshot.Flameshot"},
     "CopyQ":            {"pkg": "copyq", "flatpak": "com.github.hluk.copyq"},
@@ -12665,8 +12704,18 @@ _CATALOG_INSTALL = {
     "Kooha":            {"flatpak": "io.github.seadve.Kooha"},
     "Czkawka":          {"flatpak": "com.github.qarmin.czkawka"},
     "OnionShare":       {"pkg": "onionshare", "flatpak": "org.onionshare.OnionShare"},
-    "Ulauncher":        {"flatpak": "io.ulauncher.Ulauncher"},
-    "Espanso":          {"flatpak": "org.espanso.Espanso"},
+    "Ulauncher":        {"pkg": "ulauncher"},
+    "Espanso":          {"script": "set -e; "
+                                    "sess=${XDG_SESSION_TYPE:-x11}; "
+                                    "asset=espanso-debian-x11-amd64.deb; "
+                                    "case \"$sess\" in wayland) asset=espanso-debian-wayland-amd64.deb;; esac; "
+                                    "url=$(curl -fsSL "
+                                    "https://api.github.com/repos/espanso/espanso/releases/latest "
+                                    "| grep -oE \"https://[^\"]+$asset\" | head -1); "
+                                    "[ -n \"$url\" ]; curl -fL -o /tmp/espanso.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/espanso.deb; "
+                                    "espanso service register || true; espanso start || true",
+                         "script_root": True},
     "Variety":          {"pkg": "variety"},
     "Gear Lever":       {"flatpak": "it.mijorus.gearlever"},
     # Ventoy is a portable tool (no apt/snap/flatpak): download the latest Linux
@@ -12705,7 +12754,7 @@ _CATALOG_INSTALL = {
     "Gufw Firewall":    {"pkg": "gufw"},
     "ClamAV + ClamTk":  {"pkg": "clamav clamtk"},
     "Wireshark":        {"pkg": "wireshark", "flatpak": "org.wireshark.Wireshark"},
-    "VeraCrypt":        {"flatpak": "org.veracrypt.VeraCrypt"},
+    "VeraCrypt":        {"pkg": "veracrypt"},
     "Proton VPN":       {"deb": {"name": "protonvpn", "dearmor": False,
                                  "key": "https://repo.protonvpn.com/debian/public_key.asc",
                                  "repo": "https://repo.protonvpn.com/debian stable main",
@@ -12830,12 +12879,15 @@ _CATALOG_INSTALL = {
                                    "gstreamer1.0-plugins-ugly "
                                    "|| sudo apt-get install -y ffmpeg libavcodec-extra; fi",
                          "script_root": True},
-    "1Password":        {"flatpak": "com.1password.1Password"},
+    "1Password":        {"flatpak": "com.onepassword.OnePassword"},
     "Piper":            {"pkg": "piper", "flatpak": "org.freedesktop.Piper"},
     "Helvum":           {"pkg": "helvum", "flatpak": "org.pipewire.Helvum"},
     "qpwgraph":         {"pkg": "qpwgraph", "flatpak": "org.rncbc.qpwgraph"},
-    "Proton Drive":     {"flatpak": "me.proton.Drive"},
-    "Trayscale":        {"flatpak": "dev.trayscale.Trayscale"},
+    # Proton Drive has no Flathub app yet — open the official download page.
+    "Proton Drive":     {"script": "xdg-open https://proton.me/drive/download >/dev/null 2>&1 || "
+                                    "sensible-browser https://proton.me/drive/download >/dev/null 2>&1 || "
+                                    "echo 'Open https://proton.me/drive/download for the Linux package.'"},
+    "Trayscale":        {"flatpak": "dev.deedles.Trayscale"},
     "Caffeine":         {"pkg": "caffeine"},
     "Google Earth Pro": {"flatpak": "com.google.EarthPro"},
     "FFmpeg":           {"pkg": "ffmpeg"},
@@ -13216,7 +13268,6 @@ _ICON_FLATPAK_EXTRA = {
     "Timeshift": "io.github.teejee2008.timeshift",
     "Stacer": "com.github.oguzhaninan.Stacer",
     "Syncthing": "me.kozec.syncthingtk",
-    "JetBrains Toolbox": "com.jetbrains.Toolbox",
     "DaVinci Resolve": "com.blackmagicdesign.resolve",
 }
 
@@ -16622,7 +16673,7 @@ def main():
         print(f"\n{_line}")
         print(f"  {CYAN}{BOLD}⚡ Using Claude (Anthropic){R}{DIM} — best quality, ~$0.01/session{R}")
         print(f"  {DIM}Prefer free? Press {BOLD}s{R}{DIM} → {BOLD}8{R}{DIM} to switch to "
-              f"Gemini or Groq (both free).{R}")
+              f"Gemini, Groq, Z.ai, or another free provider.{R}")
         print(f"{_line}")
 
     while True:

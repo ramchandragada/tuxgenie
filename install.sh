@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Auto-detect the .deb file next to this script (works for any version)
 DEB=$(ls "$SCRIPT_DIR"/tuxgenie_*_all.deb 2>/dev/null | sort -V | tail -1)
-VERSION=$(echo "$DEB" | grep -oP '(?<=tuxgenie_)[\d.]+(?=_all\.deb)' 2>/dev/null || echo "6.83.0")
+VERSION=$(echo "$DEB" | grep -oP '(?<=tuxgenie_)[\d.]+(?=_all\.deb)' 2>/dev/null || echo "7.19.0")
 
 install_tuxgenie() {
     echo ""

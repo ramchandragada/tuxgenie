@@ -17,7 +17,7 @@
     ██║   ╚██████╔╝██╔╝ ██╗╚██████╔╝███████╗██║ ╚████║██║███████╗
     ╚═╝    ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝╚══════╝
 
-  TuxGenie — Claude or Gemini · Free forever · Open Source
+  TuxGenie — Free AI (Gemini · Groq · Z.ai · …) or Claude · Open Source
 ```
 
 ---
@@ -322,7 +322,7 @@ You describe the problem
   System context collected silently (OS, kernel, services, logs…)
         │
         ▼
-  AI provider (Claude or Gemini) → structured fix plan with risk levels
+  AI provider (Gemini / Groq / Z.ai / … / Claude) → structured fix plan with risk levels
         │
         ▼
   Each step shown with risk badge — you approve or skip

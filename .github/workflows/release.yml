@@ -117,6 +117,9 @@ jobs:
             **Pick your AI on first run — no credit card needed**
             - **Google Gemini** — free tier: https://aistudio.google.com/apikey
             - **Groq** — free tier, very fast: https://console.groq.com/keys
+            - **Z.ai** — free GLM Flash: https://z.ai/manage-apikey/apikey-list
+            - **SambaNova** — free tier: https://cloud.sambanova.ai/apis
+            - **OpenRouter** — free models: https://openrouter.ai/keys
             - **Anthropic Claude** — best quality (~$0.01/session): https://console.anthropic.com
 
             You can also skip the prompt with an env var:
@@ -124,6 +127,8 @@ jobs:
             export GEMINI_API_KEY="..."          # Google Gemini (free tier)
             # or
             export GROQ_API_KEY="gsk_..."         # Groq (free tier)
+            # or
+            export ZAI_API_KEY="..."              # Z.ai GLM Flash (free)
             # or
             export ANTHROPIC_API_KEY="sk-ant-..." # Anthropic Claude
             ```

@@ -204,7 +204,7 @@ DEB_OUT = f"{PACKAGE}_{VERSION}_{ARCH}.deb"
 # ── Read the main Python script ───────────────────────────────────────────────
 src = os.path.join(SCRIPT_DIR, "tuxgenie.py")
 if not os.path.exists(src):
-    sys.exit(f"ERROR: {src} not found - run from the ai-terminal directory.")
+    sys.exit(f"ERROR: {src} not found - run from the tuxgenie directory.")
 
 with open(src, "rb") as fh:
     TUXGENIE_PY = fh.read()
@@ -349,7 +349,7 @@ Conflicts: ai-terminal, tuxgenie (<< {VERSION})
 Replaces: ai-terminal, tuxgenie (<< {VERSION})
 Provides: ai-terminal
 Maintainer: TuxGenie Project <ramchandragada@users.noreply.github.com>
-Homepage: https://github.com/ramchandragada/tuxgenie
+Homepage: https://tuxgenie.com
 Description: AI-powered Linux assistant (plain-English troubleshooting)
  TuxGenie fixes Linux problems described in plain English. Features include: a
  system health dashboard, network diagnostics, security audit, disk management,
@@ -360,9 +360,9 @@ Description: AI-powered Linux assistant (plain-English troubleshooting)
  Desktop: Unified Shell (tuxgenie-app) — modern control deck + live terminal in
  one window. Falls back to tuxgenie --gui (Tk) or a plain terminal if needed.
  .
- Free to run: choose a free AI provider on first launch (Google Gemini or Groq,
- no credit card), local Ollama, or Anthropic Claude for best quality. Common
- terminal commands run with no key at all.
+ Free to run: choose a free AI provider on first launch (Google Gemini, Groq,
+ Z.ai, SambaNova, or OpenRouter — no credit card), local Ollama, or Anthropic
+ Claude for best quality. Common terminal commands run with no key at all.
 """.encode()
 
 POSTINST = b"""\
@@ -377,11 +377,12 @@ case "$1" in
 
     # NOTE: no dependency installation happens here.
     # Debian policy forbids network access from maintainer scripts, and the free
-    # providers (Google Gemini, Groq) need no extra packages at all - TuxGenie
-    # talks to them over the standard-library urllib. The 'anthropic' SDK is only
-    # needed if the user explicitly connects Claude, and in that case the app
-    # installs it lazily, in user space, on first use (see _bootstrap_anthropic_sdk
-    # in tuxgenie.py). So there is nothing to fetch as root at install time.
+    # providers (Google Gemini, Groq, Z.ai, ...) need no extra packages at all -
+    # TuxGenie talks to them over the standard-library urllib. The 'anthropic'
+    # SDK is only needed if the user explicitly connects Claude, and in that case
+    # the app installs it lazily, in user space, on first use (see
+    # _bootstrap_anthropic_sdk in tuxgenie.py). So there is nothing to fetch as
+    # root at install time.
 
     # Always (re)write tuxgenie-gui launcher to keep the terminal-detection
     # logic in sync with create_deb.py. This is the same script that ships
@@ -504,6 +505,9 @@ DESKTOPENTRY
     echo "  Pick your AI on first run - no credit card needed:"
     echo "    Google Gemini  https://aistudio.google.com/apikey"
     echo "    Groq           https://console.groq.com/keys"
+    echo "    Z.ai           https://z.ai/manage-apikey/apikey-list"
+    echo "    SambaNova      https://cloud.sambanova.ai/apis"
+    echo "    OpenRouter     https://openrouter.ai/keys"
     echo "    Claude         https://console.anthropic.com  (optional, paid)"
     echo "  Common terminal commands work with no key at all."
     echo ""

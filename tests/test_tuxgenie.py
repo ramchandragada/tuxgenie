@@ -1206,15 +1206,20 @@ class TestSetupWizardDefault:
         kind, key = self._wizard(["2", "gsk_" + "a" * 40], monkeypatch)
         assert kind == "groq"
 
-    def test_three_is_ollama(self, monkeypatch):
-        # Phase C: [3] = Ollama (local). Confirm even when daemon is down.
+    def test_three_is_zai(self, monkeypatch):
+        kind, key = self._wizard(["3", "zai_" + "a" * 40], monkeypatch)
+        assert kind == "zai"
+        assert key.startswith("zai_")
+
+    def test_four_is_ollama(self, monkeypatch):
+        # Phase C: [4] = Ollama (local). Confirm even when daemon is down.
         monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: False)
-        kind, key = self._wizard(["3", "y"], monkeypatch)
+        kind, key = self._wizard(["4", "y"], monkeypatch)
         assert kind == "ollama"
         assert key == tg._OLLAMA_LOCAL_KEY
 
-    def test_four_is_claude(self, monkeypatch):
-        kind, key = self._wizard(["4", "sk-ant-" + "a" * 70], monkeypatch)
+    def test_five_is_claude(self, monkeypatch):
+        kind, key = self._wizard(["5", "sk-ant-" + "a" * 70], monkeypatch)
         assert kind == "claude"
 
     def test_s_skips(self, monkeypatch):
