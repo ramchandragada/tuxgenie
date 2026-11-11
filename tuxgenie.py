@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.21.0"
+__version__ = "7.22.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -66,6 +66,28 @@ def _safe_input(prompt=""):
     return _builtin_input(prompt)
 import builtins  # noqa: E402 — must follow _safe_input definition to override input()
 builtins.input = _safe_input
+
+
+def _prompt_secret(prompt: str) -> str:
+    """Read an API key or token without echoing it (getpass)."""
+    import getpass
+    return getpass.getpass(prompt).strip()
+
+
+_PENDING_LINES = []
+
+
+def _queue_user_line(text: str) -> None:
+    """Keep a line typed at the wrong prompt (a rating, for example) and run it next."""
+    t = (text or "").strip()
+    if t:
+        _PENDING_LINES.append(t)
+
+
+def _take_queued_line():
+    if _PENDING_LINES:
+        return _PENDING_LINES.pop(0)
+    return None
 
 # Words that mean "go back to the menu / cancel" at any feature prompt. These
 # are never treated as a task or sent to the AI — every screen honours them.
@@ -202,6 +224,19 @@ def trunc(text, max_lines):
         return text
     hidden = len(lines) - max_lines
     return "\n".join(lines[:max_lines]) + f"\n{C(f'  … [{hidden} more lines]', DIM)}"
+
+def _read_user_line(prompt: str) -> str:
+    """Show `prompt` once, then read a line.
+
+    The main prompt starts with a newline and contains ❯. GNU readline
+    mis-counts that width and redraws the whole prompt, so pexpect (and a
+    wide terminal) shows it twice. Printing it ourselves and reading with
+    an empty readline prompt leaves a single copy.
+    """
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    return input("")
+
 
 def _cwd_label(maxlen=34):
     """Home-relative current directory for the prompt, like a real shell.
@@ -542,7 +577,7 @@ class AnthropicBackend:
             print(f"  {DIM}Terminal commands work without a key — always free.{R}")
             print(f"  Get your free key at: {CYAN}https://console.anthropic.com{R}\n")
             try:
-                key = input("  Paste API key now (or press Enter to cancel): ").strip()
+                key = _prompt_secret("  Paste API key (hidden, or Enter to cancel): ")
             except (EOFError, KeyboardInterrupt):
                 return ""
             if not key:
@@ -995,7 +1030,7 @@ class GeminiBackend:
         print(f"\n  {YELLOW}{BOLD}🔑 AI features need a Google Gemini API key.{R}")
         print(f"  {DIM}It's free — no credit card. Get one at:{R} {CYAN}https://aistudio.google.com/apikey{R}\n")
         try:
-            key = input("  Paste Gemini key now (or press Enter to cancel): ").strip()
+            key = _prompt_secret("  Paste Gemini key (hidden, or Enter to cancel): ")
         except (EOFError, KeyboardInterrupt):
             return False
         if not key:
@@ -1591,7 +1626,7 @@ class OpenAICompatBackend:
         pre = "It's free — no credit card. " if p.get("free") else ""
         print(f"  {DIM}{pre}Get one at:{R} {CYAN}{p['keys_url']}{R}\n")
         try:
-            key = input(f"  Paste {p['label']} key now (or press Enter to cancel): ").strip()
+            key = _prompt_secret(f"  Paste {p['label']} key (hidden, or Enter to cancel): ")
         except (EOFError, KeyboardInterrupt):
             return False
         if not key:
@@ -1679,7 +1714,7 @@ def _setup_wizard(cfg):
         print(f"  {DIM}& responses to improve their products. Great for everyday use —")
         print(f"  {DIM}pick Claude or Ollama for confidential machines. Full details: PRIVACY.md{R}")
         try:
-            key = input("  Paste your Gemini API key: ").strip()
+            key = _prompt_secret("  Paste your Gemini API key (hidden): ")
         except (EOFError, KeyboardInterrupt):
             return ("skip", None)
         return ("gemini", key) if key else ("skip", None)
@@ -1688,7 +1723,7 @@ def _setup_wizard(cfg):
         print(f"  {DIM}Heads-up: check Groq's terms for how free-tier data is used.")
         print(f"  {DIM}Great for everyday use — pick Claude or Ollama for confidential machines.{R}")
         try:
-            key = input("  Paste your Groq API key: ").strip()
+            key = _prompt_secret("  Paste your Groq API key (hidden): ")
         except (EOFError, KeyboardInterrupt):
             return ("skip", None)
         return ("groq", key) if key else ("skip", None)
@@ -1698,7 +1733,7 @@ def _setup_wizard(cfg):
         print(f"  {DIM}training unless you opt in — still prefer Claude/Ollama for the most")
         print(f"  {DIM}sensitive systems. Full details: PRIVACY.md{R}")
         try:
-            key = input("  Paste your Z.ai API key: ").strip()
+            key = _prompt_secret("  Paste your Z.ai API key (hidden): ")
         except (EOFError, KeyboardInterrupt):
             return ("skip", None)
         return ("zai", key) if key else ("skip", None)
@@ -1721,7 +1756,7 @@ def _setup_wizard(cfg):
     if choice == "5":
         print(f"\n  {DIM}Claude key: {CYAN}https://console.anthropic.com{R}")
         try:
-            key = input("  Paste your Anthropic API key: ").strip()
+            key = _prompt_secret("  Paste your Anthropic API key (hidden): ")
         except (EOFError, KeyboardInterrupt):
             return ("skip", None)
         return ("claude", key) if key else ("skip", None)
@@ -1876,6 +1911,60 @@ def _is_transient_ai_error(exc) -> bool:
     return any(s in m for s in signals)
 
 
+def _is_auth_failover_error(exc) -> bool:
+    """A saved free key was rejected. Try the next free provider; don't stop the turn."""
+    m = str(exc).lower()
+    return any(s in m for s in (
+        "http 401", "(401", "http 403", "(403", "unauthorized",
+        "rejected the api key", "invalid api key", "invalid x-api-key",
+    ))
+
+
+def _is_oversized_ai_error(exc) -> bool:
+    """The request was too large for this provider (HTTP 413). Shrink and move on."""
+    m = str(exc).lower()
+    return any(s in m for s in (
+        "http 413", "(413", "request too large", "payload too large",
+        "request entity too large", "context length", "too many tokens",
+    ))
+
+
+def _should_failover_ai_error(exc) -> bool:
+    """Free→free failover. Covers rate limits AND a bad key / oversized request
+    on one provider, so one 401 or 413 does not end the turn. Never a reason
+    to switch to paid Claude by itself — Claude stays behind an explicit yes."""
+    return (_is_transient_ai_error(exc) or _is_auth_failover_error(exc)
+            or _is_oversized_ai_error(exc))
+
+
+def _shrink_messages(messages):
+    """Shorten tool results before retrying a provider that returned HTTP 413."""
+    out = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            out.append(msg)
+            continue
+        msg = dict(msg)
+        content = msg.get("content")
+        if isinstance(content, str) and len(content) > 1500:
+            msg["content"] = content[:1500] + "\n…[truncated]"
+        elif isinstance(content, list):
+            shrunk = []
+            for block in content:
+                if isinstance(block, dict):
+                    block = dict(block)
+                    for key in ("content", "text"):
+                        val = block.get(key)
+                        if isinstance(val, str) and len(val) > 1200:
+                            block[key] = val[:1200] + "\n…[truncated]"
+                    shrunk.append(block)
+                else:
+                    shrunk.append(block)
+            msg["content"] = shrunk
+        out.append(msg)
+    return out
+
+
 def _retry_after_seconds(exc):
     """Best-effort parse of a provider's 'wait N seconds' hint out of a 429
     error message, or None. Recognises Groq's 'try again in 12.5s', Gemini's
@@ -2016,13 +2105,23 @@ def load_backend():
     #      choice) — then it's sticky. main() warns that free options exist.
     #   2. Ollama sticky when the user explicitly chose local AI AND the daemon
     #      is reachable (Phase C — privacy / offline).
-    #   3. Otherwise ALWAYS prefer free Gemini, then free OpenAI-compatible
-    #      cloud providers in registry order (Groq, …), then Ollama if reachable.
-    #   4. If the only key present is Claude's, use it (with the same warning).
+    #   3. An explicit Settings choice of a free provider sticks across restarts
+    #      while that provider's key is still saved (BUG-07). Gemini does not
+    #      override Groq/Z.ai/SambaNova/OpenRouter just because its key exists.
+    #   4. Otherwise (provider unset, or the chosen provider has no key) prefer
+    #      free Gemini, then free OpenAI-compatible providers in registry order,
+    #      then Ollama if reachable.
+    #   5. If the only key present is Claude's, use it (with the same warning).
     if provider == "claude" and ckey:
         return _make_backend(cfg, "claude", ckey)
     if provider == "ollama" and okey:
         return _make_backend(cfg, "ollama", okey)
+    if provider == "gemini" and gkey:
+        return _make_backend(cfg, "gemini", gkey)
+    if provider in _OAI_PROVIDERS and _OAI_PROVIDERS[provider].get("free"):
+        chosen_key = _provider_key(provider, cfg)
+        if chosen_key:
+            return _make_backend(cfg, provider, chosen_key)
     if gkey:
         if provider != "gemini":
             save_cfg({"provider": "gemini"})
@@ -2111,7 +2210,7 @@ def feat_set_api_key(backend):
     print(f"\n  Get your key at: {CYAN}{BOLD}{url}{R}")
     print(f"  {DIM}{note}{R}\n")
     try:
-        key = input("  Paste API key (or press Enter to cancel): ").strip()
+        key = _prompt_secret("  Paste API key (hidden, or Enter to cancel): ")
     except (EOFError, KeyboardInterrupt):
         return
     if not key:
@@ -2321,7 +2420,7 @@ def feat_settings(backend, bctx, slog):
             if not k:
                 print(f"  {DIM}Free Gemini key: {CYAN}https://aistudio.google.com/apikey{R}")
                 try:
-                    k = input("  Paste your Gemini API key: ").strip()
+                    k = _prompt_secret("  Paste your Gemini API key (hidden): ")
                 except (EOFError, KeyboardInterrupt):
                     return
                 if not k:
@@ -2335,15 +2434,15 @@ def feat_settings(backend, bctx, slog):
             if not k:
                 print(f"  {DIM}Free Groq key: {CYAN}https://console.groq.com/keys{R}")
                 try:
-                    k = input("  Paste your Groq API key: ").strip()
+                    k = _prompt_secret("  Paste your Groq API key (hidden): ")
                 except (EOFError, KeyboardInterrupt):
                     return
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "groq", "groq_api_key": k})
-            ok("Now using Groq for this session.")
-            info("On next launch TuxGenie prefers Gemini while a Gemini key is saved "
-                 "(Settings → 8).")
+            ok("Now using Groq.")
+            info("Saved. TuxGenie keeps this provider next time it starts, "
+                 "even if another free key is also saved.")
         elif p == "3":
             print(f"  {DIM}Note: Z.ai's free Flash models have rate limits (concurrency);")
             print(f"  {DIM}API content is not used for training unless you opt in. Prefer")
@@ -2353,15 +2452,15 @@ def feat_settings(backend, bctx, slog):
                 print(f"  {DIM}Free Z.ai key: {CYAN}https://z.ai/manage-apikey/apikey-list{R}")
                 print(f"  {DIM}Create a {BOLD}Standard API Key{R}{DIM} (not a Coding Plan key).{R}")
                 try:
-                    k = input("  Paste your Z.ai API key: ").strip()
+                    k = _prompt_secret("  Paste your Z.ai API key (hidden): ")
                 except (EOFError, KeyboardInterrupt):
                     return
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "zai", "zai_api_key": k, "zai_model": "glm-4.7-flash"})
-            ok("Now using Z.ai GLM Flash for this session.")
-            info("On next launch TuxGenie prefers Gemini while a Gemini key is saved "
-                 "(Settings → 8).")
+            ok("Now using Z.ai GLM Flash.")
+            info("Saved. TuxGenie keeps this provider next time it starts, "
+                 "even if another free key is also saved.")
         elif p == "4":
             print(f"  {DIM}Note: SambaNova's free tier is rate-limited (a daily token cap);")
             print(f"  {DIM}check SambaNova's terms for how free-tier data is used. Prefer")
@@ -2370,15 +2469,15 @@ def feat_settings(backend, bctx, slog):
             if not k:
                 print(f"  {DIM}Free SambaNova key: {CYAN}https://cloud.sambanova.ai/apis{R}")
                 try:
-                    k = input("  Paste your SambaNova API key: ").strip()
+                    k = _prompt_secret("  Paste your SambaNova API key (hidden): ")
                 except (EOFError, KeyboardInterrupt):
                     return
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "sambanova", "sambanova_api_key": k})
-            ok("Now using SambaNova for this session.")
-            info("On next launch TuxGenie prefers Gemini while a Gemini key is saved "
-                 "(Settings → 8).")
+            ok("Now using SambaNova.")
+            info("Saved. TuxGenie keeps this provider next time it starts, "
+                 "even if another free key is also saved.")
         elif p == "5":
             print(f"  {DIM}Note: OpenRouter's free models are rate-limited (~20/min, ~50/day);")
             print(f"  {DIM}check OpenRouter's terms for how free-tier data is used. Prefer")
@@ -2387,15 +2486,15 @@ def feat_settings(backend, bctx, slog):
             if not k:
                 print(f"  {DIM}Free OpenRouter key: {CYAN}https://openrouter.ai/keys{R}")
                 try:
-                    k = input("  Paste your OpenRouter API key (sk-or-…): ").strip()
+                    k = _prompt_secret("  Paste your OpenRouter API key (sk-or-…, hidden): ")
                 except (EOFError, KeyboardInterrupt):
                     return
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "openrouter", "openrouter_api_key": k})
-            ok("Now using OpenRouter for this session.")
-            info("On next launch TuxGenie prefers Gemini while a Gemini key is saved "
-                 "(Settings → 8).")
+            ok("Now using OpenRouter.")
+            info("Saved. TuxGenie keeps this provider next time it starts, "
+                 "even if another free key is also saved.")
         elif p == "6":
             if not _ollama_reachable():
                 warn("Ollama is not running on this PC yet.")
@@ -2419,7 +2518,7 @@ def feat_settings(backend, bctx, slog):
             if not k:
                 print(f"  {DIM}Get your key at: {CYAN}https://console.anthropic.com{R}")
                 try:
-                    k = input("  Paste your Anthropic API key (sk-ant-…): ").strip()
+                    k = _prompt_secret("  Paste your Anthropic API key (sk-ant-…, hidden): ")
                 except (EOFError, KeyboardInterrupt):
                     return
                 if not k:
@@ -2587,6 +2686,30 @@ def _debian_flavour(osr=None):
     if did == "debian" or "debian" in like:
         return "debian"
     return did or "unknown"
+
+
+def _is_ubuntu_family(osr=None) -> bool:
+    """Ubuntu and derivatives (Mint, Pop!_OS, Zorin, elementary, …).
+
+    Gated on os-release ID / ID_LIKE so Debian and other families keep
+    their existing package names and install order.
+    """
+    osr = osr if osr is not None else _os_release_map()
+    did = (osr.get("ID") or "").lower()
+    like = (osr.get("ID_LIKE") or "").lower()
+    if did in ("ubuntu", "linuxmint", "mint", "pop", "zorin", "elementary",
+               "neon", "tuxedo", "kubuntu", "xubuntu", "lubuntu"):
+        return True
+    return "ubuntu" in like.split()
+
+
+# Apps Ubuntu ships as snaps. On that family, install the snap once — don't
+# also apt-install the transitional deb and a second Flatpak copy.
+_UBUNTU_SNAP_PREFERRED = {
+    "Mozilla Firefox": "firefox",
+    "Chromium": "chromium",
+    "Thunderbird": "thunderbird",
+}
 
 
 def desktop_family(desktop: str = "") -> str:
@@ -3430,7 +3553,7 @@ def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=
             return f"BLOCKED: TuxGenie does not read credential files ({path})."
         try:
             with open(path) as f:
-                content = f.read(8000)
+                content = f.read(3500)
             print(f"\n  {CYAN}{BOLD}Read file{R}  {DIM}{path}{R}")
             return content
         except Exception as e:
@@ -3549,10 +3672,12 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                 return
             except Exception as e:
                 print(" " * 40, end="\r")
-                # Auto-switch to another FREE provider on a limit/outage (never
-                # Claude), then retry this turn. Cap the switches so two failing
-                # providers can't bounce back and forth forever.
-                if _is_transient_ai_error(e) and _failover_tries < _MAX_FAILOVERS:
+                # Auto-switch to another FREE provider on a limit, a rejected key
+                # (401/403), or an oversized request (413). Never Claude — that
+                # stays behind an explicit yes after the free rotation is spent.
+                if _should_failover_ai_error(e) and _failover_tries < _MAX_FAILOVERS:
+                    if _is_oversized_ai_error(e):
+                        messages = _shrink_messages(messages)
                     nb = _failover_backend(backend, exclude=_tried_providers)
                     if nb is not None:
                         _failover_tries += 1
@@ -3584,9 +3709,9 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                         _failover_tries = 0
                         _tried_providers = {_provider_name(backend)}
                         continue
-                # Transient but we can't (or shouldn't) keep switching — the free
-                # providers are unavailable right now.
-                if _is_transient_ai_error(e):
+                # Free rotation spent (limits, rejected keys, or oversized requests).
+                # Offer Claude only with an explicit yes — never a silent switch.
+                if _should_failover_ai_error(e):
                     _provider_errors[_provider_name(backend)] = _short_reason(e)
                     # Free rotation is spent — if Claude is connected, OFFER it
                     # (paid, so only with an explicit yes). On yes, continue the
@@ -3623,7 +3748,20 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                     # messages — show them verbatim (never the Anthropic classifier,
                     # which would mislabel e.g. a Groq quota error as an Anthropic one).
                     print(f"  {RED}{e}{R}")
-                    print(f"  {DIM}Tip: press {BOLD}k{R}{DIM} to change the key · Settings → 8 to switch AI provider.{R}")
+                    _low = str(e).lower()
+                    if any(s in _low for s in (
+                            "connection refused", "network", "timed out", "timeout",
+                            "name or service", "no route to host", "offline")):
+                        print(f"  {DIM}You seem to be offline (couldn't reach the AI). "
+                              f"Built-in tools still work: try {BOLD}77{R}{DIM} for apps or "
+                              f"{BOLD}2{R}{DIM} for health.{R}")
+                    elif _is_auth_failover_error(e):
+                        print(f"  {DIM}That provider rejected its key. The other free providers "
+                              f"were tried too. Fix it later in Settings → 8 "
+                              f"(or press {BOLD}k{R}{DIM}).{R}")
+                    else:
+                        print(f"  {DIM}Tip: press {BOLD}k{R}{DIM} to change the key · "
+                              f"Settings → 8 to switch AI provider.{R}")
                 # Report a genuinely unexpected provider error (auth/network stay
                 # excluded as noise).
                 if not _is_user_actionable_error(e):
@@ -3772,7 +3910,120 @@ def _hits_protected_path(target: str) -> bool:
     t = _norm_target(target)
     if t in _PROTECTED_TARGETS:
         return True
+    # `rm -rf /home/<user>` wipes that account. A path *under* the home
+    # (`/home/<user>/project`) stays allowed.
+    if re.fullmatch(r"/home/[^/]+", t):
+        return True
     return any(t == d or t.startswith(d + "/") for d in _CRITICAL_SYSTEM_DIRS)
+
+
+_CRITICAL_CONFIGS = {
+    "/etc/fstab", "/etc/passwd", "/etc/shadow", "/etc/gshadow",
+    "/etc/sudoers", "/etc/group", "/etc/default/grub", "/boot/grub/grub.cfg",
+}
+_PROTECTED_PURGE_EXACT = {
+    "sudo", "python3", "apt", "dpkg", "systemd",
+    "linux-generic", "linux-image-generic", "linux-headers-generic",
+}
+
+
+def _is_critical_config(target: str) -> bool:
+    t = _norm_target(target)
+    if t in _CRITICAL_CONFIGS or t == "/proc/sysrq-trigger":
+        return True
+    return t.startswith("/etc/sudoers.d/")
+
+
+def _is_protected_pkg(name: str) -> bool:
+    n = (name or "").split("=", 1)[0].split(":", 1)[0].lower()
+    if n in _PROTECTED_PURGE_EXACT:
+        return True
+    if re.fullmatch(r"python3\.\d+", n):
+        return True
+    return n.startswith("linux-image") or n.startswith("linux-headers")
+
+
+def _whole_tree(target: str) -> bool:
+    """A protected directory itself (not a file inside it)."""
+    t = _norm_target(target)
+    if t in _PROTECTED_TARGETS:
+        return True
+    return bool(re.fullmatch(r"/home/[^/]+", t))
+
+
+def _rmtree_in_code(payload: str) -> bool:
+    """python/perl one-liners that delete the filesystem root or home."""
+    if not payload:
+        return False
+    if re.search(
+            r"""rmtree\s*\(\s*['"]\s*(?:/|~|\$\{?HOME\}?)\s*['"]""",
+            payload):
+        return True
+    if re.search(r"""shutil\.rmtree\s*\(\s*['"]/?['"]""", payload):
+        return True
+    return False
+
+
+def _embedded_shell_commands(text: str) -> list:
+    """Shell strings hidden inside perl/python/ruby/node one-liners.
+
+    `perl -e 'system("rm -rf /")'` is not a shell `rm` until the string
+    argument of system/exec/subprocess/backticks is pulled back out.
+    """
+    if not text:
+        return []
+    found = []
+    found.extend(re.findall(r"`([^`]+)`", text))
+    found.extend(re.findall(r"\bqx\s*[\(\{]([^)}\n]+)", text))
+    calls = (
+        r"os\.system|os\.popen|"
+        r"subprocess\.(?:call|run|check_call|check_output|Popen|getoutput|getstatusoutput)|"
+        r"child_process\.(?:execSync|execFileSync|execFile|exec|spawnSync|spawn)|"
+        r"\bsystem|\bexec|\bpopen"
+    )
+    found.extend(re.findall(
+        rf"(?:{calls})\s*\(\s*['\"](.+?)['\"]", text, flags=re.I | re.S))
+    found.extend(re.findall(
+        r"""(?:\bsystem|\bexec|\bpopen)\s+['"](.+?)['"]""", text, flags=re.I | re.S))
+    for inner in re.findall(rf"(?:{calls})\s*\(\s*\[([^\]]+)\]", text, flags=re.I | re.S):
+        parts = re.findall(r"""['"]([^'"]+)['"]""", inner)
+        if parts:
+            found.append(" ".join(parts))
+    return found
+
+
+def _decodes_into_shell(cmd: str) -> bool:
+    """`base64 -d | sh` (and the same with bash) runs a hidden payload."""
+    for seg in re.split(r"&&|\|\||;|\n", cmd or ""):
+        stages = [s.strip() for s in seg.split("|")]
+        if len(stages) < 2:
+            continue
+        decoded = False
+        shell = False
+        for stage in stages:
+            if re.search(r"\bbase64\b", stage) and re.search(r"(?:^|\s)(?:-d|--decode)\b", stage):
+                decoded = True
+            if re.match(r"^\s*(?:sudo\s+)?(?:sh|bash|dash|zsh|ksh)\b", stage):
+                shell = True
+        if decoded and shell:
+            return True
+    return False
+
+
+def _eval_or_interp_payload(toks):
+    """Script text from `eval '…'`, `python -c '…'`, or `perl -e '…'`."""
+    if not toks:
+        return None
+    prog = os.path.basename(toks[0])
+    if prog == "eval" and len(toks) >= 2:
+        return " ".join(toks[1:])
+    if prog in ("python", "python2", "python3", "perl", "ruby", "node", "nodejs"):
+        for flag in ("-c", "-e"):
+            if flag in toks:
+                i = toks.index(flag)
+                if i + 1 < len(toks):
+                    return toks[i + 1]
+    return None
 
 
 def _norm_target(tok: str) -> str:
@@ -3928,6 +4179,9 @@ def _argv_is_dangerous(toks) -> bool:
         # `cp /dev/zero /dev/sda` (and friends) wipe a disk.
         if any(_BLOCK_DEVICE_RE.match(_norm_target(a)) for a in args):
             return True
+        positional = [a for a in args if not a.startswith("-")]
+        if positional and (_is_critical_config(positional[-1]) or _whole_tree(positional[-1])):
+            return True
 
     if prog == "chmod":
         # Changing perms on / or a top-level system dir (esp. recursively) is
@@ -3953,6 +4207,40 @@ def _argv_is_dangerous(toks) -> bool:
     if prog == "tee":
         if any(_BLOCK_DEVICE_RE.match(_norm_target(a)) for a in args):
             return True
+        if any(_is_critical_config(a) for a in args if not a.startswith("-")):
+            return True
+
+    if prog == "mv":
+        positional = [a for a in args if not a.startswith("-")]
+        if any(_whole_tree(a) or _is_critical_config(a) for a in positional):
+            return True
+
+    if prog in ("ln", "link"):
+        positional = [a for a in args if not a.startswith("-")]
+        if positional and (_is_critical_config(positional[-1]) or _whole_tree(positional[-1])):
+            return True
+
+    if prog == "xargs" and "rm" in args:
+        joined = " ".join(args)
+        if "--recursive" in args or re.search(r"(?:^|\s)-[A-Za-z]*r", joined):
+            return True
+
+    if prog in ("grub-install", "grub2-install"):
+        if not any(a in ("--version", "--help", "-V") for a in args):
+            return True
+
+    if prog == "crontab" and any(a in ("-r", "--remove") for a in args):
+        return True
+
+    if prog in ("apt", "apt-get", "aptitude") and any(
+            a in ("remove", "purge", "autoremove", "--purge") for a in args):
+        for a in args:
+            if a.startswith("-") or a in (
+                    "remove", "purge", "autoremove", "install", "update",
+                    "--purge", "-y", "--yes"):
+                continue
+            if _is_protected_pkg(a):
+                return True
 
     if prog == "kill":
         # kill -9 -1 / kill -- -1 = every process
@@ -3969,36 +4257,47 @@ def _argv_is_dangerous(toks) -> bool:
     return False
 
 
-def is_dangerous(cmd):
+def is_dangerous(cmd, _depth=0):
     cmd = cmd or ""
+    if _depth > 4:
+        return True
     # Layer 1: fast regex denylist (redirects to devices, sudo shells, etc.)
     if any(re.search(p, cmd) for p in DANGER_RE):
         return True
     # Layer 1b: whitespace-tolerant classic fork bomb, e.g. ": () { : | : & } ; :"
     if re.search(r":\(\)\{:\|:&\};:", re.sub(r"\s+", "", cmd)):
         return True
-    # Layer 1c: classic sysrq / block-device redirects the argv layer may miss.
+    # Layer 1c: sysrq, fstab overwrites, decode-to-shell, interpreter rmtree.
+    # `curl|sh` is NOT a hard block — official installers use it. It is always
+    # confirmed via `_high_risk_reason` (including commands the user types).
     if re.search(r">\s*/proc/sysrq-trigger\b", cmd):
         return True
-    if re.search(r"\b(?:curl|wget|fetch)\b[^|]*\|\s*(?:ba|z|k|da)?sh\b", cmd, re.I):
-        # Remote pipe-to-shell is high-risk for confirm, but `bash <(curl …)`
-        # process substitution is hard-block territory for auto paths.
-        pass
+    if re.search(r"(?:>>?|\btee\b)\s+/etc/(?:fstab|passwd|shadow|sudoers)\b", cmd):
+        return True
     if re.search(r"\b(?:ba|z|k|da)?sh\s+<\s*\(\s*(?:curl|wget|fetch)\b", cmd, re.I):
         return True
+    if _decodes_into_shell(cmd) or _rmtree_in_code(cmd):
+        return True
+    # Interpreter one-liners that hide a destructive shell command:
+    # perl -e 'system("rm -rf /")', python -c os.system(...), node exec(...).
+    if re.search(r"\b(?:python[23]?|perl|ruby|node(?:js)?)\b", cmd):
+        for inner in _embedded_shell_commands(cmd):
+            inner = (inner or "").strip()
+            if inner and inner != cmd.strip() and is_dangerous(inner, _depth + 1):
+                return True
     # Layer 2: argv-aware analysis of each simple command in the pipeline/chain.
     try:
         for toks in _split_simple_commands(cmd):
             if _argv_is_dangerous(toks):
                 return True
-            # Recurse into `bash -c '…'` / `sh -c "…"` payloads.
-            payload = _shell_c_payload(toks)
-            if payload and is_dangerous(payload):
+            # Recurse into `bash -c`, `eval`, and `python -c` / `perl -e` payloads.
+            payload = _shell_c_payload(toks) or _eval_or_interp_payload(toks)
+            if payload and (_rmtree_in_code(payload) or is_dangerous(payload, _depth + 1)):
                 return True
     except Exception:
         # Never let the safety check itself crash — but do not silently pass a
         # command we failed to analyse if it *looks* destructive.
-        return bool(re.search(r"\b(rm|dd|mkfs|wipefs|shred)\b", cmd))
+        return bool(re.search(r"\b(rm|dd|mkfs|wipefs|shred|rmtree)\b", cmd))
     return False
 
 
@@ -4048,7 +4347,7 @@ _WRITE_SUBCMDS = {
     "timedatectl": {"set-time", "set-timezone", "set-ntp", "set-local-rtc"},
     "ip":         {"add", "del", "delete", "set", "flush", "change", "replace"},
     "nmcli":      {"up", "down", "add", "del", "delete", "modify", "edit",
-                   "connect", "disconnect"},
+                   "connect", "disconnect", "reload", "reapply", "load", "clone"},
     "rfkill":     {"block", "unblock"},
     "docker":     {"run", "rm", "rmi", "stop", "start", "kill", "exec", "build",
                    "pull", "push", "prune", "system", "volume", "network", "create",
@@ -4059,7 +4358,7 @@ _WRITE_SUBCMDS = {
                    "drain", "cordon", "uncordon"},
     "git":        {"push", "reset", "clean", "rebase", "commit", "checkout", "switch",
                    "merge", "rm", "mv", "stash", "cherry-pick", "revert", "am",
-                   "apply", "gc", "prune", "config"},
+                   "apply", "gc", "prune", "config", "fetch", "pull"},
     "snap":       {"install", "remove", "refresh", "revert", "disable", "enable",
                    "alias", "stop", "start", "set"},
     "flatpak":    {"install", "uninstall", "update", "remove", "override", "repair"},
@@ -4093,8 +4392,28 @@ def _toks_are_read_only(toks) -> bool:
     if writes and any(a in writes for a in rest):
         return False
     if prog == "find" and any(
-            a in ("-delete", "-exec", "-execdir", "-fprint", "-fprintf") for a in rest):
+            a in ("-delete", "-exec", "-execdir", "-ok", "-okdir",
+                  "-fprint", "-fprintf", "-fprint0", "-fls") for a in rest):
         return False
+    if prog == "apt-cache":
+        subs = [a for a in rest if not a.startswith("-")]
+        if subs and subs[0] not in {
+                "search", "show", "showpkg", "showsrc", "depends", "rdepends",
+                "policy", "madison", "pkgnames", "stats", "dumpavail", "unmet"}:
+            return False
+    if prog == "sysctl" and any("=" in a and not a.startswith("-") for a in rest):
+        return False
+    if prog in ("pip", "pip3") and "config" in rest and any(
+            a in ("set", "unset", "edit") for a in rest):
+        return False
+    if prog == "git":
+        # `git -c key=value` can set core.sshCommand for this run. `git log -c`
+        # is a combined-diff flag and stays read-only.
+        for i, a in enumerate(rest):
+            if a == "-c" and i + 1 < len(rest) and "=" in rest[i + 1]:
+                return False
+            if a.startswith("-c") and "=" in a:
+                return False
     if prog == "journalctl" and any(
             a.startswith("--vacuum") or a in ("--rotate", "--flush", "--sync")
             for a in rest):
@@ -4798,12 +5117,17 @@ _NL_APP_UPDATE_RE = re.compile(
 )
 
 def _dpkg_installed(pkg: str) -> bool:
+    """True when dpkg reports this package as installed. Never raises."""
     try:
-        r = subprocess.run(["dpkg-query", "-W", "-f=${Status}", pkg],
-                           capture_output=True, text=True, timeout=5)
-        return "install ok installed" in r.stdout
+        r = subprocess.run(
+            ["dpkg-query", "-W", "-f", "${Status}", pkg],
+            capture_output=True, text=True, timeout=5)
+        return r.returncode == 0 and "install ok installed" in (r.stdout or "")
     except Exception:
         return False
+
+
+_dpkg_status_installed = _dpkg_installed
 
 def _snap_installed(name: str) -> bool:
     try:
@@ -5243,6 +5567,28 @@ def _local_deb_install_for_phrase(text: str):
     return None
 
 
+def _confirm_typed_command() -> bool:
+    """Explicit yes before a command the user typed that can change the system.
+
+    Enter / anything other than y is a no. A non-interactive session cannot
+    approve, so the command is skipped.
+    """
+    if not sys.stdin.isatty():
+        print(f"  {YELLOW}⚠  Skipped — this command changes the system and needs "
+              f"a yes in a terminal.{R}")
+        return False
+    try:
+        ans = input(f"  {BOLD}Run this?{R} "
+                    f"[{C('y', GREEN, BOLD)}=yes  {C('n', YELLOW, BOLD)}=no]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print(f"  {YELLOW}Cancelled — nothing was changed.{R}")
+        return False
+    if ans in ("y", "yes"):
+        return True
+    print(f"  {YELLOW}Cancelled — nothing was changed.{R}")
+    return False
+
+
 def try_passthrough(user_input, session_log, backend=None, bctx=None):
     """
     If user_input looks like a shell command, run it directly without
@@ -5491,12 +5837,13 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
         return True
 
     risk   = _classify_cmd_risk(cmd, effective_word)
-    danger = risk == 'dangerous'
+    danger = risk == 'dangerous' or is_dangerous(cmd)
 
-    # Show what we're running (transparency), but never ask for permission
+    # Show what we're running (transparency). State-changing commands still
+    # need an explicit yes — typing them is not the same as approving them.
     print(f"\n  {CYAN}⚡ {cmd}{R}")
 
-    # Dangerous commands (rm -rf /, fork bomb, disk wipe) — only these get blocked
+    # Dangerous commands (rm -rf /, fork bomb, disk wipe) — hard block.
     if danger:
         print(f"  {RED}{BOLD}⚠  Blocked: this command could permanently destroy data.{R}")
         print(f"  {DIM}Run it manually in a terminal if you are certain.{R}")
@@ -5535,13 +5882,22 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
             warn(f"cd: {target}: No such directory")
         return True
 
+    # Read-only commands run immediately. Anything that can change the system
+    # — including high-risk shapes like curl|sh — needs an explicit yes.
+    if not _is_read_only(cmd):
+        reason = _high_risk_reason(cmd)
+        if reason:
+            print(f"  {YELLOW}{BOLD}⚠  High-risk command — it {reason}.{R}")
+        if not _confirm_typed_command():
+            return "declined"
+
     # Get sudo password once (cached for the whole session)
     sudo_pw = None
     if re.match(r'^\s*sudo\b', cmd):
         try:
             sudo_pw = get_or_cache_sudo_password()
         except KeyboardInterrupt:
-            warn("Cancelled."); return True
+            warn("Cancelled."); return "declined"
 
     # Inject -y for package managers so their internal prompt doesn't abort
     exec_cmd = cmd
@@ -5851,7 +6207,10 @@ def _ask_rating():
     if not r:
         return
     if r not in ("1", "2", "3", "4", "5"):
-        print(f"  {DIM}Skipped rating — type your next request at the prompt.{R}")
+        # The line was a real request, not a rating. Run it on the next prompt
+        # instead of making the user type it again.
+        _queue_user_line(r)
+        print(f"  {DIM}Skipped rating — running that as your next request.{R}")
         return
     if r in ("4", "5"):
         print(f"  {GREEN}{BOLD}Thank you! That means a lot. ⭐{R}")
@@ -6365,42 +6724,54 @@ def _proc_comm_names():
     return set(_proc_comm_by_pid().values())
 
 
-def _apt_lock_inodes():
-    """Inode numbers for apt/dpkg lock files that currently exist."""
-    inodes = set()
+def _apt_lock_dev_inodes():
+    """(major, minor, inode) for apt/dpkg lock files that currently exist.
+
+    /proc/locks identifies a file by device AND inode. Matching the inode
+    alone can blame an unrelated file that happens to share the number.
+    """
+    targets = set()
     for path in _APT_LOCK_PATHS:
         try:
-            inodes.add(os.stat(path).st_ino)
+            st = os.stat(path)
         except OSError:
             continue
-    return inodes
+        targets.add((os.major(st.st_dev), os.minor(st.st_dev), st.st_ino))
+    return targets
+
+
+def _parse_proc_locks(text, targets):
+    """PIDs from a /proc/locks snapshot whose dev+inode is in `targets`."""
+    pids = []
+    for line in (text or "").splitlines():
+        parts = line.split()
+        # 1: FLOCK  ADVISORY  WRITE 1234 08:01:456 0 EOF
+        # device major:minor is hexadecimal; the inode is decimal.
+        if len(parts) < 6:
+            continue
+        if parts[1] not in ("FLOCK", "POSIX"):
+            continue
+        devino = parts[5].split(":")
+        if len(devino) != 3:
+            continue
+        try:
+            key = (int(devino[0], 16), int(devino[1], 16), int(devino[2]))
+            pid = int(parts[4])
+        except ValueError:
+            continue
+        if key in targets:
+            pids.append(pid)
+    return pids
 
 
 def _apt_lock_holder_pids():
     """PIDs holding an apt/dpkg lock, from /proc/locks (works as non-root)."""
-    targets = _apt_lock_inodes()
+    targets = _apt_lock_dev_inodes()
     if not targets:
         return []
-    pids = []
     try:
         with open("/proc/locks", "r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                parts = line.split()
-                # 1: FLOCK  ADVISORY  WRITE 1234 00:1d:456 0 EOF
-                if len(parts) < 6:
-                    continue
-                if parts[1] not in ("FLOCK", "POSIX"):
-                    continue
-                try:
-                    ino = int(parts[5].split(":")[-1])
-                except (ValueError, IndexError):
-                    continue
-                if ino not in targets:
-                    continue
-                try:
-                    pids.append(int(parts[4]))
-                except (ValueError, IndexError):
-                    continue
+            pids = _parse_proc_locks(fh.read(), targets)
     except OSError:
         return []
     # Preserve order, drop duplicates / our own pid.
@@ -6496,6 +6867,21 @@ def _pkg_mgr_busy(pkg="apt", soft=False) -> bool:
         "apk": _APK_BUSY_COMMS,
     }
     return bool(names & table.get(pkg, frozenset()))
+
+
+def _pkg_retry_backoff(pkg="apt", timeout=15, minimum=5) -> None:
+    """Wait for a package lock, but never less than `minimum` seconds.
+
+    `_wait_pkg_mgr` returns immediately when the holder isn't visible
+    (PackageKit is soft-excluded, or the process isn't in the name list).
+    Calling it alone then fires every retry at t=0 while the message says
+    the next try is "in a few seconds".
+    """
+    start = time.monotonic()
+    _wait_pkg_mgr(pkg, timeout=timeout, interval=2, soft=False)
+    elapsed = time.monotonic() - start
+    if elapsed < minimum:
+        time.sleep(minimum - elapsed)
 
 
 def _wait_pkg_mgr(pkg="apt", timeout=90, interval=2, soft=False) -> bool:
@@ -6901,7 +7287,9 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
             raw = None
             _tried = {_provider_name(backend)}
             _fix_errors = {}
-            while raw is None and _is_transient_ai_error(e):
+            while raw is None and _should_failover_ai_error(e):
+                if _is_oversized_ai_error(e):
+                    messages = _shrink_messages(messages)
                 nb = _failover_backend(backend, exclude=_tried)
                 if nb is None:
                     break
@@ -6917,7 +7305,7 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                     e = e2          # this provider also failed — try the next one
                 except Exception as e2:
                     err(str(e2)[:400]); return
-            if raw is None and _is_transient_ai_error(e):
+            if raw is None and _should_failover_ai_error(e):
                 _fix_errors[_provider_name(backend)] = _short_reason(e)
                 # Free rotation spent — offer Claude (paid, explicit consent only).
                 cb = _offer_claude_fallback(backend)
@@ -6934,9 +7322,17 @@ def fix_engine(backend, system, messages, session_log, max_rounds=10):
                 # last provider message verbatim.
                 if _is_transient_ai_error(e):
                     _explain_free_exhausted(_fix_errors, backend)
+                elif _should_failover_ai_error(e):
+                    err("Every free provider failed (a key was rejected, or the request "
+                        "was too large).")
+                    print(f"  {DIM}Claude was not used. Fix a key in Settings → 8, "
+                          f"or try a shorter request.{R}")
                 else:
                     msg = str(e)
                     (warn if "429" in msg else err)(msg[:400])
+                    if not any(s in msg.lower() for s in (
+                            "connection refused", "network", "timed out", "offline")):
+                        print(f"  {DIM}Tip: Settings → 8 to switch AI provider.{R}")
                 # Report anything that isn't the user's to fix (bad key/offline):
                 # a limit/outage we couldn't fail over from, or an unexpected error.
                 if not _is_user_actionable_error(e):
@@ -7626,6 +8022,34 @@ def feat_logs(backend, bctx, slog):
     )
 
 # ── FEATURE 10: Update Advisor ────────────────────────────────────────────────
+def _apt_sim_phased_and_held(text: str) -> dict:
+    """Package names apt would hold back, from `apt-get -s upgrade` output.
+
+    Ubuntu prints phased updates as "deferred due to phasing" and other
+    keeps as "have been kept back". Callers use this so [12] doesn't offer
+    "install all" as if every listed package will actually upgrade.
+    """
+    phased, held = [], []
+    mode = None
+    for line in (text or "").splitlines():
+        s = line.strip()
+        low = s.lower()
+        if "phasing" in low and low.endswith(":"):
+            mode = "phased"
+            continue
+        if "kept back" in low and low.endswith(":"):
+            mode = "held"
+            continue
+        if not s or low.startswith(("the following ", "0 upgraded", "calculating")):
+            if low.startswith("the following ") and "phasing" not in low and "kept back" not in low:
+                mode = None
+            continue
+        if mode:
+            bucket = phased if mode == "phased" else held
+            bucket.extend(tok for tok in s.split() if tok and not tok.endswith(":"))
+    return {"phased": phased, "held": held}
+
+
 def _classify_apt_upgrade(upgrade_output: str, remaining: list) -> str:
     """Report an apt upgrade honestly. Given the upgrade command's output and the
     packages STILL upgradable afterwards, return one of:
@@ -7703,7 +8127,7 @@ def feat_updates(backend, bctx, slog):
             if attempt < 3:
                 info(f"Package lock held by {who}. Retrying in a few seconds "
                      f"({attempt}/3)…")
-                _wait_pkg_mgr("apt", timeout=15, interval=2, soft=False)
+                _pkg_retry_backoff("apt", timeout=15, minimum=5)
             else:
                 warn(f"Couldn't refresh package lists — lock still held by {who}. "
                      "Close Software Updater / wait for background updates, then "
@@ -7721,8 +8145,19 @@ def feat_updates(backend, bctx, slog):
         if lines:
             print(f"\n  {YELLOW}{BOLD}{len(lines)} update(s) available:{R}")
             for l in lines[:20]: print(f"  {DIM}{l}{R}")
+            _sim_rc, sim_out, sim_err = run_cmd_live(
+                "apt-get -s upgrade", sudo_password=None, timeout=90)
+            sim = _apt_sim_phased_and_held((sim_out or "") + "\n" + (sim_err or ""))
+            if sim["phased"]:
+                info(f"{len(sim['phased'])} of these are phased — Ubuntu is rolling them "
+                     "out gradually, so a normal upgrade holds them back.")
+                print(f"  {DIM}{', '.join(sim['phased'][:8])}{R}")
+            if sim["held"]:
+                info(f"{len(sim['held'])} are held back (they need extra packages "
+                     "added or removed). A normal upgrade will not install them.")
+                print(f"  {DIM}{', '.join(sim['held'][:8])}{R}")
             try:
-                ch = input(f"\n  {BOLD}Install all updates now? [y/n]:{R} ").strip().lower()
+                ch = input(f"\n  {BOLD}Install the updates apt will actually apply now? [y/n]:{R} ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 return
             if ch in ('y', 'yes'):
@@ -10219,17 +10654,38 @@ def _crash_guard():
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SECTION 9 — SESSION SAVE
 # ═══════════════════════════════════════════════════════════════════════════════
+def _redact_obj(obj):
+    """Redact secrets in strings nested inside session-log structures."""
+    if isinstance(obj, str):
+        return _redact_secrets(obj)
+    if isinstance(obj, list):
+        return [_redact_obj(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _redact_obj(v) for k, v in obj.items()}
+    return obj
+
+
 def save_session(slog: list):
     if not slog:
         return
     ts  = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     out = os.path.join(SESSIONS_DIR, f"{ts}.json")
-    with open(out,"w") as f:
-        json.dump({"timestamp":ts,"commands":slog}, f, indent=2)
+    payload = _redact_obj({"timestamp": ts, "commands": slog})
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(payload, f, indent=2)
+    try:
+        os.chmod(out, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
 
 _SECRET_REDACT_RE = re.compile(
     r"(?i)(?:gsk_|AIza|sk-or-v1-|sk-ant-|sk-|zai-|xai-)[A-Za-z0-9_\-]{8,}"
     r"|(?:api[_-]?key|token|password|passwd|secret)\s*(?:is|=|:)\s*\S+"
+    # UUID-style or long tokens that have no known vendor prefix, when labelled.
+    # (?i) is already set at the start of this expression.
+    r"|\bkey\s*(?:is|=|:)\s*(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r"|[A-Za-z0-9_\-]{24,})"
 )
 
 
@@ -11237,18 +11693,38 @@ def _display_build_plan(results: dict, bctx: dict) -> list:
     return [row for row in plan if row[1] != "true" and not is_dangerous(row[1])]
 
 
+def _bluetooth_adapter_present(results: dict) -> bool:
+    """True only when rfkill, lsusb/lspci, or bluetoothctl shows an adapter."""
+    hw = (results.get("hw") or "").strip()
+    if hw and hw not in ("(no output)", "(error)") and re.search(r"bluetooth|wireless", hw, re.I):
+        return True
+    rf = (results.get("rfkill") or "").lower()
+    if "bluetooth" in rf and ("hci" in rf or "soft blocked" in rf or "hard blocked" in rf):
+        return True
+    show = (results.get("show") or "").lower()
+    if "controller" in show or re.search(r"powered:\s*(yes|no)", show):
+        return True
+    return False
+
+
 def _bluetooth_playbook_collect() -> dict:
     return _crisis_collect([
         ("service", "systemctl is-active bluetooth 2>/dev/null || true"),
         ("rfkill",  "rfkill list bluetooth 2>/dev/null || rfkill list 2>/dev/null || true"),
         ("hw",      "lsusb 2>/dev/null | grep -i bluetooth; lspci 2>/dev/null | grep -i bluetooth || true"),
         ("mod",     "lsmod 2>/dev/null | grep -i bluetooth || true"),
-        ("show",    "bluetoothctl show 2>/dev/null | head -12 || true"),
+        # bluetoothctl show hangs when no adapter is present — don't wait on it.
+        ("show",    "timeout 3 bluetoothctl show 2>/dev/null | head -12 || true"),
     ])
 
 
 def _bluetooth_show_report(results: dict, bctx=None) -> None:
     section("Bluetooth")
+    if not _bluetooth_adapter_present(results):
+        print(f"  {YELLOW}No Bluetooth adapter detected.{R}")
+        print(f"  {DIM}Checked rfkill, lsusb/lspci, and bluetoothctl. "
+              f"Nothing to restart.{R}")
+        return
     print(f"  service: {(results.get('service') or '?').strip()}")
     rf = (results.get("rfkill") or "").strip()
     if rf:
@@ -11258,6 +11734,8 @@ def _bluetooth_show_report(results: dict, bctx=None) -> None:
 
 
 def _bluetooth_build_plan(results: dict, bctx: dict) -> list:
+    if not _bluetooth_adapter_present(results):
+        return []
     plan = []
     rf = (results.get("rfkill") or "").lower()
     if "soft blocked: yes" in rf:
@@ -11273,7 +11751,7 @@ def _bluetooth_build_plan(results: dict, bctx: dict) -> list:
             "Start the Bluetooth service",
             "sudo systemctl enable --now bluetooth",
             "safe",
-            "The bluetooth daemon is not running.",
+            "An adapter is present and the bluetooth daemon is not running.",
         ))
     show = (results.get("show") or "").lower()
     if "powered: no" in show or "powered:no" in show:
@@ -11283,12 +11761,16 @@ def _bluetooth_build_plan(results: dict, bctx: dict) -> list:
             "safe",
             "The adapter is present but powered off.",
         ))
-    plan.append((
-        "Restart Bluetooth stack",
-        "sudo systemctl restart bluetooth",
-        "safe",
-        "Clears stuck pairing state. Re-pair headphones after this if needed.",
-    ))
+    # Restart only when the adapter is there and the controller query failed
+    # while the service already claims to be up — a stuck stack, not a missing radio.
+    if not plan and "active" in svc and (
+            not show.strip() or show.strip() in ("(no output)", "(error)")):
+        plan.append((
+            "Restart Bluetooth stack",
+            "sudo systemctl restart bluetooth",
+            "safe",
+            "The adapter is present but bluetoothctl could not talk to it.",
+        ))
     return [row for row in plan if not is_dangerous(row[1])]
 
 
@@ -11331,17 +11813,37 @@ def _printer_build_plan(results: dict, bctx: dict) -> list:
     return [row for row in plan if not is_dangerous(row[1])]
 
 
+def _webcam_hardware_present(results: dict) -> bool:
+    devs = results.get("devs") or ""
+    if "/dev/video" in devs:
+        return True
+    v4l = (results.get("v4l") or "").strip()
+    if v4l and v4l not in ("(no output)", "(error)"):
+        return True
+    usb = (results.get("usb") or "").strip()
+    if usb and usb not in ("(no output)", "(error)") and re.search(
+            r"camera|webcam|video|uvc|logitech", usb, re.I):
+        return True
+    return False
+
+
 def _webcam_playbook_collect() -> dict:
     return _crisis_collect([
         ("devs",   "ls -l /dev/video* 2>/dev/null || true"),
+        ("v4l",    "ls /sys/class/video4linux 2>/dev/null; "
+                   "v4l2-ctl --list-devices 2>/dev/null | head -20 || true"),
         ("mod",    "lsmod 2>/dev/null | grep -i uvcvideo || true"),
-        ("usb",    "lsusb 2>/dev/null | grep -iE 'camera|webcam|video|logitech' || true"),
+        ("usb",    "lsusb 2>/dev/null | grep -iE 'camera|webcam|video|uvc|logitech' || true"),
         ("holder", "fuser /dev/video0 /dev/video1 2>/dev/null || true"),
     ])
 
 
 def _webcam_show_report(results: dict, bctx=None) -> None:
     section("Camera devices")
+    if not _webcam_hardware_present(results):
+        print(f"  {YELLOW}No camera detected.{R}")
+        print(f"  {DIM}Checked /dev/video*, /sys/class/video4linux, v4l2-ctl, and lsusb.{R}")
+        return
     print(f"  {(results.get('devs') or 'no /dev/video* found').strip()[:120]}")
     usb = (results.get("usb") or "").strip()
     if usb and usb not in ("(no output)", "(error)"):
@@ -11353,15 +11855,18 @@ def _webcam_show_report(results: dict, bctx=None) -> None:
 
 
 def _webcam_build_plan(results: dict, bctx: dict) -> list:
+    if not _webcam_hardware_present(results):
+        return []
     plan = []
     devs = results.get("devs") or ""
     mod = (results.get("mod") or "").lower()
+    # Driver only when a USB camera is visible but the device node is missing.
     if "/dev/video" not in devs and "uvcvideo" not in mod:
         plan.append((
             "Load the standard USB webcam driver (uvcvideo)",
             "sudo modprobe uvcvideo",
             "safe",
-            "No camera device node and the UVC driver is not loaded.",
+            "A USB camera is present, but no /dev/video node and uvcvideo is not loaded.",
         ))
     return [row for row in plan if not is_dangerous(row[1])]
 
@@ -11890,6 +12395,20 @@ def _crisis_nvidia_build_plan(results: dict, bctx: dict) -> list:
     return [row for row in plan if not is_dangerous(row[1]) and row[1].strip() != "true"]
 
 
+def _sound_cards_absent(results: dict) -> bool:
+    """True when /proc/asound/cards was probed and shows no card.
+
+    A missing `cards` key means the caller didn't probe — don't treat that
+    as 'no hardware' (older playbook results omit it).
+    """
+    if "cards" not in (results or {}):
+        return False
+    cards = (results.get("cards") or "").strip().lower()
+    if not cards or cards in ("(no output)", "(error)"):
+        return True
+    return "no soundcards" in cards
+
+
 def _crisis_audio_collect() -> dict:
     return _crisis_collect([
         ("pipewire",  "systemctl --user is-active pipewire pipewire-pulse wireplumber 2>/dev/null || true"),
@@ -11897,35 +12416,50 @@ def _crisis_audio_collect() -> dict:
         ("pactl_sink","pactl list short sinks 2>/dev/null || true"),
         ("pactl_src", "pactl list short sources 2>/dev/null || true"),
         ("pactl_info","pactl info 2>/dev/null | head -20 || true"),
+        ("wpctl",     "wpctl status 2>/dev/null | head -40 || true"),
         ("cards",     "cat /proc/asound/cards 2>/dev/null || true"),
         ("mute",      "pactl get-sink-mute @DEFAULT_SINK@ 2>/dev/null; "
-                      "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null || true"),
+                      "pactl get-sink-volume @DEFAULT_SINK@ 2>/dev/null; "
+                      "wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null || true"),
         ("groups",    "groups 2>/dev/null || true"),
     ])
 
 
 def _crisis_audio_build_plan(results: dict, bctx: dict) -> list:
     plan = []
+    if _sound_cards_absent(results):
+        return []
+    wp = (results.get("wpctl") or "")
+    sinks = results.get("pactl_sink") or ""
+    # PipeWire-only desktops often have wpctl and no pactl.
+    use_wp = (not sinks.strip() or sinks.strip() == "(no output)") and bool(wp.strip()) and wp.strip() not in (
+        "(no output)", "(error)")
     mute = (results.get("mute") or "").lower()
-    if "yes" in mute or "muted: yes" in mute:
+    if "yes" in mute or "muted: yes" in mute or "[muted]" in mute:
+        if use_wp:
+            unmute_cmd = ("wpctl set-mute @DEFAULT_AUDIO_SINK@ 0; "
+                          "wpctl set-volume @DEFAULT_AUDIO_SINK@ 70%")
+        else:
+            unmute_cmd = ("pactl set-sink-mute @DEFAULT_SINK@ 0; "
+                          "pactl set-sink-volume @DEFAULT_SINK@ 70%")
         plan.append((
             "Unmute default audio output",
-            "pactl set-sink-mute @DEFAULT_SINK@ 0; "
-            "pactl set-sink-volume @DEFAULT_SINK@ 70%",
+            unmute_cmd,
             "safe",
             "The default sink is muted or very quiet.",
         ))
-    sinks = results.get("pactl_sink") or ""
-    if not sinks.strip() or sinks.strip() == "(no output)":
+    dummy = "dummy" in (sinks + "\n" + wp).lower()
+    visible = sinks.strip() not in ("", "(no output)", "(error)") or (
+        use_wp and "dummy" not in wp.lower())
+    if not visible:
         plan.append((
             "Restart PipeWire audio stack (user session)",
             "systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || "
             "systemctl --user restart pulseaudio 2>/dev/null || pulseaudio -k 2>/dev/null || true",
             "safe",
-            "No audio sinks visible — restarting PipeWire/Pulse usually restores them.",
+            "A sound card is present but no real sink is visible.",
         ))
     else:
-        # Soft restart still helps many glitches
         pw = (results.get("pipewire") or "")
         if "inactive" in pw or "failed" in pw:
             plan.append((
@@ -11934,12 +12468,12 @@ def _crisis_audio_build_plan(results: dict, bctx: dict) -> list:
                 "safe",
                 "PipeWire is not fully active for your user session.",
             ))
+    if dummy:
         plan.append((
-            "Reload audio (PipeWire / PulseAudio)",
-            "systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || "
-            "pulseaudio -k 2>/dev/null || true",
+            "Dummy Output — restart PipeWire so the real card can attach",
+            "systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || true",
             "safe",
-            "Clears stuck audio streams and reconnects Bluetooth/headsets.",
+            "The only sink is a Dummy Output. The sound card exists; PipeWire isn't using it.",
         ))
     info = results.get("pactl_info") or ""
     default_m = re.search(r"Default Sink:\s*(\S+)", info)
@@ -12480,7 +13014,7 @@ APP_CATALOG = [
     {"id": 9,  "name": "Signal Desktop",      "cat": "Communication",  "prompt": "Install Signal Desktop from the official Signal apt repository (signal.org) on Debian/Ubuntu, or flatpak from Flathub otherwise", "desc": "Private, end-to-end encrypted messaging"},
     {"id": 10, "name": "Zoom",                "cat": "Communication",  "prompt": "Install Zoom video conferencing",                                                                                               "desc": "Video meetings"},
     {"id": 11, "name": "Microsoft Teams",     "cat": "Communication",  "prompt": "Install Microsoft Teams for Linux",                                                                                             "desc": "Microsoft's team chat"},
-    {"id": 12, "name": "Rambox",              "cat": "Communication",  "prompt": "Install Rambox Community Edition multi-service messaging hub — download the latest amd64 .deb from https://github.com/ramboxapp/community-edition/releases and install it with apt/dpkg. (No Flathub package.)", "desc": "All-in-one workspace for messaging apps"},
+    {"id": 12, "name": "Rambox",              "cat": "Communication",  "prompt": "Rambox Community Edition is abandoned (last release 2022). Do not install it. Install Ferdium instead (flatpak org.ferdium.Ferdium), the maintained multi-service messenger.", "desc": "Abandoned since 2022 — installs Ferdium instead"},
     {"id": 13, "name": "Arattai",             "cat": "Communication",  "prompt": "Install Arattai (Zoho's messenger) — download the latest amd64 .deb from https://downloads.zohocdn.com/arattai-desktop/linux/ (arattai_*_amd64.deb) and install with apt/dpkg. If the .deb is missing, open https://web.arattai.in.", "desc": "Zoho's messenger (desktop + web)"},
     # ── Office & Notes ───────────────────────────────────────────────────────
     {"id": 14, "name": "LibreOffice",         "cat": "Office & Notes", "prompt": "Install the latest LibreOffice (full suite)",                                                                                   "desc": "Free office suite (Writer, Calc, Impress)"},
@@ -12520,7 +13054,7 @@ APP_CATALOG = [
     {"id": 42, "name": "Bruno",               "cat": "Developer",      "prompt": "Install Bruno open-source API client from usebruno.com — download the .deb or use flatpak from Flathub",                       "desc": "Open-source API testing (Postman alternative)"},
     {"id": 43, "name": "Postman",             "cat": "Developer",      "prompt": "Install Postman API client",                                                                                                    "desc": "HTTP API testing tool"},
     {"id": 44, "name": "Kitty Terminal",      "cat": "Developer",      "prompt": "Install Kitty GPU-accelerated terminal using the official installer: curl -L https://sw.kovidgoyal.net/kitty/installer.sh | sh /dev/stdin", "desc": "Fast, GPU-accelerated terminal emulator"},
-    {"id": 45, "name": "Lazygit",             "cat": "Developer",      "prompt": "Install Lazygit TUI for git — download the latest binary release from https://github.com/jesseduffield/lazygit/releases and install to /usr/local/bin", "desc": "Terminal UI for Git"},
+    {"id": 45, "name": "Lazygit",             "cat": "Developer",      "prompt": "Install Lazygit. Use apt only when `apt-cache policy lazygit` shows a real candidate; otherwise download the Linux tarball from https://github.com/jesseduffield/lazygit/releases into /usr/local/bin. Ubuntu 24.04 noble has no lazygit package.", "desc": "Terminal UI for Git"},
     # ── System Tools ─────────────────────────────────────────────────────────
     {"id": 46, "name": "Timeshift",           "cat": "System Tools",   "prompt": "Install Timeshift system snapshot tool via apt (sudo apt install timeshift) on Debian/Ubuntu or dnf on Fedora",                "desc": "System snapshots & restore (like Time Machine)"},
     {"id": 47, "name": "Stacer",              "cat": "System Tools",   "prompt": "Install Stacer system optimizer — download the latest .deb from https://github.com/oguzhaninan/Stacer/releases and install it", "desc": "System optimizer, cleaner, and monitor"},
@@ -12582,7 +13116,7 @@ APP_CATALOG = [
     {"id": 92, "name": "Flatpak + Flathub",   "cat": "System Tools",   "prompt": "Install Flatpak and enable the Flathub app store: install the flatpak package, then run flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo. Tell the user to re-login so Flathub apps appear.", "desc": "Enable the universal Flathub app store"},
     {"id": 93, "name": "GNOME Tweaks",        "cat": "System Tools",   "prompt": "Install GNOME Tweaks for advanced desktop settings via apt (gnome-tweaks) on GNOME-based systems.", "desc": "Advanced GNOME settings"},
     {"id": 94, "name": "Cockpit",             "cat": "System Tools",   "prompt": "Install Cockpit, a web-based server admin dashboard, via apt (cockpit). Afterwards tell the user to open https://localhost:9090.", "desc": "Web-based server admin dashboard"},
-    {"id": 95, "name": "Fastfetch",           "cat": "System Tools",   "prompt": "Install Fastfetch (a fast neofetch replacement) via apt (fastfetch) on Ubuntu 24.04+/Debian 13+; on older releases use the PPA ppa:zhangsongcui3371/fastfetch or the GitHub .deb.", "desc": "Fast system-info banner"},
+    {"id": 95, "name": "Fastfetch",           "cat": "System Tools",   "prompt": "Install Fastfetch. If apt has a candidate, use it. Ubuntu 24.04 noble often does not — then install the official .deb from https://github.com/fastfetch-cli/fastfetch/releases (not a Debian-only package name).", "desc": "Fast system-info banner"},
     # ── More Files & Sync ───────────────────────────────────────────────────────
     {"id": 96, "name": "Syncthing",           "cat": "Files & Sync",   "prompt": "Install Syncthing continuous file sync from the official apt repo at https://apt.syncthing.net — add the key and source, then install syncthing and enable the user service.", "desc": "Continuous peer-to-peer file sync"},
     {"id": 97, "name": "LocalSend",           "cat": "Files & Sync",   "prompt": "Install LocalSend (AirDrop-style local file sharing) via flatpak from Flathub: org.localsend.localsend_app.", "desc": "AirDrop-style local file sharing"},
@@ -12661,7 +13195,7 @@ APP_CATALOG = [
     {"id": 156,"name": "Flatseal",            "cat": "System Tools",   "prompt": "Install Flatseal, the GUI to review and change Flatpak app permissions, via flatpak from Flathub: com.github.tchx84.Flatseal. (Ensure Flatpak + Flathub are set up first.)", "desc": "Manage Flatpak app permissions"},
     {"id": 157,"name": "Mission Center",      "cat": "System Tools",   "prompt": "Install Mission Center, a modern system monitor (CPU/GPU/RAM/disk/net, like Windows Task Manager), via flatpak from Flathub: io.missioncenter.MissionCenter.", "desc": "Modern system monitor / task manager"},
     {"id": 158,"name": "VirtualBox",          "cat": "System Tools",   "prompt": "Install Oracle VirtualBox to run other operating systems in a window. Prefer apt (virtualbox) on Debian/Ubuntu; for the newest version add Oracle's official apt repo from virtualbox.org. Mention the user should add themselves to the 'vboxusers' group.", "desc": "Run other OSes in a virtual machine"},
-    {"id": 159,"name": "virt-manager",        "cat": "System Tools",   "prompt": "Install virt-manager with the KVM/QEMU stack for fast native virtual machines: apt install virt-manager qemu-kvm libvirt-daemon-system libvirt-clients bridge-utils, then add the user to the 'libvirt' and 'kvm' groups and enable libvirtd.", "desc": "KVM/QEMU virtual machine manager"},
+    {"id": 159,"name": "virt-manager",        "cat": "System Tools",   "prompt": "Install virt-manager with KVM/QEMU. On Ubuntu and Ubuntu-based distros (noble and later) the package is qemu-system-x86, not the empty virtual package qemu-kvm: apt install virt-manager qemu-system-x86 libvirt-daemon-system libvirt-clients bridge-utils. Elsewhere qemu-kvm is fine. Then add the user to the libvirt and kvm groups and enable libvirtd.", "desc": "KVM/QEMU virtual machine manager"},
     {"id": 160,"name": "Extension Manager",   "cat": "System Tools",   "prompt": "Install Extension Manager, to browse and install GNOME Shell extensions without a browser, via flatpak from Flathub: com.mattjakeman.ExtensionManager. (Best on GNOME desktops.)", "desc": "Install GNOME extensions easily"},
     {"id": 161,"name": "TLP",                 "cat": "System Tools",   "prompt": "Install TLP for automatic laptop battery/power optimisation: apt install tlp tlp-rdw, then enable and start tlp. Optionally install 'tlpui' for a graphical settings editor. Explain it improves battery life with sensible defaults out of the box.", "desc": "Automatic laptop battery optimisation"},
 
@@ -12671,7 +13205,7 @@ APP_CATALOG = [
     {"id": 165,"name": "Pika Backup",         "cat": "Files & Sync",   "prompt": "Install Pika Backup, an easy GUI for encrypted, deduplicated backups (powered by BorgBackup), via flatpak from Flathub: org.gnome.World.PikaBackup.", "desc": "Easy encrypted backups (BorgBackup)"},
     {"id": 166,"name": "Proton Pass",         "cat": "Files & Sync",   "prompt": "Install Proton Pass, Proton's open-source password manager. Prefer flatpak from Flathub: me.proton.Pass, otherwise download the official .deb/.rpm from proton.me/pass/download.", "desc": "Open-source password manager (Proton)"},
 
-    {"id": 167,"name": "Ulauncher",           "cat": "Utilities",      "prompt": "Install Ulauncher, a fast application/everything launcher. Prefer apt (ulauncher) or the official PPA (ppa:agornostal/ulauncher) / .deb from ulauncher.io. Not on Flathub. Enable it to start on login.", "desc": "Fast app & action launcher"},
+    {"id": 167,"name": "Ulauncher",           "cat": "Utilities",      "prompt": "Install Ulauncher. Ubuntu 24.04 noble has no ulauncher package — use the official PPA ppa:agornostal/ulauncher or the GitHub .deb from https://github.com/Ulauncher/Ulauncher/releases. Enable it to start on login.", "desc": "Fast app & action launcher"},
     {"id": 168,"name": "Espanso",             "cat": "Utilities",      "prompt": "Install Espanso, a system-wide text expander. Download the official amd64 .deb from https://github.com/espanso/espanso/releases (espanso-debian-x11-amd64.deb on X11, or espanso-debian-wayland-amd64.deb on Wayland) and install with apt/dpkg. After install run 'espanso service register' and 'espanso start'.", "desc": "System-wide text expander"},
     {"id": 169,"name": "Variety",             "cat": "Utilities",      "prompt": "Install Variety, an automatic wallpaper changer/manager. Prefer apt (variety) on Debian/Ubuntu, or flatpak from Flathub if available.", "desc": "Automatic wallpaper changer"},
     {"id": 170,"name": "Gear Lever",          "cat": "Utilities",      "prompt": "Install Gear Lever, to manage and integrate AppImages (menu entries, updates), via flatpak from Flathub: it.mijorus.gearlever.", "desc": "Manage & integrate AppImages"},
@@ -12680,7 +13214,7 @@ APP_CATALOG = [
     {"id": 172,"name": "Prism Launcher",      "cat": "Gaming",         "prompt": "Install Prism Launcher, the open-source Minecraft launcher for managing instances and mods, via flatpak from Flathub: org.prismlauncher.PrismLauncher.", "desc": "Open-source Minecraft launcher"},
     {"id": 173,"name": "Cartridges",          "cat": "Gaming",         "prompt": "Install Cartridges, a tidy GTK game library that gathers Steam, Heroic, Lutris and more in one place, via flatpak from Flathub: page.kramo.Cartridges.", "desc": "Unified game library"},
 
-    {"id": 174,"name": "VeraCrypt",           "cat": "Security",       "prompt": "Install VeraCrypt for on-the-fly disk/file encryption (encrypted volumes/containers). Prefer apt (veracrypt) where packaged, otherwise download the official installer from https://www.veracrypt.fr/en/Downloads.html (GUI build). Not on Flathub. Explain it can create encrypted file containers or encrypt whole drives.", "desc": "Disk & file encryption (encrypted volumes)"},
+    {"id": 174,"name": "VeraCrypt",           "cat": "Security",       "prompt": "Install VeraCrypt. There is no veracrypt apt package on Ubuntu 24.04 noble. Download the official Ubuntu .deb from https://github.com/veracrypt/VeraCrypt/releases (Ubuntu-${VERSION_ID}-amd64.deb, using this distro's Ubuntu version) and install it with apt. Explain it can create encrypted file containers or encrypt whole drives.", "desc": "Disk & file encryption (encrypted volumes)"},
     {"id": 175,"name": "Proton VPN",          "cat": "Security",       "prompt": "Install the official Proton VPN app. Add Proton's official apt repository (download the protonvpn-stable-release .deb from protonvpn.com/download-linux), then apt update && apt install proton-vpn-gnome-desktop.", "desc": "Privacy-focused VPN (official app)"},
     {"id": 176,"name": "Mullvad VPN",         "cat": "Security",       "prompt": "Install the Mullvad VPN app via its official apt repository (mullvad.net/download/vpn/linux) or by downloading the official .deb from mullvad.net.", "desc": "Privacy-focused VPN (no-logs)"},
     {"id": 177,"name": "OpenSnitch",          "cat": "Security",       "prompt": "Install OpenSnitch, an application-level firewall that asks before programs connect out. Prefer apt (opensnitch) on newer Debian/Ubuntu, otherwise download the .deb (daemon + python3-opensnitch-ui) from github.com/evilsocket/opensnitch/releases. Enable the opensnitchd service and start the UI.", "desc": "Interactive application firewall"},
@@ -12852,13 +13386,8 @@ _CATALOG_INSTALL = {
     "Signal Desktop":   {"flatpak": "org.signal.Signal"},
     "Zoom":             {"flatpak": "us.zoom.Zoom"},
     "Microsoft Teams":  {"flatpak": "com.github.IsmaelMartinez.teams_for_linux"},
-    # Rambox CE ships amd64 .deb on GitHub (no Flathub package).
-    "Rambox":           {"script": "set -e; url=$(curl -fsSL "
-                                    "https://api.github.com/repos/ramboxapp/community-edition/releases/latest "
-                                    "| grep -oE 'https://[^\"[:space:]]+linux-amd64\\.deb' | head -1); "
-                                    "[ -n \"$url\" ]; curl -fL -o /tmp/rambox.deb \"$url\"; "
-                                    "sudo apt-get install -y /tmp/rambox.deb",
-                         "script_root": True},
+    # Rambox CE has had no release since 2022. Install the maintained fork.
+    "Rambox":           {"flatpak": "org.ferdium.Ferdium"},
     "Arattai":          {"script": "set -e; "
                                     "url=$(curl -fsSL https://www.arattai.in/download.html 2>/dev/null "
                                     "| grep -oE 'https://downloads\\.zohocdn\\.com/arattai-desktop/linux/arattai_[0-9.]+_amd64\\.deb' "
@@ -12913,7 +13442,8 @@ _CATALOG_INSTALL = {
     "LibreOffice":      {"pkg": "libreoffice", "flatpak": "org.libreoffice.LibreOffice"},
     "OnlyOffice":       {"flatpak": "org.onlyoffice.desktopeditors"},
     "WPS Office":       {"flatpak": "com.wps.Office"},
-    "Thunderbird":      {"pkg": "thunderbird", "flatpak": "org.mozilla.Thunderbird"},
+    "Thunderbird":      {"pkg": "thunderbird", "flatpak": "org.mozilla.Thunderbird",
+                         "snap": "thunderbird"},
     "Obsidian":         {"flatpak": "md.obsidian.Obsidian"},
     "Joplin":           {"script": "wget -O - "
                                     "https://raw.githubusercontent.com/laurent22/joplin/dev/Joplin_install_and_update.sh | bash",
@@ -12987,10 +13517,33 @@ _CATALOG_INSTALL = {
     "Sublime Text":     {"deb": {"name": "sublimehq", "key": "https://download.sublimetext.com/sublimehq-pub.gpg",
                                  "repo": "https://download.sublimetext.com/ apt/stable/", "pkg": "sublime-text"}},
     "Git":              {"pkg": "git"},
-    # Prefer distro docker.io on Ubuntu-family (get.docker.com can pick Debian
-    # codenames on Zorin/Mint). Fall back to the official convenience script.
+    # Ubuntu-family: docker.io, or Docker's Ubuntu repo keyed on UBUNTU_CODENAME.
+    # get.docker.com mis-detects Zorin/Mint as Debian and writes a trixie repo.
+    # That script remains the fallback only when this is not an Ubuntu derivative.
+    # An existing docker-ce install is left alone (docker.io conflicts with it).
     "Docker":           {"pkg": "docker.io",
-                         "script": "curl -fsSL https://get.docker.com | sudo sh",
+                         "script": "set -e; . /etc/os-release; id=${ID:-}; like=${ID_LIKE:-}; "
+                                   "if dpkg-query -W -f '${Status}' docker-ce 2>/dev/null | grep -q 'install ok installed'; then "
+                                   "echo 'docker-ce is already installed — leaving it in place.'; exit 0; fi; "
+                                   "ubuntu_family=0; "
+                                   "case \"$id\" in ubuntu|linuxmint|mint|pop|zorin|elementary|neon|tuxedo) ubuntu_family=1;; esac; "
+                                   "echo \"$like\" | grep -qw ubuntu && ubuntu_family=1; "
+                                   "if [ \"$ubuntu_family\" = 1 ]; then "
+                                   "code=${UBUNTU_CODENAME:-${VERSION_CODENAME:-noble}}; "
+                                   "if apt-cache policy docker.io 2>/dev/null | grep -q 'Candidate:' && "
+                                   "! apt-cache policy docker.io 2>/dev/null | grep -q 'Candidate: (none)'; then "
+                                   "sudo apt-get update -q; sudo apt-get install -y docker.io; "
+                                   "sudo systemctl enable --now docker || true; exit 0; fi; "
+                                   "sudo install -m 0755 -d /etc/apt/keyrings; "
+                                   "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg; "
+                                   "sudo chmod a+r /etc/apt/keyrings/docker.gpg; "
+                                   "arch=$(dpkg --print-architecture); "
+                                   "echo \"deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${code} stable\" "
+                                   "| sudo tee /etc/apt/sources.list.d/docker.list >/dev/null; "
+                                   "sudo apt-get update -q; "
+                                   "sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin; "
+                                   "exit 0; fi; "
+                                   "curl -fsSL https://get.docker.com | sudo sh",
                          "script_root": True},
     "Node.js (LTS)":    {"script": "curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - "
                                     "&& sudo apt-get install -y nodejs", "script_root": True},
@@ -12998,7 +13551,20 @@ _CATALOG_INSTALL = {
     "Bruno":            {"flatpak": "com.usebruno.Bruno"},
     "Postman":          {"snap": "postman", "flatpak": "com.getpostman.Postman"},
     "Kitty Terminal":   {"pkg": "kitty"},
-    "Lazygit":          {"pkg": "lazygit"},
+    "Lazygit":          {"script": "set -e; "
+                                    "if apt-cache policy lazygit 2>/dev/null | grep -q 'Candidate:' && "
+                                    "! apt-cache policy lazygit 2>/dev/null | grep -q 'Candidate: (none)'; then "
+                                    "sudo apt-get install -y lazygit; exit 0; fi; "
+                                    "ver=$(curl -fsSL https://api.github.com/repos/jesseduffield/lazygit/releases/latest "
+                                    "| grep -oE '\"tag_name\": *\"v[0-9.]+\"' | grep -oE 'v[0-9.]+' | head -1); "
+                                    "[ -n \"$ver\" ]; arch=$(uname -m); "
+                                    "case \"$arch\" in x86_64|amd64) a=x86_64;; aarch64|arm64) a=arm64;; "
+                                    "*) echo \"Unsupported arch: $arch\" >&2; exit 1;; esac; "
+                                    "curl -fL -o /tmp/lazygit.tar.gz "
+                                    "\"https://github.com/jesseduffield/lazygit/releases/download/${ver}/lazygit_${ver#v}_Linux_${a}.tar.gz\"; "
+                                    "sudo tar -C /usr/local/bin -xzf /tmp/lazygit.tar.gz lazygit; "
+                                    "sudo chmod 755 /usr/local/bin/lazygit",
+                         "script_root": True},
     "Neovim":           {"pkg": "neovim", "flatpak": "io.neovim.nvim"},
     "GitHub CLI (gh)":  {"deb": {"name": "githubcli", "dearmor": False,
                                  "key": "https://cli.github.com/packages/githubcli-archive-keyring.gpg",
@@ -13033,7 +13599,7 @@ _CATALOG_INSTALL = {
     "JetBrains Toolbox": {"script": "set -e; mkdir -p \"$HOME/Applications\"; "
                                     "curl -fL -o /tmp/jetbrains-toolbox.tar.gz "
                                     "\"https://data.services.jetbrains.com/products/download"
-                                    "?code=TBA&platform=linux&type=download\"; "
+                                    "?code=TBA&platform=linux\"; "
                                     "tar xzf /tmp/jetbrains-toolbox.tar.gz -C \"$HOME/Applications\"; "
                                     "bin=$(find \"$HOME/Applications\" -maxdepth 2 -type f -name jetbrains-toolbox | head -1); "
                                     "[ -n \"$bin\" ]; \"$bin\" &"
@@ -13060,7 +13626,19 @@ _CATALOG_INSTALL = {
                           "script_root": True},
     "GNOME Tweaks":     {"pkg": "gnome-tweaks"},
     "Cockpit":          {"pkg": "cockpit"},
-    "Fastfetch":        {"pkg": "fastfetch"},
+    "Fastfetch":        {"script": "set -e; "
+                                    "if apt-cache policy fastfetch 2>/dev/null | grep -q 'Candidate:' && "
+                                    "! apt-cache policy fastfetch 2>/dev/null | grep -q 'Candidate: (none)'; then "
+                                    "sudo apt-get install -y fastfetch; exit 0; fi; "
+                                    "arch=$(uname -m); "
+                                    "case \"$arch\" in x86_64|amd64) deb=fastfetch-linux-amd64.deb;; "
+                                    "aarch64|arm64) deb=fastfetch-linux-aarch64.deb;; "
+                                    "*) echo \"Unsupported arch: $arch\" >&2; exit 1;; esac; "
+                                    "url=$(curl -fsSL https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest "
+                                    "| grep -oE \"https://[^\"]+${deb}\" | head -1); "
+                                    "[ -n \"$url\" ]; curl -fL -o /tmp/fastfetch.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/fastfetch.deb",
+                         "script_root": True},
     "Flatseal":         {"flatpak": "com.github.tchx84.Flatseal"},
     "Mission Center":   {"flatpak": "io.missioncenter.MissionCenter"},
     "VirtualBox":       {"pkg": "virtualbox"},
@@ -13104,7 +13682,21 @@ _CATALOG_INSTALL = {
     "Kooha":            {"flatpak": "io.github.seadve.Kooha"},
     "Czkawka":          {"flatpak": "com.github.qarmin.czkawka"},
     "OnionShare":       {"pkg": "onionshare", "flatpak": "org.onionshare.OnionShare"},
-    "Ulauncher":        {"pkg": "ulauncher"},
+    "Ulauncher":        {"script": "set -e; . /etc/os-release; id=${ID:-}; like=${ID_LIKE:-}; "
+                                    "if apt-cache policy ulauncher 2>/dev/null | grep -q 'Candidate:' && "
+                                    "! apt-cache policy ulauncher 2>/dev/null | grep -q 'Candidate: (none)'; then "
+                                    "sudo apt-get install -y ulauncher; exit 0; fi; "
+                                    "ubuntu_family=0; "
+                                    "case \"$id\" in ubuntu|linuxmint|mint|pop|zorin|elementary|neon|tuxedo) ubuntu_family=1;; esac; "
+                                    "echo \"$like\" | grep -qw ubuntu && ubuntu_family=1; "
+                                    "if [ \"$ubuntu_family\" = 1 ] && command -v add-apt-repository >/dev/null; then "
+                                    "sudo add-apt-repository -y ppa:agornostal/ulauncher; "
+                                    "sudo apt-get update -q; sudo apt-get install -y ulauncher; exit 0; fi; "
+                                    "url=$(curl -fsSL https://api.github.com/repos/Ulauncher/Ulauncher/releases/latest "
+                                    "| grep -oE 'https://[^\"]+ulauncher_[^\"]+_all\\.deb' | head -1); "
+                                    "[ -n \"$url\" ]; curl -fL -o /tmp/ulauncher.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/ulauncher.deb",
+                         "script_root": True},
     "Espanso":          {"script": "set -e; "
                                     "sess=${XDG_SESSION_TYPE:-x11}; "
                                     "asset=espanso-debian-x11-amd64.deb; "
@@ -13154,7 +13746,19 @@ _CATALOG_INSTALL = {
     "Gufw Firewall":    {"pkg": "gufw"},
     "ClamAV + ClamTk":  {"pkg": "clamav clamtk"},
     "Wireshark":        {"pkg": "wireshark", "flatpak": "org.wireshark.Wireshark"},
-    "VeraCrypt":        {"pkg": "veracrypt"},
+    "VeraCrypt":        {"script": "set -e; . /etc/os-release; "
+                                    "uver=${VERSION_ID:-24.04}; "
+                                    "case \"${UBUNTU_CODENAME:-}\" in "
+                                    "noble) uver=24.04;; jammy) uver=22.04;; focal) uver=20.04;; "
+                                    "oracular) uver=24.10;; plucky) uver=25.04;; esac; "
+                                    "url=$(curl -fsSL https://api.github.com/repos/veracrypt/VeraCrypt/releases/latest "
+                                    "| grep -oE \"https://[^\"]+Ubuntu-${uver}-amd64\\.deb\" | head -1); "
+                                    "if [ -z \"$url\" ]; then "
+                                    "url=$(curl -fsSL https://api.github.com/repos/veracrypt/VeraCrypt/releases/latest "
+                                    "| grep -oE 'https://[^\"]+Ubuntu-24\\.04-amd64\\.deb' | head -1); fi; "
+                                    "[ -n \"$url\" ]; curl -fL -o /tmp/veracrypt.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/veracrypt.deb",
+                         "script_root": True},
     "Proton VPN":       {"deb": {"name": "protonvpn", "dearmor": False,
                                  "key": "https://repo.protonvpn.com/debian/public_key.asc",
                                  "repo": "https://repo.protonvpn.com/debian stable main",
@@ -13450,8 +14054,36 @@ def _catalog_install_plan(entry, bctx):
         local = _downloaded_installer_for(spec)
         if local:
             plan.append((f"sudo apt-get install -y {shlex.quote(local)}", True, "downloaded installer"))
+    # Ubuntu ships Firefox, Chromium and Thunderbird as snaps. One install,
+    # not an apt transitional package plus a Flatpak duplicate.
+    snap_pref = _UBUNTU_SNAP_PREFERRED.get(entry.get("name", ""))
+    if (snap_pref and pm == "apt" and _is_ubuntu_family() and shutil.which("snap")
+            and not plan):
+        if _snap_installed(snap_pref):
+            plan.append((
+                f"echo '{snap_pref} is already installed (snap) — nothing to do.'",
+                False, "already installed"))
+        else:
+            classic = " --classic" if spec.get("classic") else ""
+            q = shlex.quote(snap_pref)
+            plan.append((f"sudo snap install {q}{classic}", True, "Snap"))
+        return plan
+    if entry.get("name") == "Docker" and pm == "apt":
+        if _dpkg_status_installed("docker-ce"):
+            plan.append((
+                "echo 'docker-ce is already installed — nothing to do.'",
+                False, "already installed"))
+            return plan
+        if _dpkg_status_installed("docker.io"):
+            plan.append((
+                "echo 'docker.io is already installed — nothing to do.'",
+                False, "already installed"))
+            return plan
     # 2a. apt / native distro package.
     pkg = spec.get("pkg")
+    if (pm == "apt" and isinstance(pkg, str) and _is_ubuntu_family()
+            and re.search(r"(?:^|\s)qemu-kvm(?:\s|$)", pkg)):
+        pkg = re.sub(r"(^|\s)qemu-kvm(\s|$)", r"\1qemu-system-x86\2", pkg)
     if pkg:
         native = _native_pkg_cmd(pm, pkg)
         if native:
@@ -14630,7 +15262,7 @@ def _cloud_add_oauth(backend, bctx, slog, name, prov):
         print(f"    {CYAN}2.{R}  Sign in to {prov['name']} when the browser opens")
         print(f"    {CYAN}3.{R}  Copy the JSON token printed in the terminal")
         try:
-            tok = input(f"\n  {BOLD}Paste the token (or Enter to cancel):{R}\n  ❯ ").strip()
+            tok = _prompt_secret("  Paste the token (hidden, or Enter to cancel): ")
         except (EOFError, KeyboardInterrupt):
             print(); return
         if not tok:
@@ -14696,7 +15328,7 @@ def _cloud_add_s3(backend, bctx, slog, name, prov):
           f"[4] DigitalOcean Spaces  [5] Other")
     try:
         sp = input(f"  ❯ ").strip()
-        access_key = input(f"  {BOLD}Access Key ID:{R}\n  ❯ ").strip()
+        access_key = _prompt_secret("  Access Key ID (hidden): ")
         secret = _gp.getpass(f"  Secret Access Key (won't be shown): ")
         region = input(f"  {BOLD}Region (e.g. us-east-1, blank for default):{R}\n  ❯ ").strip()
         endpoint = input(f"  {BOLD}Custom endpoint URL (blank if AWS):{R}\n  ❯ ").strip()
@@ -15686,9 +16318,40 @@ def show_menu(compact=False):
     # Each category on ~one line so the whole map fits a laptop screen. The full
     # descriptive menu is one keystroke away: type `menu`.
     if compact:
+        def _cols(text: str) -> int:
+            # Most emoji in the menu are double-width; ASCII is one column.
+            return sum(2 if ord(ch) > 0x1100 else 1 for ch in text)
+
         def _row(icon, title, items):
-            its = "  ".join(f"{BLUE}{BOLD}[{n}]{R} {s}" for n, s in items)
-            print(f"  {INDIGO}{BOLD}{icon} {title.ljust(11)}{R} {its}")
+            try:
+                width = shutil.get_terminal_size(fallback=(100, 24)).columns
+            except Exception:
+                width = 100
+            width = max(40, int(width))
+            head = f"{icon} {title.ljust(11)}"
+            indent = "  "
+            cont = " " * _cols(indent + head)
+            budget = max(16, width - _cols(indent + head + " "))
+            next_budget = max(16, width - len(cont))
+            lines, cur, used, first = [], [], 0, True
+            limit = budget
+            for n, s in items:
+                piece = (f"{BLUE}{BOLD}[{n}]{R} {s}", len(f"[{n}] {s}"))
+                gap = 2 if cur else 0
+                if cur and used + gap + piece[1] > limit:
+                    lines.append((first, cur))
+                    first, cur, used, limit = False, [piece], piece[1], next_budget
+                else:
+                    cur.append(piece)
+                    used += gap + piece[1]
+            if cur:
+                lines.append((first, cur))
+            for is_first, chunk in lines:
+                its = "  ".join(rich for rich, _w in chunk)
+                if is_first:
+                    print(f"{indent}{INDIGO}{BOLD}{icon} {title.ljust(11)}{R} {its}")
+                else:
+                    print(f"{cont}{its}")
         print(f"\n  {INDIGO}{BOLD}🐧 What would you like to do today?{R}  {DIM}(just type it, or pick a number){R}\n")
         _row("🚀", "Start",       [("1", "Fix a Problem"), ("2", "Health Check")])
         _row("🔧", "Fix",         [("3","WiFi"),("4","Sound"),("5","Display"),("6","Bluetooth"),("7","Printer"),("8","Webcam"),("9","Drivers"),("10","Permissions")])
@@ -17079,7 +17742,13 @@ def main():
     while True:
         try:
             _xm = f" {DIM}[expert]{R}" if backend.expert_mode else ""
-            choice = input(f"\n  {CYAN}{_cwd_label()}{R} {BGREEN}{BOLD}❯{R}{_xm} ").strip()
+            queued = _take_queued_line()
+            if queued is not None:
+                choice = queued
+                print(f"\n  {CYAN}{_cwd_label()}{R} {BGREEN}{BOLD}❯{R}{_xm} {choice}")
+            else:
+                choice = _read_user_line(
+                    f"\n  {CYAN}{_cwd_label()}{R} {BGREEN}{BOLD}❯{R}{_xm} ").strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
@@ -17193,6 +17862,9 @@ def main():
             else:
                 # Natural language → try direct passthrough first, then agentic AI
                 passed = try_passthrough(choice, session_log, backend, bctx)
+                if passed == "declined":
+                    # They said no — don't record it as a command that ran.
+                    continue
                 if not passed:
                     agentic_engine(backend, choice, bctx, session_log)
                 save_session(session_log)

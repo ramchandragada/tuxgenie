@@ -76,12 +76,15 @@ At every start the provider is chosen by PRIORITY, not by what was last used:
    with a key) — then it's sticky. `main()` warns that free options exist.
 2. **Ollama** sticky when the user explicitly chose local AI (`provider == "ollama"`)
    AND the local daemon is reachable (Phase C — privacy / offline).
-3. Otherwise **always prefer free Gemini, then free OpenAI-compatible cloud
-   providers in registry order (Groq, SambaNova, OpenRouter), then Ollama if
-   reachable** — regardless of the last saved free cloud provider. Gemini is the
-   default whenever its key is present; if only one free key exists, start with
-   that provider.
-4. If the only key present is Claude's, use it (with the same free-switch hint).
+3. An explicit Settings choice of a free provider (Gemini, Groq, Z.ai,
+ SambaNova, OpenRouter) **sticks across restarts** while that provider's key
+ is still saved. Gemini does not override a chosen Groq/Z.ai/SambaNova/
+ OpenRouter key.
+4. Otherwise (provider unset, or the chosen provider has no key) prefer free
+ Gemini, then free OpenAI-compatible cloud providers in registry order
+ (Groq, SambaNova, OpenRouter), then Ollama if reachable. If only one free
+ key exists, start with that provider.
+5. If the only key present is Claude's, use it (with the same free-switch hint).
 
 Auto-failover during a session is still free→free only (Gemini → Groq → … →
 Ollama when running) and never *silently* uses Claude. But when the whole free
