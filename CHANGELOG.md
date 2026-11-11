@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.22.1
+
+Follow-ups left open after the 7.22.0 Ubuntu release:
+
+- **BUG-16:** Plain-English installs and playbook phrases (`install vlc`, `wifi not working`, `no sound`) route to the catalog / built-in fix flows first. The AI is only used when nothing matches.
+- **BUG-17:** Memory hints / recall match only the saved problem text (never command steps) and need a real overlap, so unrelated past sessions are not offered as “you had this before”.
+- **BUG-18:** `q` exits cleanly from Undo; typos like `updtes` suggest the closest menu keyword; empty catalog searches stay empty with a hint; pulse labels say “% used”; Smart routing is marked N/A for Gemini and other single-model providers; org/account IDs are scrubbed from error text; ~20 KB pastes are clamped; sudo passwords must pass `sudo -v` before any privileged step.
+
 ## 7.22.0
 
 Ubuntu and Ubuntu-based desktops (Ubuntu 24.04 noble, Zorin OS, Linux Mint, Pop!_OS), from the 7.21.0 recheck:

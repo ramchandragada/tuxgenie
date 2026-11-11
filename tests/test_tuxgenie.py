@@ -348,9 +348,12 @@ class TestCatalogSearch:
         out, calls = self._drive(monkeypatch, tg.APP_CATALOG, ["photo", "80", "n"])
         assert calls == []
 
-    def test_no_match_falls_back_to_all(self, monkeypatch):
-        out, _ = self._drive(monkeypatch, tg.APP_CATALOG, ["zznope", "q"])
-        assert "Nothing matches" in out
+    def test_no_match_stays_graceful(self, monkeypatch):
+        out, calls = self._drive(monkeypatch, tg.APP_CATALOG, ["zznope", "q"])
+        # After a miss we keep the empty search + hint — no auto-reset to "Showing everything".
+        assert "zznope" in out and "match" in out.lower()
+        assert "Showing everything" not in out
+        assert calls == []
 
     def test_word_finds_ai_tool(self, monkeypatch):
         out, _ = self._drive(monkeypatch, tg.AI_CATALOG, ["cursor", "q"])

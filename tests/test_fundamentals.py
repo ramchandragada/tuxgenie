@@ -7,6 +7,7 @@ suite before it will build or publish anything, so if any of these fail, that
 version never ships. Keep these fast, deterministic, and about fundamentals —
 not niche feature details (those live in test_tuxgenie.py).
 """
+import difflib
 import json
 import os
 import re
@@ -2093,3 +2094,149 @@ class TestUpdateCheckFundamentals:
         got = mod._resolve_tuxgenie()
         assert str(tmp_path / "tuxgenie.py") in got
         assert not got.startswith("/usr/bin/tuxgenie")
+
+
+class TestBug16EnglishRouting:
+    def test_install_vlc_routes_to_catalog(self, monkeypatch):
+        seen = []
+
+        def _fake_cli(ref, backend, bctx, slog, *, catalog=None,
+                      history_tag="install_apps", item_label="app"):
+            seen.append((ref, history_tag, item_label,
+                         any(e.get("name") == "VLC Media Player" for e in (catalog or []))))
+            return True
+
+        monkeypatch.setattr(tg, "cli_install_catalog_ref", _fake_cli)
+        monkeypatch.setattr(tg, "_run_crisis_playbook",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("crisis")))
+        hit = tg._app_install_catalog_for_phrase("install vlc")
+        assert hit is not None
+        entry, catalog, tag, label = hit
+        assert "vlc" in entry["name"].lower()
+        assert tg.try_passthrough("install vlc", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert seen and seen[0][3] is True
+
+    def test_install_unknown_app_does_not_claim_catalog(self):
+        assert tg._app_install_catalog_for_phrase("install totallyfictionalappxyz") is None
+
+    def test_wifi_and_sound_still_hit_playbooks(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(tg, "_run_crisis_playbook",
+                            lambda kind, *a, **k: seen.append(kind))
+        assert tg.try_passthrough("wifi not working", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert tg.try_passthrough("no sound", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert seen == ["wifi", "audio"]
+
+
+class TestBug17MemoryTightMatch:
+    def test_memory_ignores_unrelated_session_via_shared_sudo_steps(self, monkeypatch):
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        monkeypatch.setattr(tg, "_mem_load", lambda: {
+            "solved": [{
+                "problem": "VirtualBox kernel module failed to load",
+                "steps": ["sudo systemctl restart virtualbox.service",
+                          "sudo modprobe vboxdrv"],
+            }]
+        })
+        monkeypatch.setattr(tg, "_community_fixes_load", lambda: [])
+        # Shared sudo/systemctl tokens must NOT surface as a wifi memory hit.
+        assert tg._mem_recall("wifi not working") is None
+        assert tg._mem_search("wifi not working") == []
+
+    def test_memory_recalls_real_repeat(self, monkeypatch):
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        monkeypatch.setattr(tg, "_mem_load", lambda: {
+            "solved": [{
+                "problem": "wifi not working after suspend",
+                "steps": ["sudo systemctl restart NetworkManager"],
+            }]
+        })
+        monkeypatch.setattr(tg, "_community_fixes_load", lambda: [])
+        hit = tg._mem_recall("wifi not working after suspend")
+        assert hit is not None and hit["score"] >= 2
+        assert tg._mem_search("wifi not working after suspend")
+
+
+class TestBug18UxNits:
+    def test_undo_q_exits_cleanly(self, monkeypatch):
+        monkeypatch.setattr(tg, "_list_config_snapshots", lambda: [])
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "q")
+        created = []
+        monkeypatch.setattr(tg, "_create_config_snapshot",
+                            lambda *a, **k: created.append(1))
+        tg.feat_rollback(None, {"pkg_mgr": "apt"}, [])
+        assert created == []
+
+    def test_typo_suggests_closest_menu_keyword(self):
+        keys = [kw for _, kw, *_ in tg.MENU_ITEMS]
+        close = difflib.get_close_matches("updtes", keys, n=1, cutoff=0.72)
+        assert close and close[0] == "updates"
+
+    def test_scrub_hides_org_and_account_ids(self):
+        raw = "Error for org-AbCdEf123456 acct_9Z8Y7X (key sk-ant-abcdefghijklmnopqrstuvwxyz012345)"
+        scrubbed = tg._scrub_error_text(raw)
+        assert "org-AbCdEf123456" not in scrubbed
+        assert "acct_9Z8Y7X" not in scrubbed
+        assert "sk-ant-" not in scrubbed
+        assert "[REDACTED]" in scrubbed
+
+    def test_paste_clamp_keeps_20kb(self, monkeypatch):
+        warned = []
+        monkeypatch.setattr(tg, "warn", lambda msg: warned.append(msg))
+        big = "x" * 25000
+        out = tg._clamp_user_text(big)
+        assert len(out) == tg._MAX_INPUT_CHARS
+        assert warned
+
+    def test_sudo_rejects_wrong_password(self, monkeypatch):
+        attempts = []
+
+        def _fake_pw():
+            return "wrong"
+
+        def _fake_run(cmd, sudo_password=None, timeout=10):
+            attempts.append(sudo_password)
+            return (1, "", "Sorry, try again.")
+
+        monkeypatch.setattr(tg, "_SESSION_SUDO_PW", None)
+        monkeypatch.setattr(tg, "get_sudo_password", _fake_pw)
+        monkeypatch.setattr(tg, "run_cmd_live", _fake_run)
+        with pytest.raises(KeyboardInterrupt):
+            tg.get_or_cache_sudo_password()
+        assert len(attempts) == 3
+        assert tg._SESSION_SUDO_PW is None
+
+    def test_pulse_labels_include_percent_used(self, monkeypatch):
+        monkeypatch.setattr(tg, "_cpu_percent_sample", lambda: 12.0)
+        data = tg.gui_system_pulse()
+        assert "used" in data["cpu_label"].lower()
+        assert "%" in data["cpu_label"]
+        assert "%" in data["mem_label"] and "used" in data["mem_label"].lower()
+        assert "%" in data["disk_label"] and "used" in data["disk_label"].lower()
+
+    def test_smart_routing_copy_for_gemini(self, monkeypatch, capsys):
+        class _GStub(tg.GeminiBackend):
+            def __init__(self):
+                self.auto_model = True
+                self.expert_mode = False
+                self.auto_approve = False
+                self._session_input_tokens = 0
+                self._no_key = True
+
+            def label(self):
+                return "Google Gemini · flash (free)"
+
+            def session_cost_estimate(self):
+                return ""
+
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        monkeypatch.setattr(tg, "_free_provider_labels_with_keys", lambda cfg: [])
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda: False)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "3")
+        tg.feat_settings(_GStub(), {"pkg_mgr": "apt"}, [])
+        out = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
+        assert "N/A" in out or "Claude only" in out
+        assert "Haiku for simple tasks" not in out
