@@ -19,7 +19,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.21.0"
+VERSION = "7.22.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -1576,6 +1576,9 @@ class UnifiedShell:
         self._feed_ready = False
         self._feed_queue = []
         self._store_apps, self._ai_apps = _load_store_catalogs()
+        self._left = None
+        self._wk_finished = False
+        self._deck_fallback_done = False
         self._start_icon_prefetch()
 
         self.app = Gtk.Application(
@@ -1605,6 +1608,7 @@ class UnifiedShell:
         self.paned = paned
 
         left = self._build_left()
+        self._left = left
         right = self._build_terminal()
         # GUI stays compact; extra window width goes to the live terminal.
         paned.pack1(left, False, True)
@@ -1708,12 +1712,129 @@ class UnifiedShell:
         ucm.register_script_message_handler("tuxgenie")
         ucm.connect("script-message-received::tuxgenie", self._on_webkit_msg)
         html = _shell_html(VERSION, self._store_apps, self._ai_apps)
+        try:
+            view.connect("load-changed", self._on_wk_load)
+            view.connect("load-failed", self._on_wk_failed)
+        except Exception:
+            pass
         view.load_html(html, "file:///tuxgenie-shell/")
+        try:
+            self.GLib.timeout_add_seconds(5, self._on_wk_timeout)
+        except Exception:
+            pass
         frame = self.Gtk.Frame()
         frame.set_shadow_type(self.Gtk.ShadowType.NONE)
         frame.add(view)
         self.webview = view
         return frame
+
+    def _on_wk_load(self, view, event):
+        try:
+            finished = event == self.WebKit2.LoadEvent.FINISHED
+        except Exception:
+            finished = False
+        if not finished:
+            return
+        self._wk_finished = True
+        try:
+            self.GLib.timeout_add(700, self._wk_check_blank, view)
+        except Exception:
+            pass
+
+    def _on_wk_failed(self, _view, _event, _uri, _err):
+        self._swap_deck_to_gtk(
+            "The WebKit panel failed to load. Showing the button panel instead. "
+            "You can also close this window and run tuxgenie in a terminal.")
+        return True
+
+    def _on_wk_timeout(self):
+        if self._wk_finished or self._deck_fallback_done:
+            return False
+        self._swap_deck_to_gtk(
+            "The WebKit panel did not finish loading. Showing the button panel instead. "
+            "You can also close this window and run tuxgenie in a terminal.")
+        return False
+
+    def _wk_check_blank(self, view):
+        """A finished load can still paint a blank deck (NVIDIA + X11 / DRI3)."""
+        if self._deck_fallback_done or view is None:
+            return False
+        if self._webkit_surface_blank(view):
+            self._swap_deck_to_gtk(
+                "The WebKit panel rendered blank. Showing the button panel instead. "
+                "You can also close this window and run tuxgenie in a terminal.")
+        return False
+
+    def _webkit_surface_blank(self, view) -> bool:
+        try:
+            region = self.WebKit2.SnapshotRegion.VISIBLE
+            opts = self.WebKit2.SnapshotOptions.NONE
+        except Exception:
+            return False
+
+        holder = {"blank": False, "done": False}
+
+        def _finish(surface):
+            try:
+                w = surface.get_width()
+                h = surface.get_height()
+                if w < 20 or h < 20:
+                    return
+                stride = surface.get_stride()
+                buf = surface.get_data()
+                pts = (
+                    (w // 4, h // 4), (w // 2, h // 2), (3 * w // 4, h // 2),
+                    (w // 2, 3 * h // 4), (8, 8),
+                )
+                samples = []
+                for x, y in pts:
+                    i = y * stride + x * 4
+                    samples.append(bytes(buf[i:i + 3]))
+                if len(samples) < 4:
+                    return
+                base = samples[0]
+                uniform = all(
+                    max(abs(a - b) for a, b in zip(base, s)) < 18 for s in samples)
+                holder["blank"] = bool(uniform)
+            except Exception:
+                holder["blank"] = False
+            holder["done"] = True
+
+        try:
+            def _cb(webview, result, _data):
+                try:
+                    surface = webview.get_snapshot_finish(result)
+                except Exception:
+                    return
+                _finish(surface)
+                if holder["blank"]:
+                    self._swap_deck_to_gtk(
+                        "The WebKit panel rendered blank. Showing the button panel instead. "
+                        "You can also close this window and run tuxgenie in a terminal.")
+
+            view.get_snapshot(region, opts, None, _cb, None)
+        except Exception:
+            return False
+        return False
+
+    def _swap_deck_to_gtk(self, reason: str) -> None:
+        if self._deck_fallback_done:
+            return
+        self._deck_fallback_done = True
+        print("tuxgenie-app: " + reason, file=sys.stderr)
+        try:
+            new = self._build_gtk_fallback(reason)
+            old = self._left
+            if old is not None:
+                self.paned.remove(old)
+            self._left = new
+            self.paned.pack1(new, False, True)
+            self.webview = None
+            new.show_all()
+        except Exception as e:
+            print("tuxgenie-app: could not show a control panel (%s)." % e, file=sys.stderr)
+            print("tuxgenie-app: Use the terminal on the right, or run `tuxgenie` in a terminal.",
+                  file=sys.stderr)
 
     def _on_webkit_msg(self, _manager, message):
         raw = ""
@@ -1861,8 +1982,8 @@ class UnifiedShell:
         except Exception as e:
             print("tuxgenie-app: open url failed:", e, file=sys.stderr)
 
-    def _build_gtk_fallback(self):
-        """Button deck when WebKit is missing — Store opens terminal catalogs."""
+    def _build_gtk_fallback(self, note=None):
+        """Button deck when WebKit is missing or rendered blank."""
         Gtk = self.Gtk
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -1879,7 +2000,7 @@ class UnifiedShell:
         except Exception:
             pass
         sub = Gtk.Label(
-            label="For the full modern App Store UI: sudo apt install gir1.2-webkit2-4.1"
+            label=note or "For the full modern App Store UI: sudo apt install gir1.2-webkit2-4.1"
         )
         sub.set_xalign(0)
         sub.set_line_wrap(True)
