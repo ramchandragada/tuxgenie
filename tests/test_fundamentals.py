@@ -1985,6 +1985,9 @@ class TestUpdateCheckFundamentals:
     def test_ubuntu_catalog_snaps_and_packages(self, monkeypatch):
         monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        monkeypatch.setattr(tg, "_os_release_map", lambda: {
+            "ID": "ubuntu", "ID_LIKE": "debian", "UBUNTU_CODENAME": "noble",
+        })
         monkeypatch.setattr(tg, "_is_ubuntu_family", lambda osr=None: True)
         monkeypatch.setattr(tg, "_snap_installed", lambda name: False)
         ff = " ".join(p[0] for p in tg._catalog_install_plan(
@@ -2001,6 +2004,71 @@ class TestUpdateCheckFundamentals:
         vm_deb = tg._catalog_deterministic_cmd(
             {"name": "virt-manager"}, {"pkg_mgr": "apt"})[0]
         assert "qemu-kvm" in vm_deb
+
+    def test_mint_keeps_firefox_deb_and_xfce_tools(self, monkeypatch):
+        monkeypatch.setattr(tg, "_os_release_map", lambda: {
+            "ID": "linuxmint", "ID_LIKE": "ubuntu debian",
+            "UBUNTU_CODENAME": "noble", "VERSION_CODENAME": "zena",
+            "PRETTY_NAME": "Linux Mint 22.3 Zena",
+        })
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        monkeypatch.setattr(tg, "_snap_installed", lambda name: True)
+        assert tg._prefers_ubuntu_snaps() is False
+        cmd = tg._catalog_deterministic_cmd(
+            {"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"})[0]
+        assert "apt-get install -y firefox" in cmd
+        assert "snap install" not in cmd
+        acts = tg.de_home_actions(desktop="XFCE", flavour="mint", debian_family=True)
+        labels = [a.get("label") for a in acts]
+        assert "Update Manager" in labels and "Appearance" in labels
+        assert "XFCE Settings" in labels
+        kws = set(tg.menu_keyword_map())
+        for a in acts:
+            if a.get("kind") == "kw":
+                assert a["payload"] in kws
+        steps = tg._first_run_setup_steps("apt", "Zena", flavour="mint")
+        assert "mint-meta-codecs" in " ".join(c for _, c, _ in steps)
+        assert "ubuntu-restricted-extras" not in " ".join(c for _, c, _ in steps)
+
+    def test_low_ram_gets_zram_not_swappiness_10(self):
+        results = {
+            "swappiness": "vm.swappiness = 60",
+            "memory": "Mem: 5.7Gi 4.4Gi 0.4Gi\nSwap: 2.0Gi 865Mi 1.2Gi",
+            "meminfo": "MemTotal: 5980000 kB",
+            "zram": "/swapfile file 2G 865M",
+            "journal": "take up 20.0M on disk.",
+            "pkg_cache": "10M\t/var/cache/apt/archives/",
+            "boot_blame": "",
+            "cpu_gov": "4 schedutil",
+            "on_ac": "desktop",
+            "failed_svc": "0 loaded units listed.",
+        }
+        plan = tg._slow_pc_build_plan(results, {"pkg_mgr": "apt"})
+        titles = " ".join(row[0].lower() for row in plan)
+        cmds = " ".join(row[1] for row in plan)
+        assert "zram" in titles
+        assert "swappiness" not in titles
+        assert "zram-tools" in cmds
+        assert not any(tg.is_dangerous(row[1]) for row in plan)
+
+    def test_amdgpu_needs_no_nvidia_package(self):
+        results = {
+            "gpu": "AMD Picasso/Raven 2 [Radeon Vega Series]",
+            "driver": "Kernel driver in use: amdgpu",
+            "fw": "",
+        }
+        note = tg._graphics_driver_summary(results)
+        assert "amdgpu" in note and "NVIDIA" in note
+        assert tg._drivers_generic_build_plan(results, {"pkg_mgr": "apt"}) == []
+
+    def test_anydesk_http_repo_is_rewritten_to_https(self):
+        results = {"ufw": "Status: active", "updates": "enabled",
+                   "apt_http": "deb [arch=amd64] http://deb.anydesk.com/ all main"}
+        plan = tg._security_build_plan(results, {"pkg_mgr": "apt"})
+        cmds = " ".join(row[1] for row in plan)
+        assert "https://deb.anydesk.com" in cmds
+        assert not any(tg.is_dangerous(row[1]) for row in plan)
 
     def test_catalog_urls_and_abandoned_rambox(self):
         jb = tg._CATALOG_INSTALL["JetBrains Toolbox"]["script"]

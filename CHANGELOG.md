@@ -1,5 +1,16 @@
 # Changelog
 
+## 7.23.0
+
+Linux Mint, including Mint XFCE on small PCs (6 GB thin clients such as the HP t640):
+
+- Mint keeps Firefox and Thunderbird as debs. TuxGenie no longer installs the Ubuntu snap for those apps on Linux Mint.
+- Mint XFCE home tiles open Appearance, Update Manager (`mintupdate`), and XFCE Settings. `tweaks` opens XFCE appearance instead of saying this desktop has no tweaks app.
+- Codecs on Mint use `mint-meta-codecs` from the flavour, not Ubuntu's `ubuntu-restricted-extras`.
+- Held updates on Mint point at Update Manager before offering `apt full-upgrade`.
+- PCs under 8 GB of RAM with swap already in use get zram, not a swappiness of 10 (that freezes small desktops). Larger PCs still get swappiness 10.
+- AMD graphics already on `amdgpu` are reported as the right driver. An AnyDesk apt line that is still `http://` can be switched to `https://`.
+
 ## 7.22.0
 
 Ubuntu and Ubuntu-based desktops (Ubuntu 24.04 noble, Zorin OS, Linux Mint, Pop!_OS), from the 7.21.0 recheck:

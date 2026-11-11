@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.22.0"
+__version__ = "7.23.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2703,8 +2703,24 @@ def _is_ubuntu_family(osr=None) -> bool:
     return "ubuntu" in like.split()
 
 
+def _prefers_ubuntu_snaps(osr=None) -> bool:
+    """Ubuntu ships Firefox, Chromium, and Thunderbird as snaps.
+
+    Linux Mint does not. Mint's Firefox and Thunderbird are debs from
+    packages.linuxmint.com, and snapd is off by default. Installing the
+    Ubuntu snap on Mint duplicates the browser and fights Mint's updater.
+    """
+    osr = osr if osr is not None else _os_release_map()
+    did = (osr.get("ID") or "").lower()
+    like = (osr.get("ID_LIKE") or "").lower()
+    if did in ("linuxmint", "mint") or "linuxmint" in like:
+        return False
+    return _is_ubuntu_family(osr)
+
+
 # Apps Ubuntu ships as snaps. On that family, install the snap once — don't
 # also apt-install the transitional deb and a second Flatpak copy.
+# Not used on Linux Mint — see _prefers_ubuntu_snaps().
 _UBUNTU_SNAP_PREFERRED = {
     "Mozilla Firefox": "firefox",
     "Chromium": "chromium",
@@ -2811,9 +2827,22 @@ def de_home_actions(desktop=None, flavour=None, debian_family=None):
             "kind": "kw", "payload": "dsettings", "accent": "#48b9c7",
         })
     elif fam == "xfce":
+        mint = (flavour or "") == "mint"
+        actions.append({
+            "id": "tweaks", "label": "Appearance",
+            "tip": "Theme, icons, and fonts" + (" — Mint XFCE" if mint else ""),
+            "kind": "kw", "payload": "tweaks", "accent": "#1b7a4a",
+        })
+        actions.append({
+            "id": "extensions",
+            "label": "Update Manager" if mint else "Panel",
+            "tip": ("Linux Mint's updater — keeps Mint packages, not a raw full-upgrade"
+                    if mint else "XFCE panel layout"),
+            "kind": "kw", "payload": "extensions", "accent": "#0d6e8c",
+        })
         actions.append({
             "id": "dsettings", "label": "XFCE Settings",
-            "tip": "Open the XFCE settings manager",
+            "tip": "Panel, windows, and desktop" + (" — Mint XFCE" if mint else ""),
             "kind": "kw", "payload": "dsettings", "accent": "#3d5a80",
         })
     elif fam == "mate":
@@ -8217,6 +8246,9 @@ def feat_updates(backend, bctx, slog):
                 elif status == "held":
                     warn(f"{len(remaining)} update(s) were held back (they need extra packages "
                          f"added or removed first).")
+                    if (bctx.get("flavour") or "") == "mint":
+                        print(f"  {DIM}On Linux Mint, Update Manager (mintupdate) is the safer way "
+                              f"to apply these. apt full-upgrade can swap Mint packages for Ubuntu ones.{R}")
                     try:
                         full = input(f"\n  {BOLD}Apply them with a full upgrade now? [y/n]:{R} ").strip().lower()
                     except (EOFError, KeyboardInterrupt):
@@ -11597,6 +11629,8 @@ def _security_playbook_collect() -> dict:
         ("ssh_pw",   "grep -E '^PasswordAuthentication|^PermitRootLogin' /etc/ssh/sshd_config 2>/dev/null || true"),
         ("fail2ban", "systemctl is-active fail2ban 2>/dev/null || true"),
         ("updates",  "systemctl is-enabled unattended-upgrades 2>/dev/null || true"),
+        ("apt_http", "grep -RInhE '^deb http://|^URIs: http://' /etc/apt/sources.list "
+                     "/etc/apt/sources.list.d 2>/dev/null || true"),
         ("ports",    "ss -tuln 2>/dev/null | head -25 || true"),
         ("last",     "last -5 2>/dev/null || true"),
     ])
@@ -11614,6 +11648,12 @@ def _security_show_report(results: dict, bctx=None) -> None:
     section("Listening ports")
     for line in (results.get("ports") or "").splitlines()[:12]:
         print(f"  {DIM}{line}{R}")
+    http_src = (results.get("apt_http") or "").strip()
+    if http_src and http_src not in ("(no output)", "(error)"):
+        section("Package sources")
+        print(f"  {YELLOW}These apt lines use plain http (not https):{R}")
+        for line in http_src.splitlines()[:6]:
+            print(f"  {DIM}{line[:120]}{R}")
 
 
 def _security_build_plan(results: dict, bctx: dict) -> list:
@@ -11635,6 +11675,18 @@ def _security_build_plan(results: dict, bctx: dict) -> list:
                 "moderate",
                 "No firewall tool found. UFW is the usual Ubuntu/Zorin/Mint choice.",
             ))
+    http_src = (results.get("apt_http") or "")
+    if "http://deb.anydesk.com" in http_src and pm == "apt":
+        plan.append((
+            "Switch the AnyDesk apt repo to https",
+            "sudo grep -RIl 'http://deb.anydesk.com' /etc/apt/sources.list "
+            "/etc/apt/sources.list.d | xargs -r sudo sed -i "
+            "'s|http://deb.anydesk.com|https://deb.anydesk.com|g' "
+            "&& sudo apt-get update -q",
+            "moderate",
+            "AnyDesk's apt line is still http. The signed https repo is the one "
+            "that works; this only rewrites that URL.",
+        ))
     upd = (results.get("updates") or "").lower()
     if pm == "apt" and "enabled" not in upd:
         plan.append((
@@ -11969,12 +12021,27 @@ def _drivers_generic_collect() -> dict:
     ])
 
 
+def _graphics_driver_summary(results: dict) -> str:
+    """Plain note when the open driver is already the right one."""
+    blob = ((results or {}).get("gpu") or "") + "\n" + ((results or {}).get("driver") or "")
+    low = blob.lower()
+    if "amdgpu" in low or ("amd" in low and "radeon" in low and "nvidia" not in low):
+        return ("AMD graphics are using amdgpu, the open driver. "
+                "No NVIDIA package is needed.")
+    if "i915" in low or ("intel" in low and "vga" in low and "nvidia" not in low):
+        return "Intel graphics are using the kernel driver."
+    return ""
+
+
 def _drivers_show_report(results: dict, bctx=None) -> None:
     section("Graphics")
     for line in (results.get("gpu") or "").splitlines()[:4]:
         print(f"  {line}")
     for line in (results.get("driver") or "").splitlines()[:8]:
         print(f"  {DIM}{line}{R}")
+    note = _graphics_driver_summary(results)
+    if note:
+        ok(note)
     fw = (results.get("fw") or "").strip()
     if fw and fw not in ("(no output)", "(error)"):
         section("Firmware warnings")
@@ -12766,6 +12833,22 @@ def _parse_size_to_mb(text: str):
     return n * mult
 
 
+def _mem_total_gib(results: dict):
+    """Installed RAM in GiB from meminfo or `free -h`, or None if unknown."""
+    meminfo = (results or {}).get("meminfo") or ""
+    m = re.search(r"MemTotal:\s+(\d+)\s*kB", meminfo, re.I)
+    if m:
+        return int(m.group(1)) / 1024 / 1024
+    mem_row = next((ln for ln in ((results or {}).get("memory") or "").splitlines()
+                    if ln.startswith("Mem:")), "")
+    parts = mem_row.split()
+    if len(parts) >= 2:
+        mb = _parse_size_to_mb(parts[1])
+        if mb:
+            return mb / 1024
+    return None
+
+
 def _slow_pc_collect() -> dict:
     """Parallel local diagnostics — no AI. Same probe set the Performance Boost uses."""
     probes = [
@@ -12832,7 +12915,23 @@ def _slow_pc_build_plan(results: dict, bctx: dict) -> list:
         parts = swap_row.split()
         if len(parts) >= 3 and parts[2] not in ("0", "0B", "0K", "0M"):
             swap_used = parts[2] != "0B"
-    if sw > 20:
+    ram_gib = _mem_total_gib(results)
+    # Under 8 GB (Mint XFCE thin clients, 6 GB desktops) a swappiness of 10
+    # waits too long to use swap and the desktop freezes. Compressed zram is
+    # the better lever. Machines with plenty of RAM still get swappiness 10.
+    low_ram = ram_gib is not None and ram_gib < 8
+    zram_on = "zram" in (results.get("zram") or "").lower()
+    if low_ram and swap_used and not zram_on and pm == "apt":
+        plan.append((
+            "Add compressed RAM swap (zram) for this small PC",
+            "sudo apt-get install -y zram-tools",
+            "moderate",
+            f"About {ram_gib:.0f} GB of RAM and the disk swap is already in use. "
+            "zram compresses memory so a Mint XFCE / thin-client machine stays "
+            "responsive. Swappiness is left as it is — dropping it to 10 on a "
+            "small PC makes freezes more likely.",
+        ))
+    elif sw > 20 and not low_ram:
         plan.append((
             "Lower swappiness to 10 (use RAM before disk swap)",
             "echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-tuxgenie-swappiness.conf "
@@ -14057,7 +14156,7 @@ def _catalog_install_plan(entry, bctx):
     # Ubuntu ships Firefox, Chromium and Thunderbird as snaps. One install,
     # not an apt transitional package plus a Flatpak duplicate.
     snap_pref = _UBUNTU_SNAP_PREFERRED.get(entry.get("name", ""))
-    if (snap_pref and pm == "apt" and _is_ubuntu_family() and shutil.which("snap")
+    if (snap_pref and pm == "apt" and _prefers_ubuntu_snaps() and shutil.which("snap")
             and not plan):
         if _snap_installed(snap_pref):
             plan.append((
@@ -16544,9 +16643,10 @@ def _first_run_setup_steps(pkg_mgr: str, os_name: str = "", flavour: str = "") -
     # Codecs — best-effort; never fail the whole setup if a meta-package is gone.
     codecs = None
     if pm == "apt":
-        if "mint" in os_l:
+        if flavour == "mint" or "mint" in os_l:
             codecs = "sudo apt-get install -y mint-meta-codecs || true"
-        elif any(x in os_l for x in ("ubuntu", "pop", "elementary", "zorin")):
+        elif any(x in os_l for x in ("ubuntu", "pop", "elementary", "zorin")) or flavour in (
+                "ubuntu", "pop", "elementary", "zorin", "kubuntu"):
             codecs = "sudo apt-get install -y ubuntu-restricted-extras || true"
         else:
             codecs = ("sudo apt-get install -y ffmpeg gstreamer1.0-libav "
@@ -16842,6 +16942,10 @@ def feat_desktop_tweaks(backend=None, bctx=None, slog=None):
             _open_desktop_app(["systemsettings5"], "KDE System Settings")
     elif fam == "cosmic":
         _open_desktop_app(["cosmic-settings"], "COSMIC Settings")
+    elif fam == "xfce":
+        if _open_desktop_app(["xfce4-appearance-settings"], "XFCE Appearance"):
+            return
+        _open_desktop_app(["xfce4-settings-manager"], "XFCE Settings")
     else:
         info("No dedicated tweaks app for this desktop — opening Settings instead.")
         feat_desktop_settings(backend, bctx, slog)
@@ -16884,6 +16988,15 @@ def feat_desktop_extensions(backend=None, bctx=None, slog=None):
     elif fam == "kde":
         if not _open_desktop_app(["plasma-discover"], "Discover"):
             _ensure_pkg_then_open("plasma-discover", ["plasma-discover"], "Discover", bctx)
+    elif fam == "xfce":
+        flavour = (bctx.get("flavour") or "")
+        if flavour == "mint" and _open_desktop_app(["mintupdate"], "Mint Update Manager"):
+            return
+        if flavour == "mint" and _open_desktop_app(["mintinstall"], "Mint Software Manager"):
+            return
+        if _open_desktop_app(["xfce4-panel", "--preferences"], "XFCE Panel"):
+            return
+        _open_desktop_app(["xfce4-settings-manager"], "XFCE Settings")
     else:
         info("This desktop has no extension store tile — opening Settings.")
         feat_desktop_settings(backend, bctx, slog)

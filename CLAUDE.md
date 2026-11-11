@@ -64,6 +64,10 @@ TuxGenie must work for **every** Linux user, not just Debian/Ubuntu:
   codecs, Flatpak+Flathub, firewall, NTP — never apt-only.
 - Catalog installs are distro-adapted via `_distro_adapt_prompt()` (Flatpak/native
   on non-Debian). Prefer a Flathub app-id in new catalog entries so they work everywhere.
+- Linux Mint is Ubuntu-family for apt, but it ships Firefox and Thunderbird as
+  debs and leaves snapd off. Do not prefer Ubuntu snaps on Mint (`_prefers_ubuntu_snaps`).
+  Mint XFCE uses `mintupdate`, `xfce4-appearance-settings`, and `xfce4-settings-manager`.
+  Machines under 8 GB of RAM get zram, not swappiness 10.
 - Universal install: `docs/install.sh` (curl | bash) — `.deb` on Debian-family,
   wheel/PyPI elsewhere. `u` self-update handles both `.deb` and pip installs.
 - Note: Flatpak sandboxing is a poor fit for packaging *TuxGenie itself* (needs
