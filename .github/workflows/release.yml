@@ -83,6 +83,12 @@ jobs:
         if: steps.check.outputs.exists == 'false'
         run: TUXGENIE_VERSION=${{ steps.ver.outputs.VERSION }} python3 create_deb.py
 
+      - name: Checksum .deb
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          sha256sum "tuxgenie_${{ steps.ver.outputs.VERSION }}_all.deb" \
+            | tee "tuxgenie_${{ steps.ver.outputs.VERSION }}_all.deb.sha256"
+
       - name: Build PyPI wheel + sdist
         if: steps.check.outputs.exists == 'false'
         run: python -m build --sdist --wheel
@@ -141,6 +147,7 @@ jobs:
             ```
           files: |
             tuxgenie_${{ steps.ver.outputs.VERSION }}_all.deb
+            tuxgenie_${{ steps.ver.outputs.VERSION }}_all.deb.sha256
             install.sh
             dist/tuxgenie-${{ steps.ver.outputs.VERSION }}-py3-none-any.whl
             dist/tuxgenie-${{ steps.ver.outputs.VERSION }}.tar.gz

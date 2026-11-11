@@ -29,7 +29,7 @@ www.tuxgenie.com
 """
 
 import os, sys, json, re, stat, tarfile, datetime, textwrap, time, shlex, argparse
-import math, signal
+import math, signal, difflib
 import subprocess, urllib.request, urllib.error, threading, shutil, traceback
 try:
     import termios, tty as _tty
@@ -59,11 +59,29 @@ def _rl(ansi_str):
 
 # Override builtin input to auto-fix ANSI prompts for readline
 _builtin_input = input
+# Cap pasted / typed lines so a huge clipboard dump cannot break the REPL.
+_MAX_INPUT_CHARS = 20_000
+
+
+def _clamp_user_text(text: str) -> str:
+    """Keep interactive input bounded (~20 KB). Never raises."""
+    if not text:
+        return text
+    if len(text) <= _MAX_INPUT_CHARS:
+        return text
+    try:
+        warn(f"Paste is very large ({len(text)} characters) — "
+             f"using the first {_MAX_INPUT_CHARS}.")
+    except Exception:
+        pass
+    return text[:_MAX_INPUT_CHARS]
+
+
 def _safe_input(prompt=""):
     """input() replacement that auto-wraps ANSI codes for readline."""
     if '\033[' in prompt:
         prompt = _rl(prompt)
-    return _builtin_input(prompt)
+    return _clamp_user_text(_builtin_input(prompt))
 import builtins  # noqa: E402 — must follow _safe_input definition to override input()
 builtins.input = _safe_input
 
@@ -2264,13 +2282,19 @@ def feat_settings(backend, bctx, slog):
     """Settings: view/change API key and model."""
     hdr("Settings")
     info(f"Backend: {backend.label()}")
-    auto_tag    = C(" ON", GREEN)  if backend.auto_model  else C(" OFF", YELLOW)
+    _claude_routing = isinstance(backend, AnthropicBackend)
+    auto_tag    = (C(" ON", GREEN) if backend.auto_model else C(" OFF", YELLOW)) if _claude_routing \
+                  else C(" N/A", DIM)
     expert_tag  = C(" ON", GREEN)  if backend.expert_mode else C(" OFF", DIM)
     approve_tag = C(" ON", YELLOW) if backend.auto_approve else C(" OFF", GREEN)
     cfg         = load_cfg()
     history_on  = not cfg.get("disable_history", False)
     history_tag = C(" ON", GREEN) if history_on else C(" OFF", YELLOW)
-    print(f"  {DIM}Smart model routing:{R}{auto_tag}")
+    if _claude_routing:
+        print(f"  {DIM}Smart model routing (Claude Haiku/Sonnet):{R}{auto_tag}")
+    else:
+        print(f"  {DIM}Smart model routing:{R}{auto_tag}  "
+              f"{DIM}— Claude only; you're on {backend.label()}{R}")
     print(f"  {DIM}Expert mode (compact output):{R}{expert_tag}")
     print(f"  {DIM}Cross-session memory:{R}{history_tag}")
     print(f"  {DIM}Auto-approve AI commands (skip per-step confirm):{R}{approve_tag}")
@@ -2299,7 +2323,10 @@ def feat_settings(backend, bctx, slog):
         print(f"  {DIM}{backend.session_cost_estimate()}{R}")
     print(f"\n  {C('[1]',CYAN)} Change API key")
     print(f"  {C('[2]',CYAN)} Change model")
-    print(f"  {C('[3]',CYAN)} Toggle smart model routing (auto Haiku/Sonnet)")
+    if _claude_routing:
+        print(f"  {C('[3]',CYAN)} Toggle smart model routing (auto Haiku/Sonnet)")
+    else:
+        print(f"  {C('[3]',DIM)} Smart model routing  {DIM}(Claude only — not used on {backend.label()}){R}")
     print(f"  {C('[4]',CYAN)} Toggle expert mode  {DIM}(compact output — skip beginner explanations){R}")
     print(f"  {C('[5]',CYAN)} Toggle cross-session memory  {DIM}(remember past commands & system info){R}")
     print(f"  {C('[6]',CYAN)} Clear stored memory  {DIM}(wipe action log + fingerprint){R}")
@@ -2311,6 +2338,8 @@ def feat_settings(backend, bctx, slog):
     try:
         ch = input(f"\n  {BOLD}Choice:{R} ").strip()
     except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(ch):
         return
     if ch == "1":
         # Provider-aware: sets the key for whichever AI you're on, and routes a
@@ -2327,6 +2356,8 @@ def feat_settings(backend, bctx, slog):
             print(f"       {DIM}{desc}{R}")
         try:
             sel = input(f"\n  {BOLD}Choice [1-{len(AVAILABLE_MODELS)}]:{R} ").strip()
+            if _is_back(sel):
+                return
             idx = int(sel) - 1
             if 0 <= idx < len(AVAILABLE_MODELS):
                 chosen = AVAILABLE_MODELS[idx][0]
@@ -2341,6 +2372,10 @@ def feat_settings(backend, bctx, slog):
         except (ValueError, EOFError, KeyboardInterrupt):
             warn("Invalid selection.")
     elif ch == "3":
+        if not _claude_routing:
+            info(f"Smart model routing is a Claude Haiku/Sonnet feature. "
+                 f"You're on {backend.label()} — one model, no routing toggle.")
+            return
         backend.auto_model = not backend.auto_model
         if backend.auto_model:
             ok("Smart model routing ON — Haiku for simple tasks, Sonnet for complex ones (saves ~80% on simple tasks).")
@@ -3014,11 +3049,11 @@ def gui_system_pulse() -> dict:
 
     return {
         "cpu_pct": cpu_pct,
-        "cpu_label": f"{cpu_pct:.0f}% · {ncpu} cores",
+        "cpu_label": f"{cpu_pct:.0f}% used · {ncpu} cores",
         "mem_pct": mem_pct,
-        "mem_label": f"{_gb(mem_used_kb):g} / {_gb(mem_total_kb):g} GB",
+        "mem_label": f"{_gb(mem_used_kb):g} / {_gb(mem_total_kb):g} GB used ({mem_pct:.0f}%)",
         "disk_pct": disk_pct,
-        "disk_label": f"{disk_used_gb:g} / {disk_total_gb:g} GB",
+        "disk_label": f"{disk_used_gb:g} / {disk_total_gb:g} GB used ({disk_pct:.0f}%)",
         "disk_warn": disk_pct >= 90,
         "mem_warn": mem_pct >= 85,
         "cpu_warn": cpu_pct >= 85,
@@ -3784,6 +3819,7 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                     return
                 if _is_anthropic:
                     kind, msg = _classify_anthropic_error(e)
+                    msg = _scrub_error_text(msg)
                     if kind == "billing":
                         print(f"  {RED}API error: {msg}.{R}")
                         print(f"  {DIM}Top up: https://console.anthropic.com/settings/billing{R}")
@@ -3791,12 +3827,11 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
                         print(f"  {RED}API error: {msg}.{R}")
                         print(f"  {DIM}Press {BOLD}k{R}{DIM} to set a new key.{R}")
                     else:
-                        print(f"  {RED}API error: {e}{R}")
+                        print(f"  {RED}API error: {_scrub_error_text(str(e))}{R}")
                 else:
                     # Gemini/Groq backends already raise clear, provider-specific
-                    # messages — show them verbatim (never the Anthropic classifier,
-                    # which would mislabel e.g. a Groq quota error as an Anthropic one).
-                    print(f"  {RED}{e}{R}")
+                    # messages — show them scrubbed (never raw org/account IDs).
+                    print(f"  {RED}{_scrub_error_text(str(e))}{R}")
                     _low = str(e).lower()
                     if any(s in _low for s in (
                             "connection refused", "network", "timed out", "timeout",
@@ -5203,6 +5238,44 @@ _NL_APP_REMOVE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Plain-English install of a single named app — route to the catalog before AI.
+_NL_APP_INSTALL_RE = re.compile(
+    r"^\s*(?:please\s+)?(?:install|get|add|setup|set\s*up)\s+(?:my\s+|the\s+|an?\s+)?"
+    r"([a-z0-9][a-z0-9 .+_-]{1,40}?)"
+    r"(?:\s+(?:app|application|editor|browser|program|package|player|"
+    r"media\s+player|client))?"
+    r"\s*[.!?]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _app_install_catalog_for_phrase(text: str):
+    """If the input means 'install <named catalog app>', return
+    (entry, catalog_list, history_tag, item_label). Otherwise None — so a known
+    catalog title never burns an AI call just to install VLC / Chrome / etc."""
+    m = _NL_APP_INSTALL_RE.match((text or "").strip())
+    if not m:
+        return None
+    name = m.group(1).strip().lower()
+    if name in _APP_UPDATE_STOPWORDS:
+        return None
+    # Prefer the human-facing catalog name; aliases (vlc → vlc) still resolve
+    # via substring / exact match in resolve_catalog_entry.
+    candidates = [name]
+    alias = _APP_UPDATE_ALIASES.get(name)
+    if alias and alias not in candidates:
+        candidates.append(alias)
+    for catalog, tag, label in (
+        (APP_CATALOG, "install_apps", "app"),
+        (AI_CATALOG, "install_ai", "AI tool"),
+    ):
+        for cand in candidates:
+            entry = resolve_catalog_entry(cand, catalog)
+            if entry:
+                return (entry, catalog, tag, label)
+    return None
+
+
 
 def _app_remove_cmd_for_phrase(text: str):
     """If the input means 'remove <a single named app>', return
@@ -5812,6 +5885,21 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
             err(f"Couldn't update {label} (exit code {rc}).")
             print(f"  {DIM}Type {BOLD}!!{R}{DIM} to ask AI to diagnose and fix this.{R}")
         session_log.append({"command": upd_cmd, "rc": rc, "source": "app-update"})
+        return True
+
+    # Single-app install: "install vlc", "get chrome" — catalog first, AI never.
+    app_inst = _app_install_catalog_for_phrase(cmd)
+    if app_inst:
+        entry, catalog, tag, label = app_inst
+        try:
+            cli_install_catalog_ref(
+                str(entry.get("id") or entry.get("name") or ""),
+                backend, _ctx, session_log,
+                catalog=catalog, history_tag=tag, item_label=label,
+            )
+        except Exception as e:
+            warn(f"Catalog install hit a snag ({e}) — asking the AI instead.")
+            return False
         return True
 
     # Single-app removal: "remove opera", "uninstall vlc" — uninstall JUST that
@@ -6475,12 +6563,19 @@ def get_sudo_password():
 _SESSION_SUDO_PW = None
 
 def get_or_cache_sudo_password():
-    """Return verified sudo password, prompting only once per session."""
+    """Return a verified sudo password, prompting only once per session.
+
+    Never caches a password that failed `sudo -v` — wrong passwords must be
+    rejected before any privileged step runs.
+    """
     global _SESSION_SUDO_PW
     if _SESSION_SUDO_PW is not None:
         # Refresh the sudo timestamp silently so it doesn't expire mid-session
-        run_cmd_live("sudo -S -v", sudo_password=_SESSION_SUDO_PW, timeout=10)
-        return _SESSION_SUDO_PW
+        rc, _, _ = run_cmd_live("sudo -S -v", sudo_password=_SESSION_SUDO_PW, timeout=10)
+        if rc == 0:
+            return _SESSION_SUDO_PW
+        # Cached password no longer works — clear and re-prompt.
+        _SESSION_SUDO_PW = None
     for _attempt in range(3):
         try:
             pw = get_sudo_password()
@@ -6490,17 +6585,13 @@ def get_or_cache_sudo_password():
         if rc == 0:
             _SESSION_SUDO_PW = pw
             return _SESSION_SUDO_PW
-        err_low = err_txt.lower()
-        if "incorrect" in err_low or "sorry" in err_low or rc == 1:
-            if _attempt < 2:
-                print(f"\n  {C('✗ Wrong password — please try again.', RED, BOLD)}")
-            else:
-                warn("Password incorrect 3 times. Cannot proceed with this step.")
-                raise KeyboardInterrupt
+        if _attempt < 2:
+            print(f"\n  {C('✗ Wrong password — please try again.', RED, BOLD)}")
+            if err_txt.strip():
+                print(f"  {DIM}{_scrub_error_text(err_txt.strip())[:120]}{R}")
         else:
-            # Some other non-auth error — accept and proceed
-            _SESSION_SUDO_PW = pw
-            return _SESSION_SUDO_PW
+            warn("Password incorrect 3 times. Cannot proceed with this step.")
+            raise KeyboardInterrupt
     raise KeyboardInterrupt
 
 def _restore_terminal():
@@ -9119,16 +9210,23 @@ def feat_rollback(backend, bctx, current_slog):
     if snaps:
         print(f"  {DIM}Latest snapshot:{R} {snaps[0][0]}")
     try:
-        mode = input(f"  {BOLD}Choose{R} [{C('1', GREEN, BOLD)}/{C('2', CYAN, BOLD)}]: ").strip() or "1"
+        mode = input(f"  {BOLD}Choose{R} [{C('1', GREEN, BOLD)}/{C('2', CYAN, BOLD)} "
+                     f"/ {C('q', DIM)}=back]: ").strip() or "1"
     except (EOFError, KeyboardInterrupt):
+        return
+    if _is_back(mode):
+        info("Back to menu.")
         return
 
     if mode != "2":
         if not snaps:
             warn("No config snapshots yet. Create one from menu 16 first.")
             try:
-                ans = input(f"  {BOLD}Create a snapshot now?{R} [Y/n]: ").strip().lower()
+                ans = input(f"  {BOLD}Create a snapshot now?{R} [Y/n/q]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
+                return
+            if _is_back(ans):
+                info("Back to menu.")
                 return
             if ans in ("", "y", "yes"):
                 _create_config_snapshot(bctx)
@@ -9137,7 +9235,10 @@ def feat_rollback(backend, bctx, current_slog):
         for i, (name, _p, size, _mt) in enumerate(snaps[:10], 1):
             print(f"  {CYAN}[{i}]{R} {name}  {DIM}({size // 1024} KB){R}")
         try:
-            sel = input(f"\n  {BOLD}Number{R} [1-{min(10, len(snaps))}]: ").strip()
+            sel = input(f"\n  {BOLD}Number{R} [1-{min(10, len(snaps))}, q=back]: ").strip()
+            if _is_back(sel):
+                info("Back to menu.")
+                return
             idx = int(sel) - 1
             if idx < 0 or idx >= min(10, len(snaps)):
                 raise ValueError
@@ -9181,7 +9282,10 @@ def feat_rollback(backend, bctx, current_slog):
         info(f"[{i}] {name}  ({run_count} undoable candidates)")
 
     try:
-        ch = input(f"\n{BOLD}Select session to roll back [1-{len(options)}]:{R} ").strip()
+        ch = input(f"\n{BOLD}Select session to roll back [1-{len(options)}, q=back]:{R} ").strip()
+        if _is_back(ch):
+            info("Back to menu.")
+            return
         idx = int(ch) - 1
         if idx < 0 or idx >= len(options):
             raise ValueError
@@ -9221,10 +9325,11 @@ def feat_rollback(backend, bctx, current_slog):
         return
     try:
         deeper = input(f"\n  {BOLD}Ask AI to undo the remaining {len(leftover)} command(s)?{R} "
-                       f"[{C('y', GREEN, BOLD)}=yes  {C('n', DIM)}=no]: ").strip().lower()
+                       f"[{C('y', GREEN, BOLD)}=yes  {C('n', DIM)}=no  "
+                       f"{C('q', DIM)}=back]: ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         deeper = "n"
-    if deeper not in ("y", "yes"):
+    if _is_back(deeper) or deeper not in ("y", "yes"):
         return
 
     sys_p = f"""You are TuxGenie. The user wants to UNDO the following commands that were run on their Linux system.
@@ -10738,6 +10843,12 @@ _SECRET_REDACT_RE = re.compile(
     # (?i) is already set at the start of this expression.
     r"|\bkey\s*(?:is|=|:)\s*(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     r"|[A-Za-z0-9_\-]{24,})"
+    # Provider org / account identifiers that leak into error bodies.
+    r"|\borg-[A-Za-z0-9]{6,}\b"
+    r"|\borg_[A-Za-z0-9]{6,}\b"
+    r"|\bacct_[A-Za-z0-9]{6,}\b"
+    r"|\baccount[_ -]?id\s*[:=]\s*\S+"
+    r"|\borganization(?:al)?(?:\s+id)?\s*[:=]\s*\S+"
 )
 
 
@@ -10746,6 +10857,11 @@ def _redact_secrets(text: str) -> str:
     if not text:
         return text
     return _SECRET_REDACT_RE.sub("[REDACTED]", text)
+
+
+def _scrub_error_text(text: str) -> str:
+    """User-facing error strings: hide keys and org/account IDs."""
+    return _redact_secrets(text or "")
 
 
 def _history_append(task: str, feature: str):
@@ -10992,9 +11108,51 @@ def _community_fixes_load() -> list:
             continue
     return []
 
+_MEM_STOPWORDS = frozenset({
+    "the", "this", "my", "your", "not", "working", "please", "how", "can",
+    "why", "what", "make", "get", "run", "fix", "help", "need", "want",
+    "have", "been", "is", "are", "was", "it", "on", "in", "to", "a", "an",
+    "and", "or", "for", "with", "from", "into", "that", "does", "dont",
+    # Generic command noise — never count these as a "problem match".
+    "sudo", "apt", "apt-get", "systemctl", "service", "restart", "install",
+    "update", "upgrade", "remove", "purge", "true", "false", "null", "echo",
+})
+
+
+def _mem_content_words(text: str) -> set:
+    return set(re.findall(r'\b\w{3,}\b', (text or "").lower())) - _MEM_STOPWORDS
+
+
+def _mem_overlap_score(query_words: set, problem_text: str) -> int:
+    """Score a recall candidate using ONLY the problem label (never steps).
+
+    Matching against saved shell steps caused false positives — shared tokens
+    like ``sudo`` / ``systemctl`` made unrelated past sessions look similar.
+    """
+    if not query_words or not problem_text:
+        return 0
+    e_words = _mem_content_words(problem_text)
+    if not e_words:
+        return 0
+    overlap = query_words & e_words
+    score = len(overlap)
+    if not score:
+        return 0
+    # Exact-ish: every content word from the query appears in the problem.
+    if query_words <= e_words:
+        return max(score, 3)
+    # Otherwise require a real majority overlap (never a single shared word
+    # unless the query itself is a single distinctive topic word that is also
+    # the only content word of a short saved problem).
+    if len(query_words) == 1:
+        return score if len(e_words) <= 3 else 0
+    need = max(2, math.ceil(0.6 * len(query_words)))
+    return score if score >= need else 0
+
+
 def _mem_recall(problem: str):
     """Look up a strong match for `problem` across local + community memory.
-    Returns the best entry if score >= 3 (or exact text match), else None.
+    Returns the best entry on a tight overlap (or exact text match), else None.
     The caller offers to re-apply the saved fix before paying for a Claude call."""
     if load_cfg().get("disable_history"):
         return None
@@ -11003,20 +11161,13 @@ def _mem_recall(problem: str):
     if _is_generic_memory_prompt(problem):
         return None
     p_lower = problem.lower().strip()
-    _STOP  = {"the","this","my","your","not","working","please","how","can",
-              "why","what","make","get","run","fix","help","need","want",
-              "have","been","is","are","was","it","on","in","to","a","an"}
-    q_words = set(re.findall(r'\b\w{3,}\b', p_lower)) - _STOP
+    q_words = _mem_content_words(p_lower)
     if not q_words:
         return None
     local     = _mem_load().get("solved", [])
     community = _community_fixes_load()
     # Local entries win on tie — user's own machine knows its quirks best.
     candidates = [("local", e) for e in local] + [("community", e) for e in community]
-    # Threshold scales with query length so a short query like "wifi broken"
-    # (1–2 content words after stop-word removal) can still match, while a
-    # long query needs a strong overlap to avoid false positives.
-    threshold = min(3, max(1, len(q_words)))
     best = None
     best_score = 0
     for source, e in candidates:
@@ -11029,13 +11180,11 @@ def _mem_recall(problem: str):
             continue
         if prob == p_lower:
             return {"source": source, "entry": e, "score": 999}
-        e_text = prob + " " + " ".join(e.get("steps", []))
-        e_words = set(re.findall(r'\b\w{3,}\b', e_text.lower()))
-        score = len(q_words & e_words)
+        score = _mem_overlap_score(q_words, prob)
         if score > best_score:
             best_score = score
             best = {"source": source, "entry": e, "score": score}
-    return best if best and best_score >= threshold else None
+    return best if best and best_score >= 2 else None
 
 def _mem_apply_recalled(recalled: dict) -> bool:
     """Run the steps from a recalled fix. Returns True if every step exits 0.
@@ -11114,24 +11263,27 @@ def _mem_apply_recalled(recalled: dict) -> bool:
     return False
 
 def _mem_search(query: str, n: int = 3) -> list:
-    """Keyword search in solved issues. Returns up to n relevant matches."""
+    """Keyword search in solved issues. Returns up to n relevant matches.
+
+    Hint UI only — must stay strict so unrelated past sessions are not offered
+    as "you had this before".
+    """
     data   = _mem_load()
     solved = data.get("solved", [])
     if not solved or not query:
         return []
-    _STOP  = {"the","this","my","your","not","working","please","how","can",
-              "why","what","make","get","run","fix","help","need","want",
-              "have","been","is","are","was","it","on","in","to","a","an"}
-    q_words = set(re.findall(r'\b\w{3,}\b', query.lower())) - _STOP
+    if _is_generic_memory_prompt(query):
+        return []
+    q_words = _mem_content_words(query)
     if not q_words:
         return []
     scored = []
     for entry in solved:
-        e_text  = ((entry.get("problem") or "") + " " +
-                   " ".join(entry.get("steps") or [])).lower()
-        e_words = set(re.findall(r'\b\w{3,}\b', e_text))
-        score   = len(q_words & e_words)
-        if score > 0:
+        prob = entry.get("problem") or ""
+        if _is_generic_memory_prompt(prob):
+            continue
+        score = _mem_overlap_score(q_words, prob)
+        if score >= 2:
             scored.append((score, entry))
     scored.sort(key=lambda x: -x[0])
     return [e for _, e in scored[:n]]
@@ -14319,8 +14471,26 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
     while chosen is None:
         entries = catalog if not term else _match(term)
         if term and not entries:
-            warn(f"Nothing matches '{term}'. Showing everything.")
-            term, entries = "", catalog
+            warn(f"No {item_label} match '{term}'. Try another word, "
+                 f"or type {BOLD}*{R}{YELLOW} to show the full catalog.")
+            # Stay on the empty search — don't dump 200+ apps onto the user.
+            print(f"\n  {DIM}Pick numbers, type another search word, "
+                  f"{BOLD}*{R}{DIM}=all, {BOLD}q{R}{DIM}=cancel.{R}")
+            try:
+                sel = input(f"\n  {BOLD}Pick {item_label} or search:{R} ").strip()
+            except (EOFError, KeyboardInterrupt):
+                return
+            low = sel.lower()
+            if not sel or _is_back(sel):
+                return
+            if sel == "*" or low in ("all", "clear", "reset"):
+                term = ""
+                continue
+            if sel.startswith("/"):
+                term = sel[1:].strip()
+                continue
+            term = sel
+            continue
         if term:
             print(f"\n  {BOLD}{GREEN}🔎 {len(entries)} result(s) for '{term}'{R}   "
                   f"{DIM}(type {BOLD}*{R}{DIM} to show all again){R}")
@@ -14332,7 +14502,7 @@ def _run_catalog_picker(backend, bctx, slog, *, catalog, title, intro, item_labe
         except (EOFError, KeyboardInterrupt):
             return
         low = sel.lower()
-        if not sel or low in ("q", "quit", "exit", "back"):
+        if not sel or _is_back(sel):
             return
         if sel == "*" or low in ("all", "clear", "reset"):
             term = ""
@@ -18004,6 +18174,18 @@ def main():
                     # They said no — don't record it as a command that ran.
                     continue
                 if not passed:
+                    # Typo of a menu keyword (e.g. "updtes") — suggest, don't burn AI.
+                    _close = difflib.get_close_matches(
+                        choice.lower().strip(),
+                        list(keyword_map.keys()),
+                        n=1,
+                        cutoff=0.72,
+                    )
+                    if _close and _close[0] != choice.lower().strip():
+                        _sug = _close[0]
+                        info(f"Did you mean {BOLD}{_sug}{R}{CYAN}? "
+                             f"Type that keyword (or its menu number) to open it.")
+                        continue
                     agentic_engine(backend, choice, bctx, session_log)
                 save_session(session_log)
                 _history_append(choice, "terminal" if passed else "fix")
