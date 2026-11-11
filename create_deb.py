@@ -216,6 +216,17 @@ if not os.path.exists(_shell_src):
     sys.exit(f"ERROR: {_shell_src} not found — Unified Shell is required for packaging.")
 with open(_shell_src, "rb") as fh:
     TUXGENIE_SHELL = fh.read()
+
+_codex_backend_src = os.path.join(SCRIPT_DIR, "codex_backend.py")
+_codex_manager_src = os.path.join(SCRIPT_DIR, "codex_conversation_manager.py")
+for _module_src in (_codex_backend_src, _codex_manager_src):
+    if not os.path.exists(_module_src):
+        sys.exit(f"ERROR: {_module_src} not found — Codex integration modules are required.")
+with open(_codex_backend_src, "rb") as fh:
+    CODEX_BACKEND_PY = fh.read()
+with open(_codex_manager_src, "rb") as fh:
+    CODEX_MANAGER_PY = fh.read()
+
 # Executable copy for PATH (same source; shebang already present).
 TUXGENIE_APP = TUXGENIE_SHELL
 
@@ -792,6 +803,10 @@ data_entries = [
      "type": "file", "data": TUXGENIE_PY,                                "mode": 0o644},
     {"path": "./usr/lib/tuxgenie/tuxgenie_shell.py",
      "type": "file", "data": TUXGENIE_SHELL,                             "mode": 0o644},
+    {"path": "./usr/lib/tuxgenie/codex_backend.py",
+     "type": "file", "data": CODEX_BACKEND_PY,                           "mode": 0o644},
+    {"path": "./usr/lib/tuxgenie/codex_conversation_manager.py",
+     "type": "file", "data": CODEX_MANAGER_PY,                           "mode": 0o644},
     {"path": f"./usr/share/doc/{PACKAGE}/copyright",
      "type": "file", "data": COPYRIGHT,                                  "mode": 0o644},
     # Desktop file named after the app-id so GNOME links the running window

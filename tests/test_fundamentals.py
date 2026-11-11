@@ -16,7 +16,7 @@ import types
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 sys.modules.setdefault("anthropic", types.ModuleType("anthropic"))
 
-import tuxgenie as tg
+import tuxgenie as tg  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 
@@ -596,7 +596,6 @@ class TestFirstRunUniversal:
 
     def test_apt_steps_include_flatpak_and_no_hardcoded_only_path(self):
         steps = tg._first_run_setup_steps("apt", "Ubuntu 24.04 LTS")
-        descs = " ".join(d for d, _, _ in steps).lower()
         cmds = " ".join(c for _, c, _ in steps)
         assert "flatpak" in cmds and "flathub" in cmds
         assert "apt-get" in cmds
@@ -647,7 +646,10 @@ class TestFirstRunUniversal:
 class TestUbuntuCompleteAndDeHome:
     """v7.5.0: re-runnable complete wizard + DE-aware Home chips."""
 
-    def test_desktop_family_aliases(self):
+    def test_desktop_family_aliases(self, monkeypatch):
+        # Do not let the host desktop environment affect this normalization test.
+        monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+        monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
         assert tg.desktop_family("ubuntu:GNOME") == "gnome"
         assert tg.desktop_family("X-Cinnamon") == "cinnamon"
         assert tg.desktop_family("KDE") == "kde"
