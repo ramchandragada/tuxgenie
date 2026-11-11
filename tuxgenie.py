@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.19.0"
+__version__ = "7.20.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -6041,9 +6041,21 @@ _RELEASE_UPGRADE_RE = re.compile(
 
 # Live apt/dpkg (not the always-on packagekitd daemon — that would look "busy"
 # on every Ubuntu/Zorin box even when idle).
+# Hard holders: real package installs/upgrades. Soft holders (PackageKit etc.)
+# refresh in the background on Zorin/Ubuntu desktops and must NOT block [12]
+# for minutes — we only wait briefly, then try apt anyway.
 _APT_BUSY_COMMS = frozenset({
     "apt", "apt-get", "aptitude", "dpkg", "unattended-upgr",
 })
+_APT_SOFT_BUSY_COMMS = frozenset({
+    "packagekitd", "packagekit", "aptd",
+})
+_APT_LOCK_PATHS = (
+    "/var/lib/dpkg/lock-frontend",
+    "/var/lib/dpkg/lock",
+    "/var/lib/apt/lists/lock",
+    "/var/cache/apt/archives/lock",
+)
 _DNF_BUSY_COMMS = frozenset({"dnf", "dnf-3", "yum"})
 _PACMAN_BUSY_COMMS = frozenset({"pacman", "pamac"})
 _ZYPPER_BUSY_COMMS = frozenset({"zypper"})
@@ -6104,9 +6116,9 @@ def _kill_cmd_tree(proc):
             return
 
 
-def _proc_comm_names():
-    """Short names from /proc/*/comm (15-char kernel limit)."""
-    names = set()
+def _proc_comm_by_pid():
+    """Map pid(str) → short /proc/*/comm name (15-char kernel limit)."""
+    out = {}
     try:
         for entry in os.listdir("/proc"):
             if not entry.isdigit():
@@ -6114,52 +6126,123 @@ def _proc_comm_names():
             try:
                 with open(os.path.join("/proc", entry, "comm"), "r",
                           encoding="utf-8", errors="replace") as fh:
-                    names.add(fh.read().strip())
+                    out[entry] = fh.read().strip()
             except (OSError, IOError):
                 continue
     except OSError:
         pass
-    return names
+    return out
+
+
+def _proc_comm_names():
+    """Short names from /proc/*/comm (15-char kernel limit)."""
+    return set(_proc_comm_by_pid().values())
+
+
+def _apt_lock_inodes():
+    """Inode numbers for apt/dpkg lock files that currently exist."""
+    inodes = set()
+    for path in _APT_LOCK_PATHS:
+        try:
+            inodes.add(os.stat(path).st_ino)
+        except OSError:
+            continue
+    return inodes
+
+
+def _apt_lock_holder_pids():
+    """PIDs holding an apt/dpkg lock, from /proc/locks (works as non-root)."""
+    targets = _apt_lock_inodes()
+    if not targets:
+        return []
+    pids = []
+    try:
+        with open("/proc/locks", "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                parts = line.split()
+                # 1: FLOCK  ADVISORY  WRITE 1234 00:1d:456 0 EOF
+                if len(parts) < 6:
+                    continue
+                if parts[1] not in ("FLOCK", "POSIX"):
+                    continue
+                try:
+                    ino = int(parts[5].split(":")[-1])
+                except (ValueError, IndexError):
+                    continue
+                if ino not in targets:
+                    continue
+                try:
+                    pids.append(int(parts[4]))
+                except (ValueError, IndexError):
+                    continue
+    except OSError:
+        return []
+    # Preserve order, drop duplicates / our own pid.
+    me = os.getpid()
+    seen, out = set(), []
+    for pid in pids:
+        if pid == me or pid in seen:
+            continue
+        seen.add(pid)
+        out.append(pid)
+    return out
 
 
 def _apt_lockfile_held() -> bool:
-    """True when dpkg/apt lock files are exclusively locked (best-effort)."""
-    try:
-        import fcntl
-    except ImportError:
-        return False
-    for path in (
-        "/var/lib/dpkg/lock-frontend",
-        "/var/lib/dpkg/lock",
-        "/var/lib/apt/lists/lock",
-        "/var/cache/apt/archives/lock",
-    ):
-        fd = None
-        try:
-            fd = os.open(path, os.O_RDWR)
-        except PermissionError:
-            try:
-                fd = os.open(path, os.O_RDONLY)
-            except OSError:
-                continue
-        except OSError:
+    """True when dpkg/apt lock files are exclusively locked.
+
+    Uses /proc/locks (readable without root). A flock() probe on a
+    read-only open can raise OSError on some systems — that must NEVER
+    look like 'busy', or every desktop user hits a false wait on [12].
+    """
+    return bool(_apt_lock_holder_pids())
+
+
+def _apt_busy_holders(include_soft=True):
+    """[(pid_or_0, comm), ...] for hard (and optionally soft) apt holders."""
+    by_pid = _proc_comm_by_pid()
+    hard = _APT_BUSY_COMMS
+    soft = _APT_SOFT_BUSY_COMMS if include_soft else frozenset()
+    want = hard | soft
+    holders = []
+    seen = set()
+    for pid_s, comm in by_pid.items():
+        if comm not in want:
             continue
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except (BlockingIOError, OSError):
-            return True
-        finally:
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-    return False
+        key = (int(pid_s), comm)
+        if key in seen:
+            continue
+        seen.add(key)
+        holders.append(key)
+    for pid in _apt_lock_holder_pids():
+        comm = by_pid.get(str(pid), "lock-holder")
+        key = (pid, comm)
+        if key in seen:
+            continue
+        seen.add(key)
+        holders.append(key)
+    return holders
 
 
-def _pkg_mgr_busy(pkg="apt") -> bool:
-    """True if this distro's package manager looks like it's still running."""
+def _format_pkg_holders(holders):
+    if not holders:
+        return "another package tool"
+    bits = []
+    for pid, comm in holders[:4]:
+        bits.append(f"{comm} (pid {pid})" if pid else comm)
+    extra = len(holders) - 4
+    if extra > 0:
+        bits.append(f"+{extra} more")
+    return ", ".join(bits)
+
+
+def _pkg_mgr_busy(pkg="apt", soft=False) -> bool:
+    """True if this distro's package manager looks like it's still running.
+
+    soft=False (default): only hard holders (apt/dpkg/unattended-upgrade) or
+    a real lock in /proc/locks. soft=True also counts PackageKit/aptd — useful
+    for messaging, but [12] must not block for minutes on those.
+    """
     names = _proc_comm_names()
     table = {
         "apt": _APT_BUSY_COMMS,
@@ -6171,22 +6254,24 @@ def _pkg_mgr_busy(pkg="apt") -> bool:
     }
     if names & table.get(pkg, _APT_BUSY_COMMS):
         return True
+    if soft and pkg == "apt" and (names & _APT_SOFT_BUSY_COMMS):
+        return True
     if pkg == "apt" and _apt_lockfile_held():
         return True
     return False
 
 
-def _wait_pkg_mgr(pkg="apt", timeout=90, interval=2) -> bool:
+def _wait_pkg_mgr(pkg="apt", timeout=90, interval=2, soft=False) -> bool:
     """Wait until the package manager is no longer holding the system.
 
     Returns True if the lock is free (or never was held).
     """
     deadline = time.time() + max(0, int(timeout))
     while True:
-        if not _pkg_mgr_busy(pkg):
+        if not _pkg_mgr_busy(pkg, soft=soft):
             return True
         if time.time() >= deadline:
-            return not _pkg_mgr_busy(pkg)
+            return not _pkg_mgr_busy(pkg, soft=soft)
         time.sleep(interval)
 
 
@@ -7345,18 +7430,54 @@ def feat_updates(backend, bctx, slog):
     except KeyboardInterrupt:
         return
 
-    if _pkg_mgr_busy(pkg):
-        info("Another package operation is still running. Waiting for it to finish…")
-        if not _wait_pkg_mgr(pkg, timeout=120):
-            warn("Couldn't get the package lock. Close Software Updater or wait "
-                 "for apt to finish, then try again.")
-            return
+    # Desktop distros (Zorin/Ubuntu) often have PackageKit / Software Updater
+    # refreshing in the background. Never sit for minutes on a speculative
+    # "busy" probe — try apt, and only wait/retry when apt itself says the
+    # lock is held. Hard holders (apt-get / dpkg / unattended-upgrade) get a
+    # short polite wait first.
+    if pkg == "apt":
+        holders = _apt_busy_holders(include_soft=False)
+        if holders:
+            info(f"Waiting briefly for {_format_pkg_holders(holders)} to finish…")
+            if not _wait_pkg_mgr("apt", timeout=30, interval=2, soft=False):
+                info("Still busy — trying anyway (apt will wait on the lock).")
+    elif _pkg_mgr_busy(pkg):
+        info("Another package operation is still running. Waiting briefly…")
+        if not _wait_pkg_mgr(pkg, timeout=30):
+            info("Still busy — trying anyway.")
 
     if pkg == 'apt':
-        run_cmd_live("sudo apt-get update -q", sudo_password=sudo_pw, timeout=180)
+        update_ok = False
+        update_blob = ""
+        for attempt in range(1, 4):
+            _urc, _uout, _uerr = run_cmd_live(
+                "sudo apt-get update -q", sudo_password=sudo_pw, timeout=180)
+            update_blob = ((_uout or "") + "\n" + (_uerr or "")).strip()
+            if not _apt_output_lock_busy(update_blob) and _urc in (0, None):
+                update_ok = True
+                break
+            if not _apt_output_lock_busy(update_blob):
+                # Non-lock failure (mirror/network) — don't spin on retries.
+                break
+            holders = _apt_busy_holders(include_soft=True)
+            who = _format_pkg_holders(holders)
+            if attempt < 3:
+                info(f"Package lock held by {who}. Retrying in a few seconds "
+                     f"({attempt}/3)…")
+                _wait_pkg_mgr("apt", timeout=15, interval=2, soft=False)
+            else:
+                warn(f"Couldn't refresh package lists — lock still held by {who}. "
+                     "Close Software Updater / wait for background updates, then "
+                     "run [12] again.")
+                return
+        if not update_ok and update_blob and not _apt_output_lock_busy(update_blob):
+            # Continue — list may still work from the previous index.
+            warn("Package list refresh had a problem; checking what's already known…")
+
         lines, list_blob0, list_busy0 = _apt_list_upgradable()
         if list_busy0 or _apt_output_lock_busy(list_blob0):
-            warn("apt is busy (another install still holds the lock). Try again in a minute.")
+            holders = _apt_busy_holders(include_soft=True)
+            warn(f"apt is busy ({_format_pkg_holders(holders)}). Try again in a minute.")
             return
         if lines:
             print(f"\n  {YELLOW}{BOLD}{len(lines)} update(s) available:{R}")

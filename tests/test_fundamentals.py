@@ -1750,3 +1750,26 @@ class TestUpdateCheckFundamentals:
         assert tg._classify_apt_upgrade("", remaining) == "busy"
         assert tg._classify_apt_upgrade("Timed out after 120s", []) == "timeout"
         assert tg._live_cmd_timeout("sudo apt-get upgrade -y", 120) == 3600
+
+    def test_apt_lock_probe_never_treats_oserror_as_busy(self, monkeypatch):
+        # /proc/locks with no matching inodes → not held. flock OSError must
+        # not be reachable as a false "busy" for desktop users on [12].
+        monkeypatch.setattr(tg, "_apt_lock_inodes", lambda: {999999})
+        monkeypatch.setattr(tg, "_apt_lock_holder_pids", lambda: [])
+        assert tg._apt_lockfile_held() is False
+        assert tg._pkg_mgr_busy("apt") is False
+
+    def test_packagekit_is_soft_busy_only(self, monkeypatch):
+        monkeypatch.setattr(tg, "_proc_comm_names",
+                            lambda: {"packagekitd", "bash", "gnome-shell"})
+        monkeypatch.setattr(tg, "_apt_lockfile_held", lambda: False)
+        assert tg._pkg_mgr_busy("apt") is False
+        assert tg._pkg_mgr_busy("apt", soft=True) is True
+
+    def test_feat_updates_retries_lock_instead_of_long_prewait(self):
+        import inspect
+        src = inspect.getsource(tg.feat_updates)
+        assert "Retrying in a few seconds" in src
+        assert "timeout=30" in src
+        assert "Another package operation is still running. Waiting for it to finish" not in src
+        assert "_apt_busy_holders" in src
