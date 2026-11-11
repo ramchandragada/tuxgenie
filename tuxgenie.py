@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.20.0"
+__version__ = "7.21.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -2327,7 +2327,7 @@ def feat_settings(backend, bctx, slog):
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "gemini", "gemini_api_key": k})
-            ok("Switched to Google Gemini (free tier). Restart TuxGenie for it to take effect.")
+            ok("Now using Google Gemini (free tier).")
         elif p == "2":
             print(f"  {DIM}Note: Groq's free tier is rate-limited; check Groq's terms for how")
             print(f"  {DIM}free-tier data is used. Prefer Claude/Ollama for sensitive systems.{R}")
@@ -2341,7 +2341,9 @@ def feat_settings(backend, bctx, slog):
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "groq", "groq_api_key": k})
-            ok("Switched to Groq (free tier). Restart TuxGenie for it to take effect.")
+            ok("Now using Groq for this session.")
+            info("On next launch TuxGenie prefers Gemini while a Gemini key is saved "
+                 "(Settings → 8).")
         elif p == "3":
             print(f"  {DIM}Note: Z.ai's free Flash models have rate limits (concurrency);")
             print(f"  {DIM}API content is not used for training unless you opt in. Prefer")
@@ -2357,7 +2359,9 @@ def feat_settings(backend, bctx, slog):
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "zai", "zai_api_key": k, "zai_model": "glm-4.7-flash"})
-            ok("Switched to Z.ai GLM Flash (free). Restart TuxGenie for it to take effect.")
+            ok("Now using Z.ai GLM Flash for this session.")
+            info("On next launch TuxGenie prefers Gemini while a Gemini key is saved "
+                 "(Settings → 8).")
         elif p == "4":
             print(f"  {DIM}Note: SambaNova's free tier is rate-limited (a daily token cap);")
             print(f"  {DIM}check SambaNova's terms for how free-tier data is used. Prefer")
@@ -2372,7 +2376,9 @@ def feat_settings(backend, bctx, slog):
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "sambanova", "sambanova_api_key": k})
-            ok("Switched to SambaNova (free tier). Restart TuxGenie for it to take effect.")
+            ok("Now using SambaNova for this session.")
+            info("On next launch TuxGenie prefers Gemini while a Gemini key is saved "
+                 "(Settings → 8).")
         elif p == "5":
             print(f"  {DIM}Note: OpenRouter's free models are rate-limited (~20/min, ~50/day);")
             print(f"  {DIM}check OpenRouter's terms for how free-tier data is used. Prefer")
@@ -2387,7 +2393,9 @@ def feat_settings(backend, bctx, slog):
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "openrouter", "openrouter_api_key": k})
-            ok("Switched to OpenRouter (free tier). Restart TuxGenie for it to take effect.")
+            ok("Now using OpenRouter for this session.")
+            info("On next launch TuxGenie prefers Gemini while a Gemini key is saved "
+                 "(Settings → 8).")
         elif p == "6":
             if not _ollama_reachable():
                 warn("Ollama is not running on this PC yet.")
@@ -2405,7 +2413,7 @@ def feat_settings(backend, bctx, slog):
                 model = _ollama_pick_model(load_cfg().get("ollama_model"))
                 ok(f"Ollama is running — detected model {model}.")
             save_cfg({"provider": "ollama", "ollama_model": model})
-            ok("Switched to Ollama (local). Restart TuxGenie for it to take effect.")
+            ok("Now using Ollama (local). It stays selected while the daemon is up.")
         elif p == "7":
             k = (load_cfg().get("api_key") or "").strip()
             if not k:
@@ -2417,7 +2425,7 @@ def feat_settings(backend, bctx, slog):
                 if not k:
                     warn("No key entered — provider unchanged."); return
             save_cfg({"provider": "claude", "api_key": k})
-            ok("Switched to Claude. Restart TuxGenie for it to take effect.")
+            ok("Now using Claude. It stays selected while a Claude key is saved.")
         else:
             info("Provider unchanged.")
     elif ch == "9":
@@ -3306,9 +3314,15 @@ def _display_tool_call(cmd, description, risk, requires_root, step_num):
         print(f"  {BG_RED}{BOLD}  ⚠  DESTRUCTIVE — review carefully  {R}")
 
 
-def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=None):
+def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=None,
+                      sudo_state=None):
     """Execute a single tool call from the agentic engine.
-    Uses run_cmd_live for real-time streaming output and proper sudo handling."""
+    Uses run_cmd_live for real-time streaming output and proper sudo handling.
+
+    sudo_state (optional dict with key 'pw') lets us fetch the sudo password
+    LAZILY — after the command is shown and the user says yes — so beginners
+    aren't asked for a password before they know what will run.
+    """
     name = block.name
     raw_inp = getattr(block, "input", None)
     inp = raw_inp if isinstance(raw_inp, dict) else {}
@@ -3344,6 +3358,27 @@ def _handle_tool_call(block, sudo_pw, step_counter, backend=None, approve_state=
         actual_cmd = cmd
         if requires_root and not cmd.startswith("sudo"):
             actual_cmd = f"sudo {cmd}"
+
+        # Lazy sudo: only after display + approval (BUG-03).
+        if requires_root:
+            if sudo_state is not None:
+                if sudo_state.get("pw") is None:
+                    try:
+                        print(f"  {DIM}Admin password needed to run:{R} {CYAN}{actual_cmd}{R}")
+                        sudo_state["pw"] = get_or_cache_sudo_password()
+                    except KeyboardInterrupt:
+                        print(f"  {YELLOW}Cancelled — nothing was changed.{R}")
+                        return ("CANCELLED by the user at the sudo prompt — do not retry "
+                                "without asking.")
+                sudo_pw = sudo_state.get("pw")
+            elif sudo_pw is None:
+                try:
+                    print(f"  {DIM}Admin password needed to run:{R} {CYAN}{actual_cmd}{R}")
+                    sudo_pw = get_or_cache_sudo_password()
+                except KeyboardInterrupt:
+                    print(f"  {YELLOW}Cancelled — nothing was changed.{R}")
+                    return ("CANCELLED by the user at the sudo prompt — do not retry "
+                            "without asking.")
 
         # Heavy package-manager / release-upgrade commands need a much longer
         # timeout than the default — apt upgrade routinely takes 10-60 minutes.
@@ -3628,22 +3663,17 @@ def agentic_engine(backend, task: str, ctx: dict, session_log: list, max_turns: 
             if response.stop_reason == "tool_use":
                 messages.append({"role": "assistant", "content": response.content})
 
-                # Fetch sudo once if any tool call in this turn needs root
-                if sudo_pw is None:
-                    for block in response.content:
-                        if getattr(block, "type", None) == "tool_use":
-                            if block.input.get("requires_root"):
-                                try:
-                                    sudo_pw = get_or_cache_sudo_password()
-                                except KeyboardInterrupt:
-                                    print(f"\n  {YELLOW}Cancelled.{R}")
-                                    return
-                                break
+                # Sudo is fetched lazily inside _handle_tool_call — AFTER the
+                # command is shown and the user approves (BUG-03).
+                sudo_state = {"pw": sudo_pw}
 
                 tool_results = []
                 for block in response.content:
                     if getattr(block, "type", None) == "tool_use":
-                        result = _handle_tool_call(block, sudo_pw, step_counter, backend, approve_state)
+                        result = _handle_tool_call(
+                            block, sudo_state.get("pw"), step_counter, backend,
+                            approve_state, sudo_state=sudo_state)
+                        sudo_pw = sudo_state.get("pw")
                         # Phase C: record returncode so Undo can filter successes.
                         # Action log already has rc; mirror it when present.
                         _cmd = (block.input.get("command") or "").strip()
@@ -3749,10 +3779,88 @@ def _norm_target(tok: str) -> str:
     """Normalise an rm/chmod/find target for comparison against protected paths.
     'rm -rf /etc/*' and '/etc/' both reduce to '/etc'."""
     t = tok.strip().strip('"').strip("'")
+    # Expand ~ / $HOME so `rm -rf $HOME` is treated like the home directory.
+    try:
+        t = os.path.expandvars(os.path.expanduser(t))
+    except Exception:
+        pass
+    if t in (".", "/."):
+        t = "/"
     if t.endswith("/*"):
         t = t[:-2] or "/"
     t = t.rstrip("/") or "/"
     return t
+
+
+_SHELL_WRAPPERS = frozenset({
+    "bash", "sh", "dash", "zsh", "ksh", "csh", "tcsh", "fish",
+})
+_ENV_WRAPPERS = frozenset({
+    "env", "nice", "nohup", "timeout", "time", "ionice", "stdbuf", "command",
+})
+
+
+def _strip_env_wrappers(toks):
+    """Unwrap env/nice/timeout/… so the real program is visible to safety checks."""
+    toks = list(toks or [])
+    while toks:
+        prog = os.path.basename(toks[0])
+        if prog == "env":
+            toks = toks[1:]
+            while toks:
+                a = toks[0]
+                if a in ("-i", "-0", "-v", "-u", "--unset", "-C", "--chdir"):
+                    toks.pop(0)
+                    if a in ("-u", "--unset", "-C", "--chdir") and toks:
+                        toks.pop(0)
+                    continue
+                if a.startswith("-") and len(a) > 1 and "=" not in a:
+                    toks.pop(0)
+                    continue
+                if "=" in a and not a.startswith("-"):
+                    toks.pop(0)
+                    continue
+                break
+            continue
+        if prog in ("nice", "nohup", "ionice", "stdbuf", "command", "time"):
+            toks = toks[1:]
+            while toks and toks[0].startswith("-"):
+                opt = toks.pop(0)
+                if opt in ("-n", "-p", "-c", "-e", "-o") and toks:
+                    toks.pop(0)
+            continue
+        if prog == "timeout":
+            toks = toks[1:]
+            while toks and toks[0].startswith("-"):
+                opt = toks.pop(0)
+                if opt in ("-s", "--signal", "-k", "--kill-after") and toks:
+                    toks.pop(0)
+            if toks:  # duration
+                toks.pop(0)
+            continue
+        break
+    return toks
+
+
+def _shell_c_payload(toks):
+    """If argv is `bash -c '…'` (or sh/zsh/…), return the script string."""
+    if not toks:
+        return None
+    if os.path.basename(toks[0]) not in _SHELL_WRAPPERS:
+        return None
+    i = 1
+    while i < len(toks):
+        a = toks[i]
+        if a == "-c" and i + 1 < len(toks):
+            return toks[i + 1]
+        if a.startswith("-") and a not in ("-c",):
+            # -lc / -ic still have -c later; bare clustered flags may include c
+            if "c" in a[1:] and not a.startswith("--") and i + 1 < len(toks):
+                return toks[i + 1]
+            i += 1
+            continue
+        break
+    return None
 
 
 def _split_simple_commands(cmd: str):
@@ -3775,6 +3883,7 @@ def _split_simple_commands(cmd: str):
                 dropped = toks.pop(0)
                 if dropped in ("-u", "--user", "-g", "--group") and toks:
                     toks.pop(0)
+        toks = _strip_env_wrappers(toks)
         if toks:
             out.append(toks)
     return out
@@ -3815,6 +3924,11 @@ def _argv_is_dangerous(toks) -> bool:
         if any(_BLOCK_DEVICE_RE.match(a) for a in args):
             return True
 
+    if prog == "cp":
+        # `cp /dev/zero /dev/sda` (and friends) wipe a disk.
+        if any(_BLOCK_DEVICE_RE.match(_norm_target(a)) for a in args):
+            return True
+
     if prog == "chmod":
         # Changing perms on / or a top-level system dir (esp. recursively) is
         # a classic way to render a system unbootable / world-writable.
@@ -3840,6 +3954,18 @@ def _argv_is_dangerous(toks) -> bool:
         if any(_BLOCK_DEVICE_RE.match(_norm_target(a)) for a in args):
             return True
 
+    if prog == "kill":
+        # kill -9 -1 / kill -- -1 = every process
+        if any(a in ("-1", "--") for a in args) and any(
+                a in ("-9", "-KILL", "--signal=9", "--signal=KILL") or a == "9"
+                for a in args):
+            return True
+        if args and args[-1] == "-1":
+            return True
+
+    if prog == "passwd" and "-d" in args and any(a == "root" for a in args):
+        return True
+
     return False
 
 
@@ -3851,10 +3977,23 @@ def is_dangerous(cmd):
     # Layer 1b: whitespace-tolerant classic fork bomb, e.g. ": () { : | : & } ; :"
     if re.search(r":\(\)\{:\|:&\};:", re.sub(r"\s+", "", cmd)):
         return True
+    # Layer 1c: classic sysrq / block-device redirects the argv layer may miss.
+    if re.search(r">\s*/proc/sysrq-trigger\b", cmd):
+        return True
+    if re.search(r"\b(?:curl|wget|fetch)\b[^|]*\|\s*(?:ba|z|k|da)?sh\b", cmd, re.I):
+        # Remote pipe-to-shell is high-risk for confirm, but `bash <(curl …)`
+        # process substitution is hard-block territory for auto paths.
+        pass
+    if re.search(r"\b(?:ba|z|k|da)?sh\s+<\s*\(\s*(?:curl|wget|fetch)\b", cmd, re.I):
+        return True
     # Layer 2: argv-aware analysis of each simple command in the pipeline/chain.
     try:
         for toks in _split_simple_commands(cmd):
             if _argv_is_dangerous(toks):
+                return True
+            # Recurse into `bash -c '…'` / `sh -c "…"` payloads.
+            payload = _shell_c_payload(toks)
+            if payload and is_dangerous(payload):
                 return True
     except Exception:
         # Never let the safety check itself crash — but do not silently pass a
@@ -3897,10 +4036,15 @@ _READ_ONLY_CMDS = {
 # Sub-commands / flags that turn an otherwise read-only tool into a mutating one.
 _WRITE_SUBCMDS = {
     "systemctl":  {"start", "stop", "restart", "reload", "reload-or-restart",
-                   "enable", "disable", "mask", "unmask", "set-default", "isolate",
-                   "kill", "daemon-reload", "daemon-reexec", "edit", "set-property",
-                   "reset-failed", "poweroff", "reboot", "halt", "suspend"},
-    "loginctl":   {"lock-session", "terminate-session", "kill-session", "poweroff", "reboot"},
+                   "try-restart", "reload-or-try-restart", "enable", "disable",
+                   "mask", "unmask", "set-default", "isolate", "kill",
+                   "daemon-reload", "daemon-reexec", "edit", "set-property",
+                   "reset-failed", "poweroff", "reboot", "halt", "suspend",
+                   "hibernate", "hybrid-sleep", "suspend-then-hibernate",
+                   "rescue", "emergency"},
+    "loginctl":   {"lock-session", "terminate-session", "kill-session",
+                   "terminate-user", "kill-user", "unlock-session",
+                   "poweroff", "reboot"},
     "timedatectl": {"set-time", "set-timezone", "set-ntp", "set-local-rtc"},
     "ip":         {"add", "del", "delete", "set", "flush", "change", "replace"},
     "nmcli":      {"up", "down", "add", "del", "delete", "modify", "edit",
@@ -3915,9 +4059,10 @@ _WRITE_SUBCMDS = {
                    "drain", "cordon", "uncordon"},
     "git":        {"push", "reset", "clean", "rebase", "commit", "checkout", "switch",
                    "merge", "rm", "mv", "stash", "cherry-pick", "revert", "am",
-                   "apply", "gc", "prune"},
-    "snap":       {"install", "remove", "refresh", "revert", "disable", "enable", "alias"},
-    "flatpak":    {"install", "uninstall", "update", "remove", "override"},
+                   "apply", "gc", "prune", "config"},
+    "snap":       {"install", "remove", "refresh", "revert", "disable", "enable",
+                   "alias", "stop", "start", "set"},
+    "flatpak":    {"install", "uninstall", "update", "remove", "override", "repair"},
     "apt":        {"install", "remove", "purge", "upgrade", "full-upgrade",
                    "autoremove", "update", "dist-upgrade"},
     "pip":        {"install", "uninstall"},
@@ -3929,10 +4074,66 @@ _WRITE_SUBCMDS = {
 }
 
 
+def _toks_are_read_only(toks) -> bool:
+    """True only when this argv is confidently non-mutating."""
+    if not toks:
+        return False
+    # Never auto-run a shell/interpreter — the payload can do anything.
+    prog0 = os.path.basename(toks[0])
+    if prog0 in _SHELL_WRAPPERS or prog0 in (
+            "python", "python2", "python3", "perl", "ruby", "node", "nodejs"):
+        return False
+    if _shell_c_payload(toks) is not None:
+        return False
+    prog = prog0
+    rest = toks[1:]
+    if prog not in _READ_ONLY_CMDS:
+        return False
+    writes = _WRITE_SUBCMDS.get(prog)
+    if writes and any(a in writes for a in rest):
+        return False
+    if prog == "find" and any(
+            a in ("-delete", "-exec", "-execdir", "-fprint", "-fprintf") for a in rest):
+        return False
+    if prog == "journalctl" and any(
+            a.startswith("--vacuum") or a in ("--rotate", "--flush", "--sync")
+            for a in rest):
+        return False
+    if prog == "nmcli":
+        joined = " ".join(rest).lower()
+        if re.search(r"\b(?:radio|networking)\b.*\b(?:on|off)\b", joined):
+            return False
+        if "hostname" in rest:
+            return False
+    if prog == "git":
+        if "branch" in rest and any(a in ("-D", "-d", "--delete") for a in rest):
+            return False
+        if "remote" in rest and any(
+                a in ("add", "remove", "rm", "set-url", "rename") for a in rest):
+            return False
+    if prog == "date" and any(
+            a in ("-s", "--set") or a.startswith("--set=") for a in rest):
+        return False
+    if prog == "hostname" and any(not a.startswith("-") for a in rest):
+        return False
+    if prog == "dmesg" and any(
+            a in ("-C", "-c", "--clear", "--console-off") for a in rest):
+        return False
+    if prog == "iw" and "disconnect" in rest:
+        return False
+    if prog == "iwconfig" and any(a in ("txpower", "essid", "mode", "key") for a in rest):
+        return False
+    if prog == "env" and rest:
+        # Bare `env` is fine (printenv); any payload was already unwrapped above.
+        return False
+    return True
+
+
 def _is_read_only(cmd: str) -> bool:
     """Conservative: True only when we're confident the command cannot change
     system state (no sudo, no redirection/tee, no known write sub-command).
-    Anything we can't be sure about returns False so the user is asked."""
+    Wrappers like `env`/`timeout` are unwrapped; shells/interpreters never
+    auto-run. Anything uncertain returns False so the user is asked."""
     s = (cmd or "").strip()
     if not s:
         return False
@@ -3940,25 +4141,16 @@ def _is_read_only(cmd: str) -> bool:
         return False
     if re.search(r"(?<!\d)>>?", s) or re.search(r"\btee\b", s):   # writes to a file/device
         return False
+    # Pipelines / process substitutions that feed a shell are never read-only.
+    if re.search(r"\|\s*(?:sudo\s+)?(?:ba|z|k|da)?sh\b", s, re.I):
+        return False
     try:
         simple = _split_simple_commands(s)
     except Exception:
         return False
     if not simple:
         return False
-    for toks in simple:
-        if not toks:
-            return False
-        prog = os.path.basename(toks[0])
-        if prog not in _READ_ONLY_CMDS:
-            return False
-        rest = toks[1:]
-        writes = _WRITE_SUBCMDS.get(prog)
-        if writes and any(a in writes for a in rest):
-            return False
-        if prog == "find" and any(a in ("-delete", "-exec", "-execdir", "-fprint", "-fprintf") for a in rest):
-            return False
-    return True
+    return all(_toks_are_read_only(toks) for toks in simple)
 
 
 _METAPKG_RE = re.compile(
@@ -5636,17 +5828,32 @@ def _report_error_from_exc(exc, feature="", tags=None, interactive=True):
     return _send_error_report(type(exc).__name__, summary, detail,
                               feature=feature, tags=tags, interactive=interactive)
 
+_RATING_ASKED = False
+
+
 def _ask_rating():
-    """Ask a quick 1-5 rating after a successful fix; offer to report if low."""
+    """Ask a quick 1-5 rating after a successful fix; offer to report if low.
+
+    At most once per process. Non-digit input is treated as skip so the user's
+    next real request is not swallowed (BUG-09).
+    """
+    global _RATING_ASKED
+    if _RATING_ASKED:
+        return
     print(f"\n  {CYAN}Quick question — how helpful was TuxGenie today?{R}")
     print(f"  {C('5',YELLOW,BOLD)} = Amazing  {C('3',YELLOW)} = OK  {C('1',DIM)} = Didn't help")
     try:
         r = input(f"  Rate 1–5 (or Enter to skip): ").strip()
     except (EOFError, KeyboardInterrupt):
+        _RATING_ASKED = True
         return
-    if not r or r not in ("1","2","3","4","5"):
+    _RATING_ASKED = True
+    if not r:
         return
-    if r in ("4","5"):
+    if r not in ("1", "2", "3", "4", "5"):
+        print(f"  {DIM}Skipped rating — type your next request at the prompt.{R}")
+        return
+    if r in ("4", "5"):
         print(f"  {GREEN}{BOLD}Thank you! That means a lot. ⭐{R}")
         print(f"  {DIM}Share TuxGenie → {BLUE}{BOLD}www.tuxgenie.com{R}{DIM} · https://github.com/{_GITHUB_REPO}{R}")
     else:
@@ -5660,7 +5867,7 @@ def _ask_rating():
                 ans = input(f"  Open GitHub to report this? [{C('y',GREEN,BOLD)}/{C('n',DIM)}]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 ans = "n"
-            if ans in ("y","yes"):
+            if ans in ("y", "yes"):
                 _open_github_issue(
                     f"[Feedback] Fix didn't work: {fb[:60]}",
                     f"## Feedback — Fix Didn't Help\n\n**Rating:** {r}/5\n\n**What went wrong:**\n{fb}\n\n**Version:** {__version__}\n",
@@ -6050,6 +6257,9 @@ _APT_BUSY_COMMS = frozenset({
 _APT_SOFT_BUSY_COMMS = frozenset({
     "packagekitd", "packagekit", "aptd",
 })
+# Idle Ubuntu/Zorin waiter shares the truncated comm `unattended-upgr` with the
+# real upgrader — never treat the shutdown waiter as a hard busy holder.
+_APT_IDLE_UU_MARKERS = ("unattended-upgrade-shutdown", "--wait-for-signal")
 _APT_LOCK_PATHS = (
     "/var/lib/dpkg/lock-frontend",
     "/var/lib/dpkg/lock",
@@ -6134,6 +6344,22 @@ def _proc_comm_by_pid():
     return out
 
 
+def _proc_cmdline(pid) -> str:
+    try:
+        with open(os.path.join("/proc", str(pid), "cmdline"), "rb") as fh:
+            return fh.read().replace(b"\x00", b" ").decode("utf-8", "replace")
+    except (OSError, IOError):
+        return ""
+
+
+def _is_idle_unattended_upgr(pid, comm) -> bool:
+    """True for the always-on `unattended-upgrade-shutdown --wait-for-signal`."""
+    if comm != "unattended-upgr":
+        return False
+    cl = _proc_cmdline(pid)
+    return any(m in cl for m in _APT_IDLE_UU_MARKERS)
+
+
 def _proc_comm_names():
     """Short names from /proc/*/comm (15-char kernel limit)."""
     return set(_proc_comm_by_pid().values())
@@ -6198,24 +6424,39 @@ def _apt_lockfile_held() -> bool:
     return bool(_apt_lock_holder_pids())
 
 
-def _apt_busy_holders(include_soft=True):
-    """[(pid_or_0, comm), ...] for hard (and optionally soft) apt holders."""
+def _apt_busy_holders(include_soft=True, prefer_text=""):
+    """[(pid_or_0, comm), ...] for hard (and optionally soft) apt holders.
+
+    Prefer apt's own "held by process N (name)" line when provided — that is
+    the ground truth during a lock conflict (BUG-04).
+    """
+    holders = []
+    seen = set()
+    m = re.search(
+        r"held by process\s+(\d+)\s+\(([^)]+)\)", prefer_text or "", re.I)
+    if m:
+        key = (int(m.group(1)), m.group(2).strip() or "apt")
+        seen.add(key)
+        holders.append(key)
     by_pid = _proc_comm_by_pid()
     hard = _APT_BUSY_COMMS
     soft = _APT_SOFT_BUSY_COMMS if include_soft else frozenset()
     want = hard | soft
-    holders = []
-    seen = set()
     for pid_s, comm in by_pid.items():
         if comm not in want:
             continue
-        key = (int(pid_s), comm)
+        pid = int(pid_s)
+        if _is_idle_unattended_upgr(pid, comm):
+            continue
+        key = (pid, comm)
         if key in seen:
             continue
         seen.add(key)
         holders.append(key)
     for pid in _apt_lock_holder_pids():
         comm = by_pid.get(str(pid), "lock-holder")
+        if _is_idle_unattended_upgr(pid, comm):
+            continue
         key = (pid, comm)
         if key in seen:
             continue
@@ -6242,23 +6483,19 @@ def _pkg_mgr_busy(pkg="apt", soft=False) -> bool:
     soft=False (default): only hard holders (apt/dpkg/unattended-upgrade) or
     a real lock in /proc/locks. soft=True also counts PackageKit/aptd — useful
     for messaging, but [12] must not block for minutes on those.
+    The idle `unattended-upgrade-shutdown --wait-for-signal` daemon is ignored.
     """
+    if pkg == "apt":
+        return bool(_apt_busy_holders(include_soft=soft))
     names = _proc_comm_names()
     table = {
-        "apt": _APT_BUSY_COMMS,
         "dnf": _DNF_BUSY_COMMS,
         "yum": _DNF_BUSY_COMMS,
         "pacman": _PACMAN_BUSY_COMMS,
         "zypper": _ZYPPER_BUSY_COMMS,
         "apk": _APK_BUSY_COMMS,
     }
-    if names & table.get(pkg, _APT_BUSY_COMMS):
-        return True
-    if soft and pkg == "apt" and (names & _APT_SOFT_BUSY_COMMS):
-        return True
-    if pkg == "apt" and _apt_lockfile_held():
-        return True
-    return False
+    return bool(names & table.get(pkg, frozenset()))
 
 
 def _wait_pkg_mgr(pkg="apt", timeout=90, interval=2, soft=False) -> bool:
@@ -7424,17 +7661,9 @@ def feat_updates(backend, bctx, slog):
 
     # ── Run update directly — no AI needed ──
     print(f"\n  {CYAN}Refreshing package lists…{R}")
-    sudo_pw = None
-    try:
-        sudo_pw = get_or_cache_sudo_password()
-    except KeyboardInterrupt:
-        return
 
-    # Desktop distros (Zorin/Ubuntu) often have PackageKit / Software Updater
-    # refreshing in the background. Never sit for minutes on a speculative
-    # "busy" probe — try apt, and only wait/retry when apt itself says the
-    # lock is held. Hard holders (apt-get / dpkg / unattended-upgrade) get a
-    # short polite wait first.
+    # Busy probe BEFORE asking for sudo (BUG-04): idle unattended-upgrade-shutdown
+    # is ignored; real apt/dpkg holders get a short wait, then we try anyway.
     if pkg == "apt":
         holders = _apt_busy_holders(include_soft=False)
         if holders:
@@ -7445,6 +7674,16 @@ def feat_updates(backend, bctx, slog):
         info("Another package operation is still running. Waiting briefly…")
         if not _wait_pkg_mgr(pkg, timeout=30):
             info("Still busy — trying anyway.")
+
+    sudo_pw = None
+    try:
+        print(f"  {DIM}Admin password needed to run:{R} {CYAN}sudo apt-get update{R}"
+              if pkg == "apt" else
+              f"  {DIM}Admin password needed for package updates.{R}")
+        sudo_pw = get_or_cache_sudo_password()
+    except KeyboardInterrupt:
+        print(f"  {YELLOW}Cancelled — nothing was changed.{R}")
+        return
 
     if pkg == 'apt':
         update_ok = False
@@ -7459,7 +7698,7 @@ def feat_updates(backend, bctx, slog):
             if not _apt_output_lock_busy(update_blob):
                 # Non-lock failure (mirror/network) — don't spin on retries.
                 break
-            holders = _apt_busy_holders(include_soft=True)
+            holders = _apt_busy_holders(include_soft=True, prefer_text=update_blob)
             who = _format_pkg_holders(holders)
             if attempt < 3:
                 info(f"Package lock held by {who}. Retrying in a few seconds "
@@ -7472,11 +7711,11 @@ def feat_updates(backend, bctx, slog):
                 return
         if not update_ok and update_blob and not _apt_output_lock_busy(update_blob):
             # Continue — list may still work from the previous index.
-            warn("Package list refresh had a problem; checking what's already known…")
+            warn("Couldn't reach the update servers; showing what was last known…")
 
         lines, list_blob0, list_busy0 = _apt_list_upgradable()
         if list_busy0 or _apt_output_lock_busy(list_blob0):
-            holders = _apt_busy_holders(include_soft=True)
+            holders = _apt_busy_holders(include_soft=True, prefer_text=list_blob0)
             warn(f"apt is busy ({_format_pkg_holders(holders)}). Try again in a minute.")
             return
         if lines:
@@ -7562,7 +7801,11 @@ def feat_updates(backend, bctx, slog):
                     warn(f"{len(remaining)} update(s) still pending — run this again shortly, "
                          f"or they may need a full upgrade.")
         else:
-            ok("System is up to date.")
+            if update_ok:
+                ok("System is up to date.")
+            else:
+                warn("Couldn't confirm whether updates are available — "
+                     "the package list refresh did not succeed. Try again when online.")
     elif pkg in ('dnf', 'yum'):
         run_cmd_live(f"sudo {pkg} check-update", sudo_password=sudo_pw, timeout=180)
         try:
@@ -9984,6 +10227,19 @@ def save_session(slog: list):
     with open(out,"w") as f:
         json.dump({"timestamp":ts,"commands":slog}, f, indent=2)
 
+_SECRET_REDACT_RE = re.compile(
+    r"(?i)(?:gsk_|AIza|sk-or-v1-|sk-ant-|sk-|zai-|xai-)[A-Za-z0-9_\-]{8,}"
+    r"|(?:api[_-]?key|token|password|passwd|secret)\s*(?:is|=|:)\s*\S+"
+)
+
+
+def _redact_secrets(text: str) -> str:
+    """Strip API keys / password phrases before writing user text to disk."""
+    if not text:
+        return text
+    return _SECRET_REDACT_RE.sub("[REDACTED]", text)
+
+
 def _history_append(task: str, feature: str):
     """Append one interaction to the persistent history log (capped at 50)."""
     if load_cfg().get("disable_history"):
@@ -9995,12 +10251,13 @@ def _history_append(task: str, feature: str):
             entries = []
         entries.append({
             "ts":      datetime.datetime.now().strftime("%b %d  %H:%M"),
-            "task":    task.strip()[:80],
+            "task":    _redact_secrets(task.strip())[:80],
             "feature": feature,
         })
         entries = entries[-50:]
         with open(HISTORY_FILE, "w") as f:
             json.dump(entries, f)
+        os.chmod(HISTORY_FILE, stat.S_IRUSR | stat.S_IWUSR)
     except Exception:
         pass
 
@@ -10651,7 +10908,7 @@ def _leftover_crisis(kind, results, applied, plan) -> bool:
 
 def _pkg_cache_clean_cmd(pm: str) -> str:
     return {
-        "apt":    "sudo apt-get autoremove -y && sudo apt-get clean",
+        "apt":    "sudo apt-get clean",
         "dnf":    "sudo dnf clean all && sudo dnf autoremove -y",
         "yum":    "sudo yum clean all",
         "zypper": "sudo zypper clean --all",
@@ -12061,11 +12318,12 @@ def _slow_pc_build_plan(results: dict, bctx: dict) -> list:
             f"System logs are using about {j_mb:.0f} MB. Trimming old logs frees disk space safely.",
         ))
 
-    # Package cache cleanup — distro-aware
+    # Package cache cleanup — distro-aware. Keep `clean` (no packages removed)
+    # separate from `autoremove` (does remove unused packages).
     c_mb = _parse_size_to_mb(results.get("pkg_cache", ""))
     if c_mb is not None and c_mb > 200:
         clean = {
-            "apt":    "sudo apt-get autoremove -y && sudo apt-get clean",
+            "apt":    "sudo apt-get clean",
             "dnf":    "sudo dnf clean all",
             "yum":    "sudo yum clean all",
             "zypper": "sudo zypper clean --all",
@@ -12077,7 +12335,16 @@ def _slow_pc_build_plan(results: dict, bctx: dict) -> list:
                 "Clear old package download cache",
                 clean,
                 "safe",
-                f"Package cache is about {c_mb:.0f} MB. Clearing it frees disk without removing installed apps.",
+                f"Package cache is about {c_mb:.0f} MB. Clearing downloads frees disk "
+                f"without removing installed apps.",
+            ))
+        if pm == "apt":
+            plan.append((
+                "Remove packages nothing needs any more",
+                "sudo apt-get autoremove -y",
+                "moderate",
+                "Lists and removes unused dependency packages (not your apps). "
+                "Review the apt summary before confirming.",
             ))
 
     # NetworkManager-wait-online often adds seconds to boot
@@ -12214,7 +12481,7 @@ APP_CATALOG = [
     {"id": 10, "name": "Zoom",                "cat": "Communication",  "prompt": "Install Zoom video conferencing",                                                                                               "desc": "Video meetings"},
     {"id": 11, "name": "Microsoft Teams",     "cat": "Communication",  "prompt": "Install Microsoft Teams for Linux",                                                                                             "desc": "Microsoft's team chat"},
     {"id": 12, "name": "Rambox",              "cat": "Communication",  "prompt": "Install Rambox Community Edition multi-service messaging hub — download the latest amd64 .deb from https://github.com/ramboxapp/community-edition/releases and install it with apt/dpkg. (No Flathub package.)", "desc": "All-in-one workspace for messaging apps"},
-    {"id": 13, "name": "Arattai",             "cat": "Communication",  "prompt": "Arattai has no official Linux desktop app (only Android/iOS/Mac/Windows/Web). Tell the user honestly, then offer: (1) open https://web.arattai.in in a browser, or (2) install Aspera Hub / Ferdium / Rambox from the catalog to wrap the web app in a desktop window.", "desc": "Tamil community chat (web on Linux)"},
+    {"id": 13, "name": "Arattai",             "cat": "Communication",  "prompt": "Install Arattai (Zoho's messenger) — download the latest amd64 .deb from https://downloads.zohocdn.com/arattai-desktop/linux/ (arattai_*_amd64.deb) and install with apt/dpkg. If the .deb is missing, open https://web.arattai.in.", "desc": "Zoho's messenger (desktop + web)"},
     # ── Office & Notes ───────────────────────────────────────────────────────
     {"id": 14, "name": "LibreOffice",         "cat": "Office & Notes", "prompt": "Install the latest LibreOffice (full suite)",                                                                                   "desc": "Free office suite (Writer, Calc, Impress)"},
     {"id": 15, "name": "OnlyOffice",          "cat": "Office & Notes", "prompt": "Install OnlyOffice Desktop Editors",                                                                                            "desc": "Best MS Office format compatibility"},
@@ -12592,10 +12859,17 @@ _CATALOG_INSTALL = {
                                     "[ -n \"$url\" ]; curl -fL -o /tmp/rambox.deb \"$url\"; "
                                     "sudo apt-get install -y /tmp/rambox.deb",
                          "script_root": True},
-    # Arattai has no Linux desktop package — open the official web client.
-    "Arattai":          {"script": "xdg-open https://web.arattai.in >/dev/null 2>&1 || "
-                                    "sensible-browser https://web.arattai.in >/dev/null 2>&1 || "
-                                    "echo 'Open https://web.arattai.in — Arattai has no Linux desktop app.'"},
+    "Arattai":          {"script": "set -e; "
+                                    "url=$(curl -fsSL https://www.arattai.in/download.html 2>/dev/null "
+                                    "| grep -oE 'https://downloads\\.zohocdn\\.com/arattai-desktop/linux/arattai_[0-9.]+_amd64\\.deb' "
+                                    "| sort -V | tail -1 || true); "
+                                    "if [ -z \"$url\" ]; then "
+                                    "url=$(curl -fsI -o /dev/null -w '%{url_effective}' "
+                                    "https://downloads.zohocdn.com/arattai-desktop/linux/arattai_1.0.9_amd64.deb); "
+                                    "fi; "
+                                    "curl -fL -o /tmp/arattai.deb \"$url\"; "
+                                    "sudo apt-get install -y /tmp/arattai.deb",
+                         "script_root": True},
     "Element":          {"flatpak": "im.riot.Riot"},
     "Ferdium":          {"flatpak": "org.ferdium.Ferdium"},
     "WhatsApp (ZapZap)": {"flatpak": "com.rtosta.zapzap"},
@@ -12699,7 +12973,7 @@ _CATALOG_INSTALL = {
     "LibreSprite":      {"flatpak": "com.github.libresprite.LibreSprite"},
     # ── Remote Access ──
     "AnyDesk":          {"deb": {"name": "anydesk", "key": "https://keys.anydesk.com/repos/DEB-GPG-KEY",
-                                 "repo": "http://deb.anydesk.com/ all main", "pkg": "anydesk"}},
+                                 "repo": "https://deb.anydesk.com/ all main", "pkg": "anydesk"}},
     "TeamViewer":       {"script": "set -e; curl -fL -o /tmp/teamviewer_amd64.deb "
                                     "https://download.teamviewer.com/download/linux/teamviewer_amd64.deb; "
                                     "sudo apt-get install -y /tmp/teamviewer_amd64.deb",
@@ -12713,7 +12987,11 @@ _CATALOG_INSTALL = {
     "Sublime Text":     {"deb": {"name": "sublimehq", "key": "https://download.sublimetext.com/sublimehq-pub.gpg",
                                  "repo": "https://download.sublimetext.com/ apt/stable/", "pkg": "sublime-text"}},
     "Git":              {"pkg": "git"},
-    "Docker":           {"script": "curl -fsSL https://get.docker.com | sudo sh", "script_root": True},
+    # Prefer distro docker.io on Ubuntu-family (get.docker.com can pick Debian
+    # codenames on Zorin/Mint). Fall back to the official convenience script.
+    "Docker":           {"pkg": "docker.io",
+                         "script": "curl -fsSL https://get.docker.com | sudo sh",
+                         "script_root": True},
     "Node.js (LTS)":    {"script": "curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - "
                                     "&& sudo apt-get install -y nodejs", "script_root": True},
     "DBeaver":          {"flatpak": "io.dbeaver.DBeaverCommunity"},
@@ -12754,7 +13032,8 @@ _CATALOG_INSTALL = {
     "Starship":         {"script": "curl -sS https://starship.rs/install.sh | sh -s -- -y", "script_root": True},
     "JetBrains Toolbox": {"script": "set -e; mkdir -p \"$HOME/Applications\"; "
                                     "curl -fL -o /tmp/jetbrains-toolbox.tar.gz "
-                                    "https://download.jetbrains.com/toolbox/jetbrains-toolbox-linux.tar.gz; "
+                                    "\"https://data.services.jetbrains.com/products/download"
+                                    "?code=TBA&platform=linux&type=download\"; "
                                     "tar xzf /tmp/jetbrains-toolbox.tar.gz -C \"$HOME/Applications\"; "
                                     "bin=$(find \"$HOME/Applications\" -maxdepth 2 -type f -name jetbrains-toolbox | head -1); "
                                     "[ -n \"$bin\" ]; \"$bin\" &"

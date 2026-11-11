@@ -1760,11 +1760,29 @@ class TestUpdateCheckFundamentals:
         assert tg._pkg_mgr_busy("apt") is False
 
     def test_packagekit_is_soft_busy_only(self, monkeypatch):
-        monkeypatch.setattr(tg, "_proc_comm_names",
-                            lambda: {"packagekitd", "bash", "gnome-shell"})
-        monkeypatch.setattr(tg, "_apt_lockfile_held", lambda: False)
+        monkeypatch.setattr(
+            tg, "_apt_busy_holders",
+            lambda include_soft=True, prefer_text="": (
+                [(100, "packagekitd")] if include_soft else []))
         assert tg._pkg_mgr_busy("apt") is False
         assert tg._pkg_mgr_busy("apt", soft=True) is True
+
+    def test_idle_unattended_upgrade_shutdown_not_busy(self, monkeypatch):
+        monkeypatch.setattr(tg, "_proc_comm_by_pid",
+                            lambda: {"1613": "unattended-upgr", "1": "systemd"})
+        monkeypatch.setattr(
+            tg, "_proc_cmdline",
+            lambda pid: ("/usr/bin/unattended-upgrade-shutdown --wait-for-signal"
+                         if str(pid) == "1613" else ""))
+        monkeypatch.setattr(tg, "_apt_lock_holder_pids", lambda: [])
+        assert tg._pkg_mgr_busy("apt") is False
+        assert tg._apt_busy_holders(include_soft=False) == []
+
+    def test_lock_holder_prefers_apt_error_text(self):
+        holders = tg._apt_busy_holders(
+            include_soft=True,
+            prefer_text="E: Could not get lock. It is held by process 4242 (apt-get)")
+        assert holders[0] == (4242, "apt-get")
 
     def test_feat_updates_retries_lock_instead_of_long_prewait(self):
         import inspect
@@ -1773,3 +1791,32 @@ class TestUpdateCheckFundamentals:
         assert "timeout=30" in src
         assert "Another package operation is still running. Waiting for it to finish" not in src
         assert "_apt_busy_holders" in src
+        assert "Cancelled — nothing was changed" in src
+        assert "Couldn't confirm whether updates are available" in src
+
+    def test_env_rm_is_not_read_only(self):
+        assert not tg._is_read_only("env rm -rf /tmp/x")
+        assert not tg._is_read_only("nmcli radio wifi off")
+        assert not tg._is_read_only("systemctl try-restart NetworkManager")
+        assert not tg._is_read_only("journalctl --vacuum-time=1s")
+        assert not tg._is_read_only("git branch -D main")
+        assert not tg._is_read_only("date -s 2020-01-01")
+        assert not tg._is_read_only("hostname foo")
+        assert not tg._is_read_only("dmesg -C")
+
+    def test_dangerous_covers_home_and_shell_c(self):
+        assert tg.is_dangerous("rm -rf $HOME")
+        assert tg.is_dangerous('bash -c "rm -rf /"')
+        assert tg.is_dangerous("env rm -rf /")
+        assert tg.is_dangerous("kill -9 -1")
+        assert tg.is_dangerous("cp /dev/zero /dev/sda")
+
+    def test_history_redacts_and_is_private(self, tmp_path, monkeypatch):
+        hist = tmp_path / "history.json"
+        monkeypatch.setattr(tg, "HISTORY_FILE", str(hist))
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        tg._history_append("my key is gsk_" + ("A" * 40) + " please", "fix")
+        data = hist.read_text()
+        assert "gsk_AAAA" not in data
+        assert "[REDACTED]" in data
+        assert (hist.stat().st_mode & 0o777) == 0o600
