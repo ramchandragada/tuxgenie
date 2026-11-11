@@ -225,6 +225,19 @@ def trunc(text, max_lines):
     hidden = len(lines) - max_lines
     return "\n".join(lines[:max_lines]) + f"\n{C(f'  … [{hidden} more lines]', DIM)}"
 
+def _read_user_line(prompt: str) -> str:
+    """Show `prompt` once, then read a line.
+
+    The main prompt starts with a newline and contains ❯. GNU readline
+    mis-counts that width and redraws the whole prompt, so pexpect (and a
+    wide terminal) shows it twice. Printing it ourselves and reading with
+    an empty readline prompt leaves a single copy.
+    """
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    return input("")
+
+
 def _cwd_label(maxlen=34):
     """Home-relative current directory for the prompt, like a real shell.
     So relative paths (e.g. './file.deb') are never a mystery."""
@@ -3951,6 +3964,34 @@ def _rmtree_in_code(payload: str) -> bool:
     return False
 
 
+def _embedded_shell_commands(text: str) -> list:
+    """Shell strings hidden inside perl/python/ruby/node one-liners.
+
+    `perl -e 'system("rm -rf /")'` is not a shell `rm` until the string
+    argument of system/exec/subprocess/backticks is pulled back out.
+    """
+    if not text:
+        return []
+    found = []
+    found.extend(re.findall(r"`([^`]+)`", text))
+    found.extend(re.findall(r"\bqx\s*[\(\{]([^)}\n]+)", text))
+    calls = (
+        r"os\.system|os\.popen|"
+        r"subprocess\.(?:call|run|check_call|check_output|Popen|getoutput|getstatusoutput)|"
+        r"child_process\.(?:execSync|execFileSync|execFile|exec|spawnSync|spawn)|"
+        r"\bsystem|\bexec|\bpopen"
+    )
+    found.extend(re.findall(
+        rf"(?:{calls})\s*\(\s*['\"](.+?)['\"]", text, flags=re.I | re.S))
+    found.extend(re.findall(
+        r"""(?:\bsystem|\bexec|\bpopen)\s+['"](.+?)['"]""", text, flags=re.I | re.S))
+    for inner in re.findall(rf"(?:{calls})\s*\(\s*\[([^\]]+)\]", text, flags=re.I | re.S):
+        parts = re.findall(r"""['"]([^'"]+)['"]""", inner)
+        if parts:
+            found.append(" ".join(parts))
+    return found
+
+
 def _decodes_into_shell(cmd: str) -> bool:
     """`base64 -d | sh` (and the same with bash) runs a hidden payload."""
     for seg in re.split(r"&&|\|\||;|\n", cmd or ""):
@@ -4237,6 +4278,13 @@ def is_dangerous(cmd, _depth=0):
         return True
     if _decodes_into_shell(cmd) or _rmtree_in_code(cmd):
         return True
+    # Interpreter one-liners that hide a destructive shell command:
+    # perl -e 'system("rm -rf /")', python -c os.system(...), node exec(...).
+    if re.search(r"\b(?:python[23]?|perl|ruby|node(?:js)?)\b", cmd):
+        for inner in _embedded_shell_commands(cmd):
+            inner = (inner or "").strip()
+            if inner and inner != cmd.strip() and is_dangerous(inner, _depth + 1):
+                return True
     # Layer 2: argv-aware analysis of each simple command in the pipeline/chain.
     try:
         for toks in _split_simple_commands(cmd):
@@ -5841,7 +5889,7 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
         if reason:
             print(f"  {YELLOW}{BOLD}⚠  High-risk command — it {reason}.{R}")
         if not _confirm_typed_command():
-            return True
+            return "declined"
 
     # Get sudo password once (cached for the whole session)
     sudo_pw = None
@@ -5849,7 +5897,7 @@ def try_passthrough(user_input, session_log, backend=None, bctx=None):
         try:
             sudo_pw = get_or_cache_sudo_password()
         except KeyboardInterrupt:
-            warn("Cancelled."); return True
+            warn("Cancelled."); return "declined"
 
     # Inject -y for package managers so their internal prompt doesn't abort
     exec_cmd = cmd
@@ -14011,20 +14059,26 @@ def _catalog_install_plan(entry, bctx):
     snap_pref = _UBUNTU_SNAP_PREFERRED.get(entry.get("name", ""))
     if (snap_pref and pm == "apt" and _is_ubuntu_family() and shutil.which("snap")
             and not plan):
-        classic = " --classic" if spec.get("classic") else ""
-        q = shlex.quote(snap_pref)
-        plan.append((
-            f"if snap list {q} >/dev/null 2>&1; then "
-            f"echo '{snap_pref} is already installed (snap)'; "
-            f"else sudo snap install {q}{classic}; fi",
-            True, "Snap"))
+        if _snap_installed(snap_pref):
+            plan.append((
+                f"echo '{snap_pref} is already installed (snap) — nothing to do.'",
+                False, "already installed"))
+        else:
+            classic = " --classic" if spec.get("classic") else ""
+            q = shlex.quote(snap_pref)
+            plan.append((f"sudo snap install {q}{classic}", True, "Snap"))
         return plan
-    if (entry.get("name") == "Docker" and pm == "apt"
-            and _dpkg_status_installed("docker-ce")):
-        plan.append((
-            "echo 'docker-ce is already installed — leaving it in place.'",
-            False, "existing docker-ce"))
-        return plan
+    if entry.get("name") == "Docker" and pm == "apt":
+        if _dpkg_status_installed("docker-ce"):
+            plan.append((
+                "echo 'docker-ce is already installed — nothing to do.'",
+                False, "already installed"))
+            return plan
+        if _dpkg_status_installed("docker.io"):
+            plan.append((
+                "echo 'docker.io is already installed — nothing to do.'",
+                False, "already installed"))
+            return plan
     # 2a. apt / native distro package.
     pkg = spec.get("pkg")
     if (pm == "apt" and isinstance(pkg, str) and _is_ubuntu_family()
@@ -16264,9 +16318,40 @@ def show_menu(compact=False):
     # Each category on ~one line so the whole map fits a laptop screen. The full
     # descriptive menu is one keystroke away: type `menu`.
     if compact:
+        def _cols(text: str) -> int:
+            # Most emoji in the menu are double-width; ASCII is one column.
+            return sum(2 if ord(ch) > 0x1100 else 1 for ch in text)
+
         def _row(icon, title, items):
-            its = "  ".join(f"{BLUE}{BOLD}[{n}]{R} {s}" for n, s in items)
-            print(f"  {INDIGO}{BOLD}{icon} {title.ljust(11)}{R} {its}")
+            try:
+                width = shutil.get_terminal_size(fallback=(100, 24)).columns
+            except Exception:
+                width = 100
+            width = max(40, int(width))
+            head = f"{icon} {title.ljust(11)}"
+            indent = "  "
+            cont = " " * _cols(indent + head)
+            budget = max(16, width - _cols(indent + head + " "))
+            next_budget = max(16, width - len(cont))
+            lines, cur, used, first = [], [], 0, True
+            limit = budget
+            for n, s in items:
+                piece = (f"{BLUE}{BOLD}[{n}]{R} {s}", len(f"[{n}] {s}"))
+                gap = 2 if cur else 0
+                if cur and used + gap + piece[1] > limit:
+                    lines.append((first, cur))
+                    first, cur, used, limit = False, [piece], piece[1], next_budget
+                else:
+                    cur.append(piece)
+                    used += gap + piece[1]
+            if cur:
+                lines.append((first, cur))
+            for is_first, chunk in lines:
+                its = "  ".join(rich for rich, _w in chunk)
+                if is_first:
+                    print(f"{indent}{INDIGO}{BOLD}{icon} {title.ljust(11)}{R} {its}")
+                else:
+                    print(f"{cont}{its}")
         print(f"\n  {INDIGO}{BOLD}🐧 What would you like to do today?{R}  {DIM}(just type it, or pick a number){R}\n")
         _row("🚀", "Start",       [("1", "Fix a Problem"), ("2", "Health Check")])
         _row("🔧", "Fix",         [("3","WiFi"),("4","Sound"),("5","Display"),("6","Bluetooth"),("7","Printer"),("8","Webcam"),("9","Drivers"),("10","Permissions")])
@@ -17662,7 +17747,8 @@ def main():
                 choice = queued
                 print(f"\n  {CYAN}{_cwd_label()}{R} {BGREEN}{BOLD}❯{R}{_xm} {choice}")
             else:
-                choice = input(f"\n  {CYAN}{_cwd_label()}{R} {BGREEN}{BOLD}❯{R}{_xm} ").strip()
+                choice = _read_user_line(
+                    f"\n  {CYAN}{_cwd_label()}{R} {BGREEN}{BOLD}❯{R}{_xm} ").strip()
         except (EOFError, KeyboardInterrupt):
             print(f"\n\n  {GOLD}{BOLD}✨ Goodbye! Long Live Linux 🐧{R}")
             if hasattr(backend, '_session_input_tokens') and backend._session_input_tokens > 0:
@@ -17776,6 +17862,9 @@ def main():
             else:
                 # Natural language → try direct passthrough first, then agentic AI
                 passed = try_passthrough(choice, session_log, backend, bctx)
+                if passed == "declined":
+                    # They said no — don't record it as a command that ran.
+                    continue
                 if not passed:
                     agentic_engine(backend, choice, bctx, session_log)
                 save_session(session_log)

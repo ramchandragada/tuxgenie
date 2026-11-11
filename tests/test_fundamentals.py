@@ -652,13 +652,18 @@ class TestFirstRunUniversal:
 class TestUbuntuCompleteAndDeHome:
     """v7.5.0: re-runnable complete wizard + DE-aware Home chips."""
 
-    def test_desktop_family_aliases(self):
+    def test_desktop_family_aliases(self, monkeypatch):
         assert tg.desktop_family("ubuntu:GNOME") == "gnome"
         assert tg.desktop_family("X-Cinnamon") == "cinnamon"
         assert tg.desktop_family("KDE") == "kde"
         assert tg.desktop_family("pop:COSMIC") == "cosmic"
         assert tg.desktop_family("XFCE") == "xfce"
+        # Empty argument must not read this machine's desktop session.
+        monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+        monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
         assert tg.desktop_family("") == "other"
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+        assert tg.desktop_family("") == "gnome"
 
     def test_complete_label(self):
         assert "Ubuntu" in tg._complete_setup_label("ubuntu")
@@ -679,6 +684,8 @@ class TestUbuntuCompleteAndDeHome:
     def test_complete_steps_skip_when_timeshift_present(self, monkeypatch):
         monkeypatch.setattr(tg.shutil, "which",
                             lambda n: "/usr/bin/timeshift" if n == "timeshift" else None)
+        # Don't treat host packages (ubuntu-restricted-extras, fonts, …) as done.
+        monkeypatch.setattr(tg, "_r", lambda *a, **k: "")
         steps = tg._ubuntu_complete_steps({
             "pkg_mgr": "apt", "os": "Ubuntu 24.04 LTS", "flavour": "ubuntu",
         })
@@ -1870,9 +1877,20 @@ class TestUpdateCheckFundamentals:
         "sudo apt-get remove -y sudo",
         "apt purge python3",
         "crontab -r",
+        """perl -e 'system("rm -rf /")'""",
+        '''python3 -c 'import os; os.system("rm -rf /")' ''',
+        '''ruby -e 'exec("rm -rf /")' ''',
+        '''node -e 'require("child_process").exec("rm -rf /")' ''',
+        '''python3 -c 'import subprocess; subprocess.call(["rm", "-rf", "/"])' ''',
+        """perl -e '`rm -rf /`'""",
     ])
     def test_reported_destructive_forms_are_blocked(self, cmd):
         assert tg.is_dangerous(cmd), cmd
+
+    def test_interpreter_safe_one_liners_are_not_blocked(self):
+        assert not tg.is_dangerous('''python3 -c 'import os; os.system("ls")' ''')
+        assert not tg.is_dangerous('''perl -e 'print "hello"' ''')
+        assert not tg.is_dangerous('''ruby -e 'puts "hello"' ''')
 
     def test_user_data_cleanup_stays_allowed(self):
         assert not tg.is_dangerous("rm -rf /home/shree/Downloads/old")
@@ -1890,7 +1908,7 @@ class TestUpdateCheckFundamentals:
         monkeypatch.setattr("builtins.input", lambda *a, **k: asked.append(a) or "n")
         ran = []
         monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: ran.append(a) or (0, "", ""))
-        assert tg.try_passthrough("sysctl vm.swappiness=10", [], backend=None) is True
+        assert tg.try_passthrough("sysctl vm.swappiness=10", [], backend=None) == "declined"
         assert asked and not ran
         out = capsys.readouterr().out
         assert "nothing was changed" in out.lower()
@@ -1968,6 +1986,7 @@ class TestUpdateCheckFundamentals:
         monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
         monkeypatch.setattr(tg, "_is_ubuntu_family", lambda osr=None: True)
+        monkeypatch.setattr(tg, "_snap_installed", lambda name: False)
         ff = " ".join(p[0] for p in tg._catalog_install_plan(
             {"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"}))
         assert "snap install firefox" in ff or "snap install 'firefox'" in ff
@@ -2023,3 +2042,54 @@ class TestUpdateCheckFundamentals:
         assert "_on_wk_timeout" in src
         assert "button panel" in src
         assert "run tuxgenie in a terminal" in src
+        assert "Ubuntu Mono 10" in src
+
+    def test_already_installed_snap_and_docker_need_no_sudo(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        monkeypatch.setattr(tg, "_is_ubuntu_family", lambda osr=None: True)
+        monkeypatch.setattr(tg, "_snap_installed", lambda name: name == "firefox")
+        plan = tg._catalog_install_plan({"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"})
+        assert len(plan) == 1
+        cmd, root, label = plan[0]
+        assert root is False and label == "already installed"
+        assert "sudo" not in cmd and "already installed (snap)" in cmd
+        monkeypatch.setattr(tg, "_dpkg_status_installed", lambda pkg: pkg == "docker.io")
+        dplan = tg._catalog_install_plan({"name": "Docker"}, {"pkg_mgr": "apt"})
+        assert len(dplan) == 1
+        dcmd, droot, dlabel = dplan[0]
+        assert droot is False and dlabel == "already installed"
+        assert "sudo" not in dcmd and "docker.io is already installed" in dcmd
+
+    def test_main_prompt_prints_once(self, monkeypatch, capsys):
+        seen = []
+        monkeypatch.setattr("builtins.input", lambda prompt="": seen.append(prompt) or "")
+        monkeypatch.setattr(tg, "_cwd_label", lambda maxlen=34: "/tmp/tg")
+        assert tg._read_user_line("\n  /tmp/tg ❯ ") == ""
+        assert seen == [""]
+        assert capsys.readouterr().out.count("❯") == 1
+
+    def test_compact_menu_does_not_split_items(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            tg.shutil, "get_terminal_size",
+            lambda fallback=(60, 24): os.terminal_size((60, 24)))
+        tg.show_menu(compact=True)
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
+        for line in plain.splitlines():
+            # "[88]" contains the characters "[8" — only a broken "[8" token counts.
+            if re.search(r"\[8(?!\d)", line):
+                assert "[8]" in line, line
+
+    def test_shell_prefers_sibling_script(self, tmp_path, monkeypatch):
+        import importlib.util
+        path = os.path.join(ROOT, "tuxgenie_shell.py")
+        spec = importlib.util.spec_from_file_location("tuxgenie_shell_resolve", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        (tmp_path / "tuxgenie.py").write_text("# sibling\n")
+        monkeypatch.setattr(mod, "__file__", str(tmp_path / "tuxgenie_shell.py"))
+        monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/bin/tuxgenie")
+        monkeypatch.setattr(mod.sys, "executable", "/usr/bin/python3")
+        got = mod._resolve_tuxgenie()
+        assert str(tmp_path / "tuxgenie.py") in got
+        assert not got.startswith("/usr/bin/tuxgenie")

@@ -13,3 +13,6 @@ Ubuntu and Ubuntu-based desktops (Ubuntu 24.04 noble, Zorin OS, Linux Mint, Pop!
 - Bluetooth, webcam, and sound playbooks check that the hardware exists (rfkill, lsusb, v4l2, `/proc/asound`, pactl/wpctl) before restarting a service.
 - A provider chosen in Settings is the one used on the next start. Failover continues past HTTP 401 and 413 to the next free provider and still never switches to paid Claude without a yes. A non-rating typed at the rating prompt is run as the next request.
 - `tuxgenie-app` swaps a blank or stalled WebKit deck for the button panel and says to run `tuxgenie` in a terminal if that panel can't be shown.
+- Interpreter one-liners that hide a destructive shell command are blocked (`perl -e 'system("rm -rf /")'`, and the same for Python, Ruby, and Node `system`/`exec`/`subprocess`/backticks).
+- If Firefox's snap or Docker (`docker.io` / `docker-ce`) is already installed, the catalog says so without asking for a sudo password.
+- The main prompt is printed once. A typed command you decline is not stored as if it ran. The compact menu wraps between items, and `tuxgenie-app` from a checkout runs the sibling `tuxgenie.py`.

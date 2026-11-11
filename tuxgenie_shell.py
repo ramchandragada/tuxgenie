@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import sys
 import threading
@@ -109,16 +110,22 @@ def compose_home_actions():
 
 
 def _resolve_tuxgenie() -> str:
-    which = shutil.which("tuxgenie")
-    if which:
-        return which
+    """Command that starts the TuxGenie next to this file.
+
+    A checkout or PR copy of tuxgenie-app must drive its sibling
+    tuxgenie.py. Preferring `which tuxgenie` first silently ran the
+    installed /usr/bin/tuxgenie instead.
+    """
     here = os.path.dirname(os.path.abspath(__file__))
     cand = os.path.join(here, "tuxgenie.py")
     if os.path.isfile(cand):
-        return "%s %s" % (sys.executable, cand)
+        return "%s %s" % (sys.executable, shlex.quote(cand))
+    which = shutil.which("tuxgenie")
+    if which:
+        return which
     lib = "/usr/lib/tuxgenie/tuxgenie.py"
     if os.path.isfile(lib):
-        return "%s %s" % (sys.executable, lib)
+        return "%s %s" % (sys.executable, shlex.quote(lib))
     return "tuxgenie"
 
 
@@ -2102,6 +2109,17 @@ class UnifiedShell:
             self.term.set_scroll_on_output(False)
         except Exception:
             pass
+        # The 60% pane is narrower than a full terminal. A 10pt mono font
+        # keeps the compact menu from wrapping mid-token ("[8" / "] Webcam").
+        try:
+            from gi.repository import Pango
+            self.term.set_font(Pango.FontDescription.from_string("Ubuntu Mono 10"))
+        except Exception:
+            try:
+                from gi.repository import Pango
+                self.term.set_font(Pango.FontDescription.from_string("Monospace 10"))
+            except Exception:
+                pass
         try:
             rgba = Gdk.RGBA()
             rgba.parse("#0b1520")
