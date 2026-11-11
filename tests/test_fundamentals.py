@@ -2019,14 +2019,19 @@ class TestUpdateCheckFundamentals:
             {"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"})[0]
         assert "apt-get install -y firefox" in cmd
         assert "snap install" not in cmd
-        acts = tg.de_home_actions(desktop="XFCE", flavour="mint", debian_family=True)
-        labels = [a.get("label") for a in acts]
-        assert "Update Manager" in labels and "Appearance" in labels
-        assert "XFCE Settings" in labels
         kws = set(tg.menu_keyword_map())
-        for a in acts:
-            if a.get("kind") == "kw":
-                assert a["payload"] in kws
+        for desktop, settings_label in (
+            ("XFCE", "XFCE Settings"),
+            ("X-Cinnamon", "Cinnamon Settings"),
+            ("MATE", "MATE Settings"),
+        ):
+            acts = tg.de_home_actions(desktop=desktop, flavour="mint", debian_family=True)
+            labels = [a.get("label") for a in acts]
+            assert "Update Manager" in labels, desktop
+            assert settings_label in labels, desktop
+            for a in acts:
+                if a.get("kind") == "kw":
+                    assert a["payload"] in kws, (desktop, a)
         steps = tg._first_run_setup_steps("apt", "Zena", flavour="mint")
         assert "mint-meta-codecs" in " ".join(c for _, c, _ in steps)
         assert "ubuntu-restricted-extras" not in " ".join(c for _, c, _ in steps)

@@ -2761,6 +2761,16 @@ def _complete_setup_label(flavour: str = "") -> str:
     }.get((flavour or "").lower(), "Finish Linux setup")
 
 
+def _mint_update_action():
+    """Home tile for Mint's own updater. Same on Cinnamon, MATE, and XFCE."""
+    return {
+        "id": "extensions",
+        "label": "Update Manager",
+        "tip": "Linux Mint's updater — keeps Mint packages, not a raw full-upgrade",
+        "kind": "kw", "payload": "extensions", "accent": "#0d6e8c",
+    }
+
+
 def de_home_actions(desktop=None, flavour=None, debian_family=None):
     """Extra Unified Shell Home chips for this desktop + distro flavour."""
     if flavour is None or debian_family is None:
@@ -2804,6 +2814,8 @@ def de_home_actions(desktop=None, flavour=None, debian_family=None):
             "tip": "Themes, panel, applets — Mint desktop",
             "kind": "kw", "payload": "tweaks", "accent": "#1b7a4a",
         })
+        if (flavour or "") == "mint":
+            actions.append(_mint_update_action())
         actions.append({
             "id": "dsettings", "label": "System Settings",
             "tip": "Open Cinnamon system settings",
@@ -2833,19 +2845,27 @@ def de_home_actions(desktop=None, flavour=None, debian_family=None):
             "tip": "Theme, icons, and fonts" + (" — Mint XFCE" if mint else ""),
             "kind": "kw", "payload": "tweaks", "accent": "#1b7a4a",
         })
-        actions.append({
-            "id": "extensions",
-            "label": "Update Manager" if mint else "Panel",
-            "tip": ("Linux Mint's updater — keeps Mint packages, not a raw full-upgrade"
-                    if mint else "XFCE panel layout"),
-            "kind": "kw", "payload": "extensions", "accent": "#0d6e8c",
-        })
+        if mint:
+            actions.append(_mint_update_action())
+        else:
+            actions.append({
+                "id": "extensions", "label": "Panel",
+                "tip": "XFCE panel layout",
+                "kind": "kw", "payload": "extensions", "accent": "#0d6e8c",
+            })
         actions.append({
             "id": "dsettings", "label": "XFCE Settings",
             "tip": "Panel, windows, and desktop" + (" — Mint XFCE" if mint else ""),
             "kind": "kw", "payload": "dsettings", "accent": "#3d5a80",
         })
     elif fam == "mate":
+        if (flavour or "") == "mint":
+            actions.append({
+                "id": "tweaks", "label": "Appearance",
+                "tip": "Theme and fonts — Mint MATE",
+                "kind": "kw", "payload": "tweaks", "accent": "#1b7a4a",
+            })
+            actions.append(_mint_update_action())
         actions.append({
             "id": "dsettings", "label": "MATE Settings",
             "tip": "Open MATE Control Center",
@@ -16946,16 +16966,26 @@ def feat_desktop_tweaks(backend=None, bctx=None, slog=None):
         if _open_desktop_app(["xfce4-appearance-settings"], "XFCE Appearance"):
             return
         _open_desktop_app(["xfce4-settings-manager"], "XFCE Settings")
+    elif fam == "mate":
+        if _open_desktop_app(["mate-appearance-properties"], "MATE Appearance"):
+            return
+        _open_desktop_app(["mate-control-center"], "MATE Control Center")
     else:
         info("No dedicated tweaks app for this desktop — opening Settings instead.")
         feat_desktop_settings(backend, bctx, slog)
 
 
 def feat_desktop_extensions(backend=None, bctx=None, slog=None):
-    """GNOME Extension Manager, Cinnamon applets, or KDE Discover."""
+    """GNOME Extension Manager, Cinnamon applets, KDE Discover, or Mint Update Manager."""
     bctx = bctx or base_ctx()
     fam = desktop_family(bctx.get("desktop") or "")
     hdr("Desktop Extensions & extras")
+    # Every Mint edition (Cinnamon, MATE, XFCE) shares mintupdate / mintinstall.
+    if (bctx.get("flavour") or "") == "mint":
+        if _open_desktop_app(["mintupdate"], "Mint Update Manager"):
+            return
+        if _open_desktop_app(["mintinstall"], "Mint Software Manager"):
+            return
     if fam == "gnome":
         if shutil.which("extension-manager"):
             _open_desktop_app(["extension-manager"], "Extension Manager")
@@ -16989,11 +17019,6 @@ def feat_desktop_extensions(backend=None, bctx=None, slog=None):
         if not _open_desktop_app(["plasma-discover"], "Discover"):
             _ensure_pkg_then_open("plasma-discover", ["plasma-discover"], "Discover", bctx)
     elif fam == "xfce":
-        flavour = (bctx.get("flavour") or "")
-        if flavour == "mint" and _open_desktop_app(["mintupdate"], "Mint Update Manager"):
-            return
-        if flavour == "mint" and _open_desktop_app(["mintinstall"], "Mint Software Manager"):
-            return
         if _open_desktop_app(["xfce4-panel", "--preferences"], "XFCE Panel"):
             return
         _open_desktop_app(["xfce4-settings-manager"], "XFCE Settings")

@@ -5,7 +5,7 @@
 Linux Mint, including Mint XFCE on small PCs (6 GB thin clients such as the HP t640):
 
 - Mint keeps Firefox and Thunderbird as debs. TuxGenie no longer installs the Ubuntu snap for those apps on Linux Mint.
-- Mint XFCE home tiles open Appearance, Update Manager (`mintupdate`), and XFCE Settings. `tweaks` opens XFCE appearance instead of saying this desktop has no tweaks app.
+- Every Mint edition (Cinnamon, MATE, and XFCE) gets Update Manager (`mintupdate`). XFCE and MATE also open their appearance settings. This follows the distro, not one PC.
 - Codecs on Mint use `mint-meta-codecs` from the flavour, not Ubuntu's `ubuntu-restricted-extras`.
 - Held updates on Mint point at Update Manager before offering `apt full-upgrade`.
 - PCs under 8 GB of RAM with swap already in use get zram, not a swappiness of 10 (that freezes small desktops). Larger PCs still get swappiness 10.
