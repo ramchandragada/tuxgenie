@@ -64,6 +64,10 @@ TuxGenie must work for **every** Linux user, not just Debian/Ubuntu:
   codecs, Flatpak+Flathub, firewall, NTP — never apt-only.
 - Catalog installs are distro-adapted via `_distro_adapt_prompt()` (Flatpak/native
   on non-Debian). Prefer a Flathub app-id in new catalog entries so they work everywhere.
+- Linux Mint is Ubuntu-family for apt, but it ships Firefox and Thunderbird as
+  debs and leaves snapd off. Do not prefer Ubuntu snaps on Mint (`_prefers_ubuntu_snaps`).
+  Mint XFCE uses `mintupdate`, `xfce4-appearance-settings`, and `xfce4-settings-manager`.
+  Machines under 8 GB of RAM get zram, not swappiness 10.
 - Universal install: `docs/install.sh` (curl | bash) — `.deb` on Debian-family,
   wheel/PyPI elsewhere. `u` self-update handles both `.deb` and pip installs.
 - Note: Flatpak sandboxing is a poor fit for packaging *TuxGenie itself* (needs
@@ -76,12 +80,15 @@ At every start the provider is chosen by PRIORITY, not by what was last used:
    with a key) — then it's sticky. `main()` warns that free options exist.
 2. **Ollama** sticky when the user explicitly chose local AI (`provider == "ollama"`)
    AND the local daemon is reachable (Phase C — privacy / offline).
-3. Otherwise **always prefer free Gemini, then free OpenAI-compatible cloud
-   providers in registry order (Groq, SambaNova, OpenRouter), then Ollama if
-   reachable** — regardless of the last saved free cloud provider. Gemini is the
-   default whenever its key is present; if only one free key exists, start with
-   that provider.
-4. If the only key present is Claude's, use it (with the same free-switch hint).
+3. An explicit Settings choice of a free provider (Gemini, Groq, Z.ai,
+ SambaNova, OpenRouter) **sticks across restarts** while that provider's key
+ is still saved. Gemini does not override a chosen Groq/Z.ai/SambaNova/
+ OpenRouter key.
+4. Otherwise (provider unset, or the chosen provider has no key) prefer free
+ Gemini, then free OpenAI-compatible cloud providers in registry order
+ (Groq, SambaNova, OpenRouter), then Ollama if reachable. If only one free
+ key exists, start with that provider.
+5. If the only key present is Claude's, use it (with the same free-switch hint).
 
 Auto-failover during a session is still free→free only (Gemini → Groq → … →
 Ollama when running) and never *silently* uses Claude. But when the whole free

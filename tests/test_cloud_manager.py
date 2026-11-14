@@ -254,8 +254,8 @@ class TestAddOauthCommand:
                             lambda cmd, *a, **k: runs.append(cmd) or (0, "", ""))
         monkeypatch.setattr(tg, "_cloud_is_headless", lambda: True)
         monkeypatch.setattr(tg, "_cloud_verify_remote", lambda _n: True)
-        # Token paste
-        monkeypatch.setattr("builtins.input", _inputs('{"access_token":"abc"}'))
+        # Token paste (hidden)
+        monkeypatch.setattr("getpass.getpass", lambda *a, **k: '{"access_token":"abc"}')
         tg._cloud_add_oauth(None, {}, [], "workdrive",
                             {"name": "Google Drive", "type": "drive", "auth": "oauth"})
         assert len(runs) == 1

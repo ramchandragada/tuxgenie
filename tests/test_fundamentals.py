@@ -7,16 +7,19 @@ suite before it will build or publish anything, so if any of these fail, that
 version never ships. Keep these fast, deterministic, and about fundamentals —
 not niche feature details (those live in test_tuxgenie.py).
 """
+import difflib
 import json
 import os
 import re
 import sys
 import types
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 sys.modules.setdefault("anthropic", types.ModuleType("anthropic"))
 
-import tuxgenie as tg  # noqa: E402
+import tuxgenie as tg
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 
@@ -264,8 +267,10 @@ class TestCatalogFundamentals:
         monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
         # No downloaded file → native apt package first (Debian/Ubuntu), then Flatpak.
         monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
-        cmd, root = tg._catalog_deterministic_cmd({"name": "Chromium"}, {"pkg_mgr": "apt"})
-        assert "chromium" in cmd and "snap install" not in cmd and root is True
+        # Helix is a normal apt package on Ubuntu. Firefox/Chromium prefer snap
+        # on Ubuntu-family so we don't install a second copy — covered separately.
+        cmd, root = tg._catalog_deterministic_cmd({"name": "Helix"}, {"pkg_mgr": "apt"})
+        assert "apt-get install -y helix" in cmd and "snap install" not in cmd and root is True
         # A downloaded .deb matching the app (by any known package name) wins first,
         # even for an app whose normal method is Flatpak/Snap.
         monkeypatch.setattr(tg, "_local_deb_for",
@@ -441,9 +446,10 @@ class TestInstallPriorityFundamentals:
         # before snap — matching the priority table.
         monkeypatch.setattr(tg.shutil, "which", lambda name: f"/usr/bin/{name}")
         monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
-        plan = tg._catalog_install_plan({"name": "Chromium"}, {"pkg_mgr": "apt"})
+        plan = tg._catalog_install_plan({"name": "Helix"}, {"pkg_mgr": "apt"})
         labels = [p[2] for p in plan]
-        # Chromium ships snap + flatpak → Flatpak must come before Snap.
+        # Helix ships apt + flatpak + snap → Flatpak must come before Snap.
+        assert "apt package" in labels
         assert labels.index("Flatpak (Flathub)") < labels.index("Snap")
 
 
@@ -596,6 +602,7 @@ class TestFirstRunUniversal:
 
     def test_apt_steps_include_flatpak_and_no_hardcoded_only_path(self):
         steps = tg._first_run_setup_steps("apt", "Ubuntu 24.04 LTS")
+        descs = " ".join(d for d, _, _ in steps).lower()
         cmds = " ".join(c for _, c, _ in steps)
         assert "flatpak" in cmds and "flathub" in cmds
         assert "apt-get" in cmds
@@ -647,15 +654,17 @@ class TestUbuntuCompleteAndDeHome:
     """v7.5.0: re-runnable complete wizard + DE-aware Home chips."""
 
     def test_desktop_family_aliases(self, monkeypatch):
-        # Do not let the host desktop environment affect this normalization test.
-        monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
-        monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
         assert tg.desktop_family("ubuntu:GNOME") == "gnome"
         assert tg.desktop_family("X-Cinnamon") == "cinnamon"
         assert tg.desktop_family("KDE") == "kde"
         assert tg.desktop_family("pop:COSMIC") == "cosmic"
         assert tg.desktop_family("XFCE") == "xfce"
+        # Empty argument must not read this machine's desktop session.
+        monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+        monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
         assert tg.desktop_family("") == "other"
+        monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
+        assert tg.desktop_family("") == "gnome"
 
     def test_complete_label(self):
         assert "Ubuntu" in tg._complete_setup_label("ubuntu")
@@ -676,6 +685,8 @@ class TestUbuntuCompleteAndDeHome:
     def test_complete_steps_skip_when_timeshift_present(self, monkeypatch):
         monkeypatch.setattr(tg.shutil, "which",
                             lambda n: "/usr/bin/timeshift" if n == "timeshift" else None)
+        # Don't treat host packages (ubuntu-restricted-extras, fonts, …) as done.
+        monkeypatch.setattr(tg, "_r", lambda *a, **k: "")
         steps = tg._ubuntu_complete_steps({
             "pkg_mgr": "apt", "os": "Ubuntu 24.04 LTS", "flavour": "ubuntu",
         })
@@ -1257,8 +1268,8 @@ class TestPhaseCLocalAiAndSnapshots:
         monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: True)
         for k in ("GEMINI_API_KEY", "GOOGLE_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
             monkeypatch.delenv(k, raising=False)
-        tg.save_cfg({"provider": "groq", "gemini_api_key": "AIza" + "y" * 35,
-                     "groq_api_key": "gsk_" + "x" * 40})
+        # No explicit provider: Gemini still beats a reachable Ollama daemon.
+        tg.save_cfg({"provider": "", "gemini_api_key": "AIza" + "y" * 35})
         assert isinstance(tg.load_backend(), tg.GeminiBackend)
 
     def test_ollama_headers_omit_authorization(self):
@@ -1752,3 +1763,554 @@ class TestUpdateCheckFundamentals:
         assert tg._classify_apt_upgrade("", remaining) == "busy"
         assert tg._classify_apt_upgrade("Timed out after 120s", []) == "timeout"
         assert tg._live_cmd_timeout("sudo apt-get upgrade -y", 120) == 3600
+
+    def test_apt_lock_probe_never_treats_oserror_as_busy(self, monkeypatch):
+        # /proc/locks with no matching inodes → not held. flock OSError must
+        # not be reachable as a false "busy" for desktop users on [12].
+        monkeypatch.setattr(tg, "_apt_lock_dev_inodes", lambda: {(8, 1, 999999)})
+        monkeypatch.setattr(tg, "_apt_lock_holder_pids", lambda: [])
+        assert tg._apt_lockfile_held() is False
+        assert tg._pkg_mgr_busy("apt") is False
+
+    def test_packagekit_is_soft_busy_only(self, monkeypatch):
+        monkeypatch.setattr(
+            tg, "_apt_busy_holders",
+            lambda include_soft=True, prefer_text="": (
+                [(100, "packagekitd")] if include_soft else []))
+        assert tg._pkg_mgr_busy("apt") is False
+        assert tg._pkg_mgr_busy("apt", soft=True) is True
+
+    def test_idle_unattended_upgrade_shutdown_not_busy(self, monkeypatch):
+        monkeypatch.setattr(tg, "_proc_comm_by_pid",
+                            lambda: {"1613": "unattended-upgr", "1": "systemd"})
+        monkeypatch.setattr(
+            tg, "_proc_cmdline",
+            lambda pid: ("/usr/bin/unattended-upgrade-shutdown --wait-for-signal"
+                         if str(pid) == "1613" else ""))
+        monkeypatch.setattr(tg, "_apt_lock_holder_pids", lambda: [])
+        assert tg._pkg_mgr_busy("apt") is False
+        assert tg._apt_busy_holders(include_soft=False) == []
+
+    def test_lock_holder_prefers_apt_error_text(self):
+        holders = tg._apt_busy_holders(
+            include_soft=True,
+            prefer_text="E: Could not get lock. It is held by process 4242 (apt-get)")
+        assert holders[0] == (4242, "apt-get")
+
+    def test_feat_updates_retries_lock_instead_of_long_prewait(self):
+        import inspect
+        src = inspect.getsource(tg.feat_updates)
+        assert "Retrying in a few seconds" in src
+        assert "timeout=30" in src
+        assert "Another package operation is still running. Waiting for it to finish" not in src
+        assert "_apt_busy_holders" in src
+        assert "Cancelled — nothing was changed" in src
+        assert "Couldn't confirm whether updates are available" in src
+
+    def test_env_rm_is_not_read_only(self):
+        assert not tg._is_read_only("env rm -rf /tmp/x")
+        assert not tg._is_read_only("nmcli radio wifi off")
+        assert not tg._is_read_only("systemctl try-restart NetworkManager")
+        assert not tg._is_read_only("journalctl --vacuum-time=1s")
+        assert not tg._is_read_only("git branch -D main")
+        assert not tg._is_read_only("date -s 2020-01-01")
+        assert not tg._is_read_only("hostname foo")
+        assert not tg._is_read_only("dmesg -C")
+
+    def test_dangerous_covers_home_and_shell_c(self):
+        assert tg.is_dangerous("rm -rf $HOME")
+        assert tg.is_dangerous('bash -c "rm -rf /"')
+        assert tg.is_dangerous("env rm -rf /")
+        assert tg.is_dangerous("kill -9 -1")
+        assert tg.is_dangerous("cp /dev/zero /dev/sda")
+
+    def test_history_redacts_and_is_private(self, tmp_path, monkeypatch):
+        hist = tmp_path / "history.json"
+        monkeypatch.setattr(tg, "HISTORY_FILE", str(hist))
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        tg._history_append("my key is gsk_" + ("A" * 40) + " please", "fix")
+        data = hist.read_text()
+        assert "gsk_AAAA" not in data
+        assert "[REDACTED]" in data
+        assert (hist.stat().st_mode & 0o777) == 0o600
+
+    def test_session_log_redacts_like_history(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(tg, "SESSIONS_DIR", str(tmp_path))
+        uuid = "550e8400-e29b-41d4-a716-446655440000"
+        tg.save_session([
+            {"command": "echo my key is " + uuid, "rc": 0},
+            {"command": "curl -H 'x-api-key: gsk_" + ("B" * 20) + "'", "rc": 0},
+        ])
+        files = list(tmp_path.iterdir())
+        assert len(files) == 1
+        text = files[0].read_text()
+        assert uuid not in text
+        assert "gsk_BBBB" not in text
+        assert "[REDACTED]" in text
+        assert (files[0].stat().st_mode & 0o777) == 0o600
+
+    @pytest.mark.parametrize("cmd", [
+        "nmcli connection reload",
+        "sysctl vm.swappiness=100",
+        "sysctl -w a=b",
+        "git -c core.sshCommand=touch /tmp/x fetch",
+        "pip config set global.index-url https://example.invalid",
+        "pip3 config set global.timeout 1",
+        "apt-cache clean",
+        "find /tmp -fls /tmp/out",
+    ])
+    def test_reported_holes_are_not_read_only(self, cmd):
+        assert not tg._is_read_only(cmd), cmd
+
+    @pytest.mark.parametrize("cmd", [
+        'eval "rm -rf /"',
+        "echo abc | base64 -d | sh",
+        'python3 -c "import shutil; shutil.rmtree(\'/\')"',
+        'perl -e \'use File::Path qw(rmtree); rmtree("/")\'',
+        "xargs rm -rf",
+        "rm -rf /home/shree",
+        "mv /etc /tmp/etc-gone",
+        "cp /dev/null /etc/fstab",
+        "ln -sf /tmp/x /etc/fstab",
+        "echo b | tee /proc/sysrq-trigger",
+        "grub-install /dev/sda",
+        "sudo apt-get purge -y linux-image-generic",
+        "sudo apt-get remove -y sudo",
+        "apt purge python3",
+        "crontab -r",
+        """perl -e 'system("rm -rf /")'""",
+        '''python3 -c 'import os; os.system("rm -rf /")' ''',
+        '''ruby -e 'exec("rm -rf /")' ''',
+        '''node -e 'require("child_process").exec("rm -rf /")' ''',
+        '''python3 -c 'import subprocess; subprocess.call(["rm", "-rf", "/"])' ''',
+        """perl -e '`rm -rf /`'""",
+    ])
+    def test_reported_destructive_forms_are_blocked(self, cmd):
+        assert tg.is_dangerous(cmd), cmd
+
+    def test_interpreter_safe_one_liners_are_not_blocked(self):
+        assert not tg.is_dangerous('''python3 -c 'import os; os.system("ls")' ''')
+        assert not tg.is_dangerous('''perl -e 'print "hello"' ''')
+        assert not tg.is_dangerous('''ruby -e 'puts "hello"' ''')
+
+    def test_user_data_cleanup_stays_allowed(self):
+        assert not tg.is_dangerous("rm -rf /home/shree/Downloads/old")
+        assert not tg.is_dangerous("sudo apt-get purge -y vlc")
+        assert tg._is_read_only("git status")
+        assert tg._is_read_only("git log -c")
+        assert tg._is_read_only("nmcli connection show")
+        assert tg._is_read_only("sysctl vm.swappiness")
+        assert tg._is_read_only("apt-cache policy vlc")
+        assert tg._is_read_only("pip config list")
+
+    def test_typed_state_change_asks_before_running(self, monkeypatch, capsys):
+        asked = []
+        monkeypatch.setattr(tg.sys.stdin, "isatty", lambda: True)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: asked.append(a) or "n")
+        ran = []
+        monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: ran.append(a) or (0, "", ""))
+        assert tg.try_passthrough("sysctl vm.swappiness=10", [], backend=None) == "declined"
+        assert asked and not ran
+        out = capsys.readouterr().out
+        assert "nothing was changed" in out.lower()
+
+    def test_typed_read_only_does_not_ask(self, monkeypatch):
+        monkeypatch.setattr("builtins.input", lambda *a, **k: (_ for _ in ()).throw(AssertionError("asked")))
+        monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: (0, "ok", ""))
+        assert tg.try_passthrough("ls -la", [], backend=None) is True
+
+    def test_lock_retry_waits_when_holder_is_invisible(self, monkeypatch):
+        monkeypatch.setattr(tg, "_wait_pkg_mgr", lambda *a, **k: True)
+        slept = []
+        monkeypatch.setattr(tg.time, "sleep", lambda s: slept.append(s))
+        monkeypatch.setattr(tg.time, "monotonic", lambda: 0.0)
+        tg._pkg_retry_backoff("apt", timeout=15, minimum=5)
+        assert slept == [5]
+
+    def test_proc_locks_match_device_and_inode(self):
+        # Same inode on a different device must not count. major/minor are hex.
+        text = "1: FLOCK ADVISORY WRITE 4242 08:01:456 0 EOF\n" \
+               "2: POSIX ADVISORY WRITE 99 00:02:456 0 EOF\n"
+        targets = {(8, 1, 456)}
+        assert tg._parse_proc_locks(text, targets) == [4242]
+        assert tg._parse_proc_locks(text, {(0, 2, 456)}) == [99]
+
+    def test_phased_and_held_are_named_before_install(self):
+        text = (
+            "The following upgrades have been deferred due to phasing:\n"
+            "  firefox thunderbird\n"
+            "The following packages have been kept back:\n"
+            "  linux-generic\n"
+        )
+        got = tg._apt_sim_phased_and_held(text)
+        assert got["phased"] == ["firefox", "thunderbird"]
+        assert got["held"] == ["linux-generic"]
+
+    def test_rating_does_not_swallow_the_next_request(self, monkeypatch):
+        tg._PENDING_LINES.clear()
+        tg._RATING_ASKED = False
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "install htop")
+        tg._ask_rating()
+        assert tg._take_queued_line() == "install htop"
+        tg._RATING_ASKED = False
+        tg._PENDING_LINES.clear()
+
+    def test_bluetooth_and_webcam_skip_missing_hardware(self):
+        empty_bt = {"service": "inactive", "rfkill": "", "hw": "(no output)",
+                    "mod": "", "show": "(no output)"}
+        assert tg._bluetooth_build_plan(empty_bt, {}) == []
+        present = dict(empty_bt)
+        present["hw"] = "Bus 001 Device 003: ID 0a12:0001 Cambridge Silicon Radio Bluetooth"
+        present["rfkill"] = "0: hci0: Bluetooth\n Soft blocked: yes"
+        cmds = " ".join(row[1] for row in tg._bluetooth_build_plan(present, {}))
+        assert "rfkill unblock" in cmds
+        assert "restart bluetooth" not in cmds
+        assert tg._webcam_build_plan(
+            {"devs": "(no output)", "mod": "", "usb": "(no output)", "v4l": ""}, {}) == []
+        cam = tg._webcam_build_plan(
+            {"devs": "(no output)", "mod": "", "v4l": "",
+             "usb": "Bus 001 Device 004: ID 046d:0825 Logitech Webcam"}, {})
+        assert any("modprobe uvcvideo" in row[1] for row in cam)
+
+    def test_audio_does_not_restart_without_a_card(self):
+        plan = tg._crisis_audio_build_plan({
+            "cards": "--- no soundcards ---",
+            "pactl_sink": "(no output)",
+            "pipewire": "active",
+            "mute": "",
+            "groups": "audio",
+            "wpctl": "",
+        }, {"user": "u"})
+        assert plan == []
+
+    def test_ubuntu_catalog_snaps_and_packages(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        monkeypatch.setattr(tg, "_os_release_map", lambda: {
+            "ID": "ubuntu", "ID_LIKE": "debian", "UBUNTU_CODENAME": "noble",
+        })
+        monkeypatch.setattr(tg, "_is_ubuntu_family", lambda osr=None: True)
+        monkeypatch.setattr(tg, "_snap_installed", lambda name: False)
+        ff = " ".join(p[0] for p in tg._catalog_install_plan(
+            {"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"}))
+        assert "snap install firefox" in ff or "snap install 'firefox'" in ff
+        assert "org.mozilla.firefox" not in ff
+        assert "apt-get install -y firefox" not in ff
+        vm = tg._catalog_deterministic_cmd({"name": "virt-manager"}, {"pkg_mgr": "apt"})[0]
+        assert "qemu-system-x86" in vm and "qemu-kvm" not in vm.split()
+        monkeypatch.setattr(tg, "_is_ubuntu_family", lambda osr=None: False)
+        deb = tg._catalog_deterministic_cmd(
+            {"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"})[0]
+        assert "apt-get install -y firefox" in deb
+        vm_deb = tg._catalog_deterministic_cmd(
+            {"name": "virt-manager"}, {"pkg_mgr": "apt"})[0]
+        assert "qemu-kvm" in vm_deb
+
+    def test_mint_keeps_firefox_deb_and_xfce_tools(self, monkeypatch):
+        monkeypatch.setattr(tg, "_os_release_map", lambda: {
+            "ID": "linuxmint", "ID_LIKE": "ubuntu debian",
+            "UBUNTU_CODENAME": "noble", "VERSION_CODENAME": "zena",
+            "PRETTY_NAME": "Linux Mint 22.3 Zena",
+        })
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        monkeypatch.setattr(tg, "_snap_installed", lambda name: True)
+        assert tg._prefers_ubuntu_snaps() is False
+        cmd = tg._catalog_deterministic_cmd(
+            {"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"})[0]
+        assert "apt-get install -y firefox" in cmd
+        assert "snap install" not in cmd
+        kws = set(tg.menu_keyword_map())
+        for desktop, settings_label in (
+            ("XFCE", "XFCE Settings"),
+            ("X-Cinnamon", "Cinnamon Settings"),
+            ("MATE", "MATE Settings"),
+        ):
+            acts = tg.de_home_actions(desktop=desktop, flavour="mint", debian_family=True)
+            labels = [a.get("label") for a in acts]
+            assert "Update Manager" in labels, desktop
+            assert settings_label in labels, desktop
+            for a in acts:
+                if a.get("kind") == "kw":
+                    assert a["payload"] in kws, (desktop, a)
+        steps = tg._first_run_setup_steps("apt", "Zena", flavour="mint")
+        assert "mint-meta-codecs" in " ".join(c for _, c, _ in steps)
+        assert "ubuntu-restricted-extras" not in " ".join(c for _, c, _ in steps)
+
+    def test_low_ram_gets_zram_not_swappiness_10(self):
+        results = {
+            "swappiness": "vm.swappiness = 60",
+            "memory": "Mem: 5.7Gi 4.4Gi 0.4Gi\nSwap: 2.0Gi 865Mi 1.2Gi",
+            "meminfo": "MemTotal: 5980000 kB",
+            "zram": "/swapfile file 2G 865M",
+            "journal": "take up 20.0M on disk.",
+            "pkg_cache": "10M\t/var/cache/apt/archives/",
+            "boot_blame": "",
+            "cpu_gov": "4 schedutil",
+            "on_ac": "desktop",
+            "failed_svc": "0 loaded units listed.",
+        }
+        plan = tg._slow_pc_build_plan(results, {"pkg_mgr": "apt"})
+        titles = " ".join(row[0].lower() for row in plan)
+        cmds = " ".join(row[1] for row in plan)
+        assert "zram" in titles
+        assert "swappiness" not in titles
+        assert "zram-tools" in cmds
+        assert not any(tg.is_dangerous(row[1]) for row in plan)
+
+    def test_amdgpu_needs_no_nvidia_package(self):
+        results = {
+            "gpu": "AMD Picasso/Raven 2 [Radeon Vega Series]",
+            "driver": "Kernel driver in use: amdgpu",
+            "fw": "",
+        }
+        note = tg._graphics_driver_summary(results)
+        assert "amdgpu" in note and "NVIDIA" in note
+        assert tg._drivers_generic_build_plan(results, {"pkg_mgr": "apt"}) == []
+
+    def test_anydesk_http_repo_is_rewritten_to_https(self):
+        results = {"ufw": "Status: active", "updates": "enabled",
+                   "apt_http": "deb [arch=amd64] http://deb.anydesk.com/ all main"}
+        plan = tg._security_build_plan(results, {"pkg_mgr": "apt"})
+        cmds = " ".join(row[1] for row in plan)
+        assert "https://deb.anydesk.com" in cmds
+        assert not any(tg.is_dangerous(row[1]) for row in plan)
+
+    def test_catalog_urls_and_abandoned_rambox(self):
+        jb = tg._CATALOG_INSTALL["JetBrains Toolbox"]["script"]
+        assert "code=TBA" in jb and "platform=linux" in jb
+        assert "type=download" not in jb
+        entry = next(e for e in tg.APP_CATALOG if e["name"] == "Rambox")
+        assert "abandon" in entry["desc"].lower()
+        assert tg._CATALOG_INSTALL["Rambox"].get("flatpak") == "org.ferdium.Ferdium"
+        assert "community-edition" not in tg._CATALOG_INSTALL["Rambox"].get("script", "")
+        for name, needle in (
+            ("Lazygit", "jesseduffield/lazygit"),
+            ("Fastfetch", "fastfetch-cli/fastfetch"),
+            ("Ulauncher", "ppa:agornostal/ulauncher"),
+            ("VeraCrypt", "veracrypt/VeraCrypt"),
+        ):
+            blob = str(tg._CATALOG_INSTALL[name])
+            assert needle in blob, name
+            assert tg._CATALOG_INSTALL[name].get("pkg") in (None, "")
+
+    def test_docker_uses_ubuntu_codename_and_detects_docker_ce(self, monkeypatch):
+        script = tg._CATALOG_INSTALL["Docker"]["script"]
+        assert "UBUNTU_CODENAME" in script
+        assert "download.docker.com/linux/ubuntu" in script
+        assert "docker-ce" in script
+        assert "trixie" not in script
+        assert script.index("UBUNTU_CODENAME") < script.index("get.docker.com")
+        monkeypatch.setattr(tg, "_dpkg_status_installed", lambda pkg: pkg == "docker-ce")
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        plan = tg._catalog_install_plan({"name": "Docker"}, {"pkg_mgr": "apt"})
+        blob = " ".join(p[0] for p in plan)
+        assert "docker-ce is already installed" in blob
+        assert "docker.io" not in blob
+        assert "get.docker.com" not in blob
+
+    def test_shell_falls_back_when_webkit_is_blank(self):
+        src = open(os.path.join(ROOT, "tuxgenie_shell.py"), encoding="utf-8").read()
+        assert "load-changed" in src
+        assert "_on_wk_timeout" in src
+        assert "button panel" in src
+        assert "run tuxgenie in a terminal" in src
+        assert "Ubuntu Mono 10" in src
+
+    def test_already_installed_snap_and_docker_need_no_sudo(self, monkeypatch):
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
+        monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        monkeypatch.setattr(tg, "_os_release_map", lambda: {"ID": "ubuntu", "ID_LIKE": "debian"})
+        monkeypatch.setattr(tg, "_is_ubuntu_family", lambda osr=None: True)
+        monkeypatch.setattr(tg, "_snap_installed", lambda name: name == "firefox")
+        plan = tg._catalog_install_plan({"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"})
+        assert len(plan) == 1
+        cmd, root, label = plan[0]
+        assert root is False and label == "already installed"
+        assert "sudo" not in cmd and "already installed (snap)" in cmd
+        monkeypatch.setattr(tg, "_dpkg_status_installed", lambda pkg: pkg == "docker.io")
+        dplan = tg._catalog_install_plan({"name": "Docker"}, {"pkg_mgr": "apt"})
+        assert len(dplan) == 1
+        dcmd, droot, dlabel = dplan[0]
+        assert droot is False and dlabel == "already installed"
+        assert "sudo" not in dcmd and "docker.io is already installed" in dcmd
+
+    def test_main_prompt_prints_once(self, monkeypatch, capsys):
+        seen = []
+        monkeypatch.setattr("builtins.input", lambda prompt="": seen.append(prompt) or "")
+        monkeypatch.setattr(tg, "_cwd_label", lambda maxlen=34: "/tmp/tg")
+        assert tg._read_user_line("\n  /tmp/tg ❯ ") == ""
+        assert seen == [""]
+        assert capsys.readouterr().out.count("❯") == 1
+
+    def test_compact_menu_does_not_split_items(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            tg.shutil, "get_terminal_size",
+            lambda fallback=(60, 24): os.terminal_size((60, 24)))
+        tg.show_menu(compact=True)
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
+        for line in plain.splitlines():
+            # "[88]" contains the characters "[8" — only a broken "[8" token counts.
+            if re.search(r"\[8(?!\d)", line):
+                assert "[8]" in line, line
+
+    def test_shell_prefers_sibling_script(self, tmp_path, monkeypatch):
+        import importlib.util
+        path = os.path.join(ROOT, "tuxgenie_shell.py")
+        spec = importlib.util.spec_from_file_location("tuxgenie_shell_resolve", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        (tmp_path / "tuxgenie.py").write_text("# sibling\n")
+        monkeypatch.setattr(mod, "__file__", str(tmp_path / "tuxgenie_shell.py"))
+        monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/bin/tuxgenie")
+        monkeypatch.setattr(mod.sys, "executable", "/usr/bin/python3")
+        got = mod._resolve_tuxgenie()
+        assert str(tmp_path / "tuxgenie.py") in got
+        assert not got.startswith("/usr/bin/tuxgenie")
+
+
+class TestBug16EnglishRouting:
+    def test_install_vlc_routes_to_catalog(self, monkeypatch):
+        seen = []
+
+        def _fake_cli(ref, backend, bctx, slog, *, catalog=None,
+                      history_tag="install_apps", item_label="app"):
+            seen.append((ref, history_tag, item_label,
+                         any(e.get("name") == "VLC Media Player" for e in (catalog or []))))
+            return True
+
+        monkeypatch.setattr(tg, "cli_install_catalog_ref", _fake_cli)
+        monkeypatch.setattr(tg, "_run_crisis_playbook",
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("crisis")))
+        hit = tg._app_install_catalog_for_phrase("install vlc")
+        assert hit is not None
+        entry, catalog, tag, label = hit
+        assert "vlc" in entry["name"].lower()
+        assert tg.try_passthrough("install vlc", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert seen and seen[0][3] is True
+
+    def test_install_unknown_app_does_not_claim_catalog(self):
+        assert tg._app_install_catalog_for_phrase("install totallyfictionalappxyz") is None
+
+    def test_wifi_and_sound_still_hit_playbooks(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(tg, "_run_crisis_playbook",
+                            lambda kind, *a, **k: seen.append(kind))
+        assert tg.try_passthrough("wifi not working", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert tg.try_passthrough("no sound", [], backend=None,
+                                  bctx={"pkg_mgr": "apt"}) is True
+        assert seen == ["wifi", "audio"]
+
+
+class TestBug17MemoryTightMatch:
+    def test_memory_ignores_unrelated_session_via_shared_sudo_steps(self, monkeypatch):
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        monkeypatch.setattr(tg, "_mem_load", lambda: {
+            "solved": [{
+                "problem": "VirtualBox kernel module failed to load",
+                "steps": ["sudo systemctl restart virtualbox.service",
+                          "sudo modprobe vboxdrv"],
+            }]
+        })
+        monkeypatch.setattr(tg, "_community_fixes_load", lambda: [])
+        # Shared sudo/systemctl tokens must NOT surface as a wifi memory hit.
+        assert tg._mem_recall("wifi not working") is None
+        assert tg._mem_search("wifi not working") == []
+
+    def test_memory_recalls_real_repeat(self, monkeypatch):
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        monkeypatch.setattr(tg, "_mem_load", lambda: {
+            "solved": [{
+                "problem": "wifi not working after suspend",
+                "steps": ["sudo systemctl restart NetworkManager"],
+            }]
+        })
+        monkeypatch.setattr(tg, "_community_fixes_load", lambda: [])
+        hit = tg._mem_recall("wifi not working after suspend")
+        assert hit is not None and hit["score"] >= 2
+        assert tg._mem_search("wifi not working after suspend")
+
+
+class TestBug18UxNits:
+    def test_undo_q_exits_cleanly(self, monkeypatch):
+        monkeypatch.setattr(tg, "_list_config_snapshots", lambda: [])
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "q")
+        created = []
+        monkeypatch.setattr(tg, "_create_config_snapshot",
+                            lambda *a, **k: created.append(1))
+        tg.feat_rollback(None, {"pkg_mgr": "apt"}, [])
+        assert created == []
+
+    def test_typo_suggests_closest_menu_keyword(self):
+        keys = [kw for _, kw, *_ in tg.MENU_ITEMS]
+        close = difflib.get_close_matches("updtes", keys, n=1, cutoff=0.72)
+        assert close and close[0] == "updates"
+
+    def test_scrub_hides_org_and_account_ids(self):
+        raw = "Error for org-AbCdEf123456 acct_9Z8Y7X (key sk-ant-abcdefghijklmnopqrstuvwxyz012345)"
+        scrubbed = tg._scrub_error_text(raw)
+        assert "org-AbCdEf123456" not in scrubbed
+        assert "acct_9Z8Y7X" not in scrubbed
+        assert "sk-ant-" not in scrubbed
+        assert "[REDACTED]" in scrubbed
+
+    def test_paste_clamp_keeps_20kb(self, monkeypatch):
+        warned = []
+        monkeypatch.setattr(tg, "warn", lambda msg: warned.append(msg))
+        big = "x" * 25000
+        out = tg._clamp_user_text(big)
+        assert len(out) == tg._MAX_INPUT_CHARS
+        assert warned
+
+    def test_sudo_rejects_wrong_password(self, monkeypatch):
+        attempts = []
+
+        def _fake_pw():
+            return "wrong"
+
+        def _fake_run(cmd, sudo_password=None, timeout=10):
+            attempts.append(sudo_password)
+            return (1, "", "Sorry, try again.")
+
+        monkeypatch.setattr(tg, "_SESSION_SUDO_PW", None)
+        monkeypatch.setattr(tg, "get_sudo_password", _fake_pw)
+        monkeypatch.setattr(tg, "run_cmd_live", _fake_run)
+        with pytest.raises(KeyboardInterrupt):
+            tg.get_or_cache_sudo_password()
+        assert len(attempts) == 3
+        assert tg._SESSION_SUDO_PW is None
+
+    def test_pulse_labels_include_percent_used(self, monkeypatch):
+        monkeypatch.setattr(tg, "_cpu_percent_sample", lambda: 12.0)
+        data = tg.gui_system_pulse()
+        assert "used" in data["cpu_label"].lower()
+        assert "%" in data["cpu_label"]
+        assert "%" in data["mem_label"] and "used" in data["mem_label"].lower()
+        assert "%" in data["disk_label"] and "used" in data["disk_label"].lower()
+
+    def test_smart_routing_copy_for_gemini(self, monkeypatch, capsys):
+        class _GStub(tg.GeminiBackend):
+            def __init__(self):
+                self.auto_model = True
+                self.expert_mode = False
+                self.auto_approve = False
+                self._session_input_tokens = 0
+                self._no_key = True
+
+            def label(self):
+                return "Google Gemini · flash (free)"
+
+            def session_cost_estimate(self):
+                return ""
+
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        monkeypatch.setattr(tg, "_free_provider_labels_with_keys", lambda cfg: [])
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda: False)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "3")
+        tg.feat_settings(_GStub(), {"pkg_mgr": "apt"}, [])
+        out = re.sub(r"\x1b\[[0-9;]*m", "", capsys.readouterr().out)
+        assert "N/A" in out or "Claude only" in out
+        assert "Haiku for simple tasks" not in out

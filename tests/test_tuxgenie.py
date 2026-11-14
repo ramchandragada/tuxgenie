@@ -348,9 +348,12 @@ class TestCatalogSearch:
         out, calls = self._drive(monkeypatch, tg.APP_CATALOG, ["photo", "80", "n"])
         assert calls == []
 
-    def test_no_match_falls_back_to_all(self, monkeypatch):
-        out, _ = self._drive(monkeypatch, tg.APP_CATALOG, ["zznope", "q"])
-        assert "Nothing matches" in out
+    def test_no_match_stays_graceful(self, monkeypatch):
+        out, calls = self._drive(monkeypatch, tg.APP_CATALOG, ["zznope", "q"])
+        # After a miss we keep the empty search + hint — no auto-reset to "Showing everything".
+        assert "zznope" in out and "match" in out.lower()
+        assert "Showing everything" not in out
+        assert calls == []
 
     def test_word_finds_ai_tool(self, monkeypatch):
         out, _ = self._drive(monkeypatch, tg.AI_CATALOG, ["cursor", "q"])
@@ -1292,6 +1295,7 @@ class TestKeyChangeRouting:
 
     def _run_with_input(self, backend, value, monkeypatch):
         monkeypatch.setattr("builtins.input", lambda *a, **k: value)
+        monkeypatch.setattr("getpass.getpass", lambda *a, **k: value)
         tg.feat_set_api_key(backend)
         return tg.load_cfg()
 
@@ -1341,7 +1345,9 @@ class TestSetupWizardDefault:
 
     def _wizard(self, inputs, monkeypatch):
         it = iter(inputs)
-        monkeypatch.setattr("builtins.input", lambda *a, **k: next(it))
+        nxt = lambda *a, **k: next(it)  # noqa: E731 — shared input/getpass stream
+        monkeypatch.setattr("builtins.input", nxt)
+        monkeypatch.setattr("getpass.getpass", nxt)
         return tg._setup_wizard({})
 
     def test_enter_defaults_to_gemini(self, monkeypatch):
@@ -1504,6 +1510,10 @@ class TestProviderFailover:
         assert tg._is_transient_ai_error(RuntimeError("Groq limit reached (HTTP 429)."))
         assert tg._is_transient_ai_error(RuntimeError("service unavailable 503"))
         assert not tg._is_transient_ai_error(RuntimeError("API key rejected (HTTP 401)"))
+        # 401/413 are not "rate limits", but failover must still move on.
+        assert tg._should_failover_ai_error(RuntimeError("SambaNova rejected the API key (HTTP 401)"))
+        assert tg._should_failover_ai_error(RuntimeError("Groq API error 413: Request too large"))
+        assert not tg._should_failover_ai_error(RuntimeError("nonsense with no status"))
 
     def test_retry_after_seconds_parsing(self):
         # Recognise the common phrasings providers use in 429 bodies.
@@ -1974,9 +1984,9 @@ class TestCrossProviderSwitch:
 
 
 class TestStartupProviderPriority:
-    """Startup provider order: Gemini > Groq for free; Claude only when the user
-    explicitly connected it (then sticky). Regression: it was booting whatever
-    provider was last saved (Groq), instead of always preferring Gemini."""
+    """An explicit free-provider choice sticks. Gemini is the default only when
+    the user has not chosen another free provider that still has a key.
+    Claude is sticky only when the user connected it."""
 
     def setup_method(self):
         self._orig = tg.CFG_FILE
@@ -1991,10 +2001,13 @@ class TestStartupProviderPriority:
             if v is not None:
                 os.environ[k] = v
 
-    def test_gemini_wins_when_both_free_keys_even_if_groq_saved(self):
+    def test_explicit_groq_survives_a_saved_gemini_key(self):
+        # Settings → Groq must stick. A Gemini key must not rewrite provider on launch.
         tg.save_cfg({"provider": "groq",
                      "gemini_api_key": "AIza" + "y" * 35, "groq_api_key": "gsk_" + "x" * 40})
-        assert isinstance(tg.load_backend(), tg.GeminiBackend)
+        b = tg.load_backend()
+        assert isinstance(b, tg.OpenAICompatBackend) and b.provider == "groq"
+        assert tg.load_cfg().get("provider") == "groq"
 
     def test_groq_when_only_groq_key(self):
         tg.save_cfg({"provider": "groq", "groq_api_key": "gsk_" + "x" * 40})
