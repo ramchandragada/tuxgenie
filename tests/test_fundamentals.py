@@ -2121,6 +2121,7 @@ class TestUpdateCheckFundamentals:
     def test_already_installed_snap_and_docker_need_no_sudo(self, monkeypatch):
         monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/" + name)
         monkeypatch.setattr(tg, "_local_deb_for", lambda pkg: None)
+        monkeypatch.setattr(tg, "_os_release_map", lambda: {"ID": "ubuntu", "ID_LIKE": "debian"})
         monkeypatch.setattr(tg, "_is_ubuntu_family", lambda osr=None: True)
         monkeypatch.setattr(tg, "_snap_installed", lambda name: name == "firefox")
         plan = tg._catalog_install_plan({"name": "Mozilla Firefox"}, {"pkg_mgr": "apt"})
