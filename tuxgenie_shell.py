@@ -20,7 +20,12 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.24.0"
+VERSION = "7.25.0"
+# WebKitGTK routinely eats multiple GB of RSS. On small PCs (Mint XFCE thin
+# clients, ≤8 GB laptops) prefer the GTK button deck unless the user forces
+# the modern panel with TUXGENIE_FORCE_WEBKIT=1.
+_WEBKIT_MIN_RAM_GIB = 8.0
+_VTE_SCROLLBACK_LINES = 5000
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -184,7 +189,35 @@ def _load_gi():
     return Gtk, Gdk, Vte, GLib, Gio, webkit
 
 
-def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
+def _host_ram_gib() -> float:
+    """Installed RAM in GiB — prefer tuxgenie.host_ram_gib when imported."""
+    tg = _import_tuxgenie()
+    if tg is not None and hasattr(tg, "host_ram_gib"):
+        try:
+            return float(tg.host_ram_gib() or 0.0)
+        except Exception:
+            pass
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / (1024 ** 2)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _prefer_light_deck() -> bool:
+    """True when this PC should skip WebKit to save RAM."""
+    if os.environ.get("TUXGENIE_FORCE_WEBKIT", "").strip() in ("1", "true", "yes"):
+        return False
+    if os.environ.get("TUXGENIE_LIGHT_DECK", "").strip() in ("1", "true", "yes"):
+        return True
+    ram = _host_ram_gib()
+    return 0 < ram < _WEBKIT_MIN_RAM_GIB
+
+
+def _shell_html(version: str, store_apps: list, ai_apps: list, pulse_ms: int = 8000) -> str:
     """Flagship control deck — brand-first, luminous teal, intentional motion.
     Self-contained: no CDN, no remote fonts, no third-party assets."""
     html = """<!DOCTYPE html>
@@ -1317,10 +1350,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     el.className = "app-ico";
     el.setAttribute("aria-hidden", "true");
     const src = (row && row.icon) || iconForName(row && row.name) || "";
-    if (src && src.indexOf("data:image") === 0) {
+    // data: (legacy / tiny) or file:// from the local icon cache — never https.
+    if (src && (src.indexOf("data:image") === 0 || src.indexOf("file://") === 0)) {
       const img = document.createElement("img");
       img.src = src;
       img.alt = "";
+      img.loading = "lazy";
       el.appendChild(img);
       return el;
     }
@@ -1547,7 +1582,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
   post({ op: "system-pulse" });
   setInterval(function() {
     if (activeTab === "home") post({ op: "system-pulse" });
-  }, 3000);
+  }, __PULSE_MS__);
   q.focus();
 </script>
 </body>
@@ -1557,6 +1592,7 @@ def _shell_html(version: str, store_apps: list, ai_apps: list) -> str:
     html = html.replace("__ACTIONS__", json.dumps(compose_home_actions(), ensure_ascii=False))
     html = html.replace("__STORE__", json.dumps(store_apps, ensure_ascii=False))
     html = html.replace("__AI__", json.dumps(ai_apps, ensure_ascii=False))
+    html = html.replace("__PULSE_MS__", str(max(3000, int(pulse_ms))))
     return html
 
 
@@ -1702,9 +1738,20 @@ class UnifiedShell:
             pass
 
     def _build_left(self):
-        if self.WebKit2 is not None:
+        # ≤8 GB PCs: WebKitGTK has been measured at ~3.5 GB RSS alone — skip it.
+        if self.WebKit2 is not None and not _prefer_light_deck():
             return self._build_webkit()
-        return self._build_gtk_fallback()
+        note = None
+        if self.WebKit2 is not None and _prefer_light_deck():
+            ram = _host_ram_gib()
+            note = (
+                "Light control panel — this PC has %.0f GB RAM. "
+                "WebKit is skipped so TuxGenie stays under a few hundred MB. "
+                "Type apps in the terminal for the App Store, or set "
+                "TUXGENIE_FORCE_WEBKIT=1 to force the modern panel."
+            ) % (ram or _WEBKIT_MIN_RAM_GIB)
+            print("tuxgenie-app: " + note, file=sys.stderr)
+        return self._build_gtk_fallback(note)
 
     def _build_webkit(self):
         WebKit2 = self.WebKit2
@@ -1713,18 +1760,59 @@ class UnifiedShell:
             settings = view.get_settings()
             settings.set_enable_developer_extras(False)
             settings.set_javascript_can_access_clipboard(False)
+            # Keep the UI process lean — page cache + hardware layers are the
+            # usual multi-GB RSS culprits on WebKitGTK.
+            for name, args in (
+                ("set_enable_page_cache", (False,)),
+                ("set_enable_dns_prefetching", (False,)),
+                ("set_enable_offline_web_application_cache", (False,)),
+                ("set_enable_html5_database", (False,)),
+                ("set_enable_html5_local_storage", (False,)),
+                ("set_enable_smooth_scrolling", (False,)),
+                ("set_allow_file_access_from_file_urls", (True,)),
+                ("set_allow_universal_access_from_file_urls", (True,)),
+            ):
+                fn = getattr(settings, name, None)
+                if callable(fn):
+                    try:
+                        fn(*args)
+                    except Exception:
+                        pass
+            try:
+                settings.set_cache_model(WebKit2.CacheModel.DOCUMENT_VIEWER)
+            except Exception:
+                pass
+            try:
+                # 2 = HardwareAccelerationPolicy.NEVER on WebKit2GTK 4.x
+                policy = getattr(WebKit2, "HardwareAccelerationPolicy", None)
+                if policy is not None and hasattr(settings, "set_hardware_acceleration_policy"):
+                    settings.set_hardware_acceleration_policy(policy.NEVER)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        try:
+            ctx = view.get_context()
+            if ctx is not None and hasattr(ctx, "set_cache_model"):
+                ctx.set_cache_model(WebKit2.CacheModel.DOCUMENT_VIEWER)
+            cm = ctx.get_website_data_manager() if ctx is not None else None
+            if cm is not None and hasattr(cm, "set_tls_errors_policy"):
+                pass
         except Exception:
             pass
         ucm = view.get_user_content_manager()
         ucm.register_script_message_handler("tuxgenie")
         ucm.connect("script-message-received::tuxgenie", self._on_webkit_msg)
-        html = _shell_html(VERSION, self._store_apps, self._ai_apps)
+        # Slower pulse on mid-RAM boxes that still use WebKit.
+        pulse_ms = 15000 if _host_ram_gib() < 12 else 8000
+        html = _shell_html(VERSION, self._store_apps, self._ai_apps, pulse_ms=pulse_ms)
         try:
             view.connect("load-changed", self._on_wk_load)
             view.connect("load-failed", self._on_wk_failed)
         except Exception:
             pass
-        view.load_html(html, "file:///tuxgenie-shell/")
+        # Base URI under /usr/share/tuxgenie so file:// app-icons resolve.
+        view.load_html(html, "file:///usr/share/tuxgenie/")
         try:
             self.GLib.timeout_add_seconds(5, self._on_wk_timeout)
         except Exception:
@@ -2007,7 +2095,10 @@ class UnifiedShell:
         except Exception:
             pass
         sub = Gtk.Label(
-            label=note or "For the full modern App Store UI: sudo apt install gir1.2-webkit2-4.1"
+            label=note or (
+                "For the full modern App Store UI on a PC with 8 GB+ RAM: "
+                "sudo apt install gir1.2-webkit2-4.1"
+            )
         )
         sub.set_xalign(0)
         sub.set_line_wrap(True)
@@ -2103,7 +2194,8 @@ class UnifiedShell:
         Gdk = self.Gdk
         self.term = Vte.Terminal()
         try:
-            self.term.set_scrollback_lines(-1)
+            # Cap scrollback — unlimited (-1) grows without bound on long sessions.
+            self.term.set_scrollback_lines(_VTE_SCROLLBACK_LINES)
             self.term.set_mouse_autohide(True)
             self.term.set_scroll_on_keystroke(True)
             self.term.set_scroll_on_output(False)

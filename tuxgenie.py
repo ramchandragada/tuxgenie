@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.24.0"
+__version__ = "7.25.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3139,6 +3139,30 @@ def _cpu_percent_sample(interval: float = 0.12) -> float:
     return max(0.0, min(100.0, round(100.0 * (1.0 - (didle / dtotal)), 1)))
 
 
+def _self_rss_kib() -> int:
+    """Resident memory of this process in KiB (0 if unreadable)."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+    except Exception:
+        pass
+    return 0
+
+
+def host_ram_gib() -> float:
+    """Total installed RAM in GiB (0.0 if /proc/meminfo is unreadable)."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / (1024 ** 2)
+    except Exception:
+        pass
+    return 0.0
+
+
 def gui_system_pulse() -> dict:
     """Fast no-AI snapshot for Unified Shell Home widgets (CPU/mem/disk/PC)."""
     # Memory
@@ -3154,6 +3178,7 @@ def gui_system_pulse() -> dict:
         pass
     mem_used_kb = max(0, mem_total_kb - mem_avail_kb)
     mem_pct = round(100.0 * mem_used_kb / mem_total_kb, 1) if mem_total_kb else 0.0
+    self_rss_kb = _self_rss_kib()
 
     # Disk (root)
     try:
@@ -3190,11 +3215,18 @@ def gui_system_pulse() -> dict:
     def _gb(kb):
         return round(kb / (1024 ** 2), 1)
 
+    mem_label = f"{_gb(mem_used_kb):g} / {_gb(mem_total_kb):g} GB used ({mem_pct:.0f}%)"
+    # Surface our own footprint when the shell/WebKit deck is the hog
+    # (common on ≤8 GB PCs — see tuxgenie-app low-RAM GTK fallback).
+    if self_rss_kb >= 400 * 1024:  # ≥ ~400 MiB resident
+        mem_label += f" · TuxGenie ~{_gb(self_rss_kb):g} GB"
+
     return {
         "cpu_pct": cpu_pct,
         "cpu_label": f"{cpu_pct:.0f}% used · {ncpu} cores",
         "mem_pct": mem_pct,
-        "mem_label": f"{_gb(mem_used_kb):g} / {_gb(mem_total_kb):g} GB used ({mem_pct:.0f}%)",
+        "mem_label": mem_label,
+        "self_rss_mb": round(self_rss_kb / 1024, 1) if self_rss_kb else 0.0,
         "disk_pct": disk_pct,
         "disk_label": f"{disk_used_gb:g} / {disk_total_gb:g} GB used ({disk_pct:.0f}%)",
         "disk_warn": disk_pct >= 90,
@@ -14843,10 +14875,12 @@ def catalog_icon_urls(name):
     urls = []
     app_id = catalog_icon_app_id(name)
     if app_id:
-        urls.append(
-            f"https://dl.flathub.org/repo/appstream/x86_64/icons/128x128/{app_id}.png")
+        # Prefer 64×64 first — 128×128 icons base64-bloat the WebKit deck on
+        # small PCs (the shell used to embed every icon as a data: URI).
         urls.append(
             f"https://dl.flathub.org/repo/appstream/x86_64/icons/64x64/{app_id}.png")
+        urls.append(
+            f"https://dl.flathub.org/repo/appstream/x86_64/icons/128x128/{app_id}.png")
     for u in _ICON_DIRECT.get(name, ()):
         if u and u not in urls:
             urls.append(u)
@@ -14902,15 +14936,27 @@ def catalog_icon_path(name):
     return None
 
 
+# Hard cap for App Store artwork. Marketing PNGs / SVGs above this are skipped
+# so tuxgenie-app cannot embed megabytes of base64 into the control deck.
+_ICON_MAX_BYTES = 48_000
+
+
 def catalog_icon_data_uri(name):
-    """data: URI for the shell (empty string when the icon is not cached yet)."""
+    """data: URI for the shell (empty string when the icon is not cached yet).
+
+    Oversized files return "" — callers should prefer catalog_icon_ref().
+    """
     path = catalog_icon_path(name)
     if not path:
         return ""
     try:
+        if os.path.getsize(path) > _ICON_MAX_BYTES:
+            return ""
         with open(path, "rb") as fh:
-            raw = fh.read()
+            raw = fh.read(_ICON_MAX_BYTES + 1)
     except OSError:
+        return ""
+    if len(raw) > _ICON_MAX_BYTES:
         return ""
     ext = _icon_ext_for(raw)
     if not ext:
@@ -14921,6 +14967,28 @@ def catalog_icon_data_uri(name):
     }[ext]
     import base64
     return "data:%s;base64,%s" % (mime, base64.b64encode(raw).decode("ascii"))
+
+
+def catalog_icon_ref(name):
+    """Shell icon reference: file:// path (preferred) or a small data: URI.
+
+    file:// keeps the Python/WebKit HTML heap small — the image is decoded
+    once by the renderer instead of being copied as base64 into every JSON
+    payload. Empty string when no usable icon is cached.
+    """
+    path = catalog_icon_path(name)
+    if not path:
+        return ""
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return ""
+    if size > _ICON_MAX_BYTES:
+        return ""
+    abs_path = os.path.abspath(path)
+    # Quote only the path segments; keep leading slash for absolute file URLs.
+    from urllib.parse import quote
+    return "file://" + quote(abs_path, safe="/")
 
 
 def _icon_http_get(url, timeout=18):
@@ -14953,6 +15021,9 @@ def _flathub_icon_from_api(app_id):
 def _write_icon_file(dest_dir, name, data):
     ext = _icon_ext_for(data)
     if not ext:
+        return None
+    # Skip huge "icons" (full logos / marketing art) — they blow up the GUI.
+    if not data or len(data) > _ICON_MAX_BYTES:
         return None
     os.makedirs(dest_dir, exist_ok=True)
     path = os.path.join(dest_dir, catalog_icon_slug(name) + ext)
@@ -15058,7 +15129,8 @@ def catalog_gui_rows(catalog, *, kind="app"):
             "desc": e.get("desc") or "",
             "kind": kind,
             "methods": methods,
-            "icon": catalog_icon_data_uri(e.get("name") or ""),
+            # file:// (or tiny data:) — never embed multi-MB base64 blobs.
+            "icon": catalog_icon_ref(e.get("name") or ""),
         })
     return rows
 

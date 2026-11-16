@@ -1,5 +1,14 @@
 # Changelog
 
+## 7.25.0
+
+tuxgenie-app memory on small PCs (≤8 GB RAM, e.g. Mint XFCE):
+
+- Skip WebKitGTK on machines under 8 GB RAM and use the light GTK control panel instead. WebKit was measured at ~3.5 GB RSS alone on a 5.7 GB PC. Set `TUXGENIE_FORCE_WEBKIT=1` to force the modern panel.
+- Cap VTE scrollback at 5000 lines (was unlimited).
+- App Store icons use `file://` paths (not base64 data URIs), prefer Flathub 64×64, and refuse icons larger than 48 KB.
+- Home pulse slows down; the mem widget reports TuxGenie's own RSS when it is large.
+
 ## 7.24.0
 
 API key paste and terminal copy/paste:

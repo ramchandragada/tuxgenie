@@ -1577,8 +1577,13 @@ class TestUnifiedShell:
         assert "appInitials" not in html
         assert "window.__setCatalog" in html
         assert "object-fit: contain" in html
-        assert "data:image" in html or 'className += " missing"' in html
+        assert "data:image" in html or "file://" in html or 'className += " missing"' in html
+        assert "img.loading = \"lazy\"" in html or "loading = \"lazy\"" in html
         assert "ensure_catalog_icons" in src
+        assert "_prefer_light_deck" in src
+        assert "_WEBKIT_MIN_RAM_GIB" in src
+        assert "_VTE_SCROLLBACK_LINES" in src
+        assert "set_scrollback_lines(-1)" not in src
         assert "window, frame, paned, box, headerbar" not in src
         assert "menuitem:hover" in src
 
@@ -1586,7 +1591,8 @@ class TestUnifiedShell:
         p = tg.gui_system_pulse()
         for key in ("cpu_pct", "cpu_label", "mem_pct", "mem_label",
                     "disk_pct", "disk_label", "pc_title", "pc_label",
-                    "cpu_warn", "mem_warn", "disk_warn", "actions"):
+                    "cpu_warn", "mem_warn", "disk_warn", "actions",
+                    "self_rss_mb"):
             assert key in p, key
         assert set(p["actions"]) >= {"cpu", "mem", "disk", "pc"}
         kws = tg.menu_keyword_map()
@@ -1595,12 +1601,14 @@ class TestUnifiedShell:
         assert 0 <= float(p["cpu_pct"]) <= 100
         assert 0 <= float(p["mem_pct"]) <= 100
         assert 0 <= float(p["disk_pct"]) <= 100
+        assert float(p["self_rss_mb"]) >= 0
         assert p["pc_title"]
         assert " · " in p["pc_label"]
         # os.uname() must populate kernel/arch (no platform import dependency)
         left, _, right = p["pc_label"].partition(" · ")
         assert left and left != "?"
         assert right and right != "?"
+        assert tg.host_ram_gib() >= 0
 
     def test_create_deb_ships_shell_as_app(self):
         src = open(os.path.join(ROOT, "create_deb.py")).read()
@@ -1691,8 +1699,31 @@ class TestCatalogOfficialIcons:
         png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 48)
         monkeypatch.setattr(tg, "catalog_icon_path", lambda _n: str(png))
         row = tg.catalog_gui_rows(tg.APP_CATALOG[:1])[0]
-        assert row["icon"].startswith("data:image/png;base64,")
+        # Prefer file:// so the shell does not hold base64 copies of every icon.
+        assert row["icon"].startswith("file://")
+        assert str(png.resolve()) in row["icon"] or "brave-browser.png" in row["icon"]
         assert "https://" not in row["icon"]
+        assert "data:image" not in row["icon"]
+
+    def test_oversized_icon_is_skipped(self, tmp_path, monkeypatch):
+        big = tmp_path / "brave-browser.png"
+        big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * (tg._ICON_MAX_BYTES + 100))
+        monkeypatch.setattr(tg, "catalog_icon_path", lambda _n: str(big))
+        assert tg.catalog_icon_ref("Brave Browser") == ""
+        assert tg.catalog_icon_data_uri("Brave Browser") == ""
+        assert tg._write_icon_file(str(tmp_path / "out"), "Other", big.read_bytes()) is None
+
+    def test_prefer_light_deck_under_8gb(self, monkeypatch):
+        import tuxgenie_shell as sh
+        monkeypatch.delenv("TUXGENIE_FORCE_WEBKIT", raising=False)
+        monkeypatch.delenv("TUXGENIE_LIGHT_DECK", raising=False)
+        monkeypatch.setattr(sh, "_host_ram_gib", lambda: 5.7)
+        assert sh._prefer_light_deck() is True
+        monkeypatch.setattr(sh, "_host_ram_gib", lambda: 16.0)
+        assert sh._prefer_light_deck() is False
+        monkeypatch.setenv("TUXGENIE_FORCE_WEBKIT", "1")
+        monkeypatch.setattr(sh, "_host_ram_gib", lambda: 5.7)
+        assert sh._prefer_light_deck() is False
 
 
 class TestGuiAppStoreRouting:
