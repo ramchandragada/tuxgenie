@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.23.0"
+__version__ = "7.24.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -86,10 +86,151 @@ import builtins  # noqa: E402 — must follow _safe_input definition to override
 builtins.input = _safe_input
 
 
+# Terminals (VTE, gnome-terminal, …) wrap clipboard paste in bracketed-paste
+# markers when the app has enabled that mode. getpass would otherwise store
+# those ESC sequences inside the "API key" and Gemini/Claude validation fails.
+_BRACKETED_PASTE_START = "\x1b[200~"
+_BRACKETED_PASTE_END = "\x1b[201~"
+_CSI_OR_OSC_RE = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]"   # CSI (incl. bracketed-paste leftovers)
+    r"|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"  # OSC
+    r"|\x1b."                      # other short ESC sequences
+)
+
+
+def _clean_secret(text: str) -> str:
+    """Strip bracketed-paste wrappers and control chars from a pasted secret.
+
+    Returns the printable secret only. Safe on empty / None-like input.
+    """
+    if not text:
+        return ""
+    s = str(text)
+    # Unwrap every bracketed-paste region (terminals may nest one wrap).
+    out = []
+    i = 0
+    n = len(s)
+    while i < n:
+        if s.startswith(_BRACKETED_PASTE_START, i):
+            i += len(_BRACKETED_PASTE_START)
+            j = s.find(_BRACKETED_PASTE_END, i)
+            if j < 0:
+                out.append(s[i:])
+                break
+            out.append(s[i:j])
+            i = j + len(_BRACKETED_PASTE_END)
+            continue
+        out.append(s[i])
+        i += 1
+    s = "".join(out)
+    s = _CSI_OR_OSC_RE.sub("", s)
+    # Drop remaining controls (keep nothing below space except none — keys
+    # are single-line tokens). Also strip zero-width / BOM junk from web UIs.
+    s = "".join(ch for ch in s if ch.isprintable() and ch not in "\u200b\u200c\u200d\ufeff")
+    return s.strip()
+
+
+def _read_secret_masked(prompt: str) -> str:
+    """Read a secret char-by-char, printing '*' so paste visibly works.
+
+    Handles bracketed-paste markers without storing them. Falls back by
+    raising if the TTY cannot be put into cbreak mode.
+    """
+    import termios
+    import tty
+
+    stream_out = sys.stderr if sys.stderr.isatty() else sys.stdout
+    stream_out.write(str(prompt))
+    stream_out.flush()
+
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    buf: list[str] = []
+    esc_buf = ""
+    try:
+        tty.setcbreak(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if not ch:
+                break
+            # Assemble / recognise ESC sequences (bracketed paste, arrows…).
+            if esc_buf or ch == "\x1b":
+                esc_buf += ch
+                if esc_buf == _BRACKETED_PASTE_START:
+                    esc_buf = ""
+                    continue
+                if esc_buf == _BRACKETED_PASTE_END:
+                    esc_buf = ""
+                    continue
+                # Incomplete CSI — keep buffering briefly.
+                if esc_buf.startswith("\x1b[") and len(esc_buf) < 16:
+                    # CSI ends on a final byte @-~
+                    if len(esc_buf) >= 3 and "@" <= esc_buf[-1] <= "~":
+                        esc_buf = ""  # drop unknown CSI (arrows etc.)
+                    continue
+                if esc_buf.startswith("\x1b") and len(esc_buf) < 3:
+                    continue
+                esc_buf = ""
+                continue
+            if ch in ("\n", "\r"):
+                break
+            if ch in ("\x03",):  # Ctrl+C
+                raise KeyboardInterrupt
+            if ch in ("\x04",) and not buf:  # Ctrl+D on empty
+                break
+            if ch in ("\x7f", "\b"):  # backspace
+                if buf:
+                    buf.pop()
+                    stream_out.write("\b \b")
+                    stream_out.flush()
+                continue
+            if ch == "\x15":  # Ctrl+U — clear line
+                while buf:
+                    buf.pop()
+                    stream_out.write("\b \b")
+                stream_out.flush()
+                continue
+            if ord(ch) < 32:
+                continue  # other controls
+            buf.append(ch)
+            stream_out.write("*")
+            stream_out.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        stream_out.write("\n")
+        stream_out.flush()
+    return "".join(buf)
+
+
 def _prompt_secret(prompt: str) -> str:
-    """Read an API key or token without echoing it (getpass)."""
-    import getpass
-    return getpass.getpass(prompt).strip()
+    """Read an API key or token without echoing raw characters.
+
+    Paste-friendly: shows one '*' per character so clipboard paste is
+    obviously working, strips terminal bracketed-paste wrappers that would
+    otherwise corrupt Gemini/Claude keys, and confirms the length after Enter.
+    Non-TTY / broken termios falls back to getpass (still cleaned).
+    """
+    raw = ""
+    try:
+        if sys.stdin.isatty():
+            try:
+                raw = _read_secret_masked(prompt)
+            except Exception:
+                import getpass
+                raw = getpass.getpass(prompt)
+        else:
+            import getpass
+            raw = getpass.getpass(prompt)
+    except (EOFError, KeyboardInterrupt):
+        raise
+    key = _clean_secret(_clamp_user_text(raw or ""))
+    if key:
+        try:
+            # Never print the secret — only prove paste/type landed.
+            info(f"Got {len(key)} hidden characters.")
+        except Exception:
+            pass
+    return key
 
 
 _PENDING_LINES = []
@@ -2226,9 +2367,11 @@ def feat_set_api_key(backend):
     hdr(title)
     info(f"Current: {backend.label()}")
     print(f"\n  Get your key at: {CYAN}{BOLD}{url}{R}")
-    print(f"  {DIM}{note}{R}\n")
+    print(f"  {DIM}{note}{R}")
+    print(f"  {DIM}Paste with Ctrl+Shift+V (or right-click → Paste). Stars appear as "
+          f"you paste — that means it worked. Then press Enter.{R}\n")
     try:
-        key = _prompt_secret("  Paste API key (hidden, or Enter to cancel): ")
+        key = _prompt_secret("  Paste API key (stars = hidden, Enter to save, empty to cancel): ")
     except (EOFError, KeyboardInterrupt):
         return
     if not key:

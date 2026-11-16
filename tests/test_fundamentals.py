@@ -2264,6 +2264,47 @@ class TestBug18UxNits:
         assert len(out) == tg._MAX_INPUT_CHARS
         assert warned
 
+    def test_clean_secret_strips_bracketed_paste(self):
+        key = "AIza" + "b" * 35
+        wrapped = f"\x1b[200~{key}\x1b[201~"
+        assert tg._clean_secret(wrapped) == key
+        # Leading/trailing junk + zero-width from web copy
+        dirty = f"\ufeff\x1b[200~{key}\x1b[201~\n\u200b"
+        assert tg._clean_secret(dirty) == key
+        assert tg._clean_secret("") == ""
+        assert tg._clean_secret(None) == ""
+
+    def test_prompt_secret_accepts_bracketed_gemini_key(self, monkeypatch):
+        key = "AIza" + "c" * 35
+        wrapped = f"\x1b[200~{key}\x1b[201~"
+        monkeypatch.setattr(tg.sys.stdin, "isatty", lambda: False)
+        monkeypatch.setattr("getpass.getpass", lambda *a, **k: wrapped)
+        notes = []
+        monkeypatch.setattr(tg, "info", lambda msg: notes.append(msg))
+        out = tg._prompt_secret("key: ")
+        assert out == key
+        assert notes and "hidden characters" in notes[0]
+
+    def test_feat_set_api_key_saves_bracketed_paste(self, monkeypatch, tmp_path):
+        """Regression: VTE paste used to leave ESC markers so Gemini rejected the key."""
+        orig = tg.CFG_FILE
+        tg.CFG_FILE = str(tmp_path / "config.json")
+        try:
+            key = "AIza" + "d" * 35
+            wrapped = f"\x1b[200~{key}\x1b[201~"
+            monkeypatch.setattr(tg.sys.stdin, "isatty", lambda: False)
+            monkeypatch.setattr("getpass.getpass", lambda *a, **k: wrapped)
+            monkeypatch.setattr(tg, "info", lambda *a, **k: None)
+            monkeypatch.setattr(tg, "ok", lambda *a, **k: None)
+            monkeypatch.setattr(tg, "hdr", lambda *a, **k: None)
+            b = tg.GeminiBackend(api_key=tg._NO_KEY)
+            tg.feat_set_api_key(b)
+            cfg = tg.load_cfg()
+            assert cfg.get("gemini_api_key") == key
+            assert cfg.get("provider") == "gemini"
+        finally:
+            tg.CFG_FILE = orig
+
     def test_sudo_rejects_wrong_password(self, monkeypatch):
         attempts = []
 

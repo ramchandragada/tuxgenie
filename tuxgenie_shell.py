@@ -20,7 +20,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.23.0"
+VERSION = "7.24.0"
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -2139,7 +2139,9 @@ class UnifiedShell:
         try:
             header.set_markup(
                 '  <span foreground="#0a6e7a" size="small">'
-                "<b>Live terminal</b> — approve installs here (y/n)</span>"
+                "<b>Live terminal</b> — y/n here · "
+                "select text then Ctrl+C / Ctrl+Shift+C to copy · "
+                "Ctrl+V / Ctrl+Shift+V or right-click to paste</span>"
             )
         except Exception:
             pass
@@ -2244,15 +2246,38 @@ class UnifiedShell:
             except Exception:
                 pass
 
+    def _has_selection(self) -> bool:
+        try:
+            return bool(self.term.get_has_selection())
+        except Exception:
+            try:
+                return bool(self.term.get_selection_bound() is not None)
+            except Exception:
+                return False
+
     def _on_term_key(self, _term, event):
         ctrl = bool(event.state & self.Gdk.ModifierType.CONTROL_MASK)
         shift = bool(event.state & self.Gdk.ModifierType.SHIFT_MASK)
         name = (self.Gdk.keyval_name(event.keyval) or "").lower()
-        if ctrl and shift and name == "c":
-            self._copy()
+        # Copy: Ctrl+Shift+C always. Plain Ctrl+C copies when text is
+        # selected (beginner expectation) and only sends SIGINT otherwise.
+        if ctrl and name == "c":
+            if shift or self._has_selection():
+                self._copy()
+                return True
+            return False
+        # Paste: Ctrl+Shift+V and plain Ctrl+V (API-key paste must work).
+        if ctrl and name in ("v", "insert"):
+            try:
+                self.term.paste_clipboard()
+            except Exception:
+                pass
             return True
-        if ctrl and shift and name in ("v", "insert"):
-            self.term.paste_clipboard()
+        if shift and name == "insert":
+            try:
+                self.term.paste_clipboard()
+            except Exception:
+                pass
             return True
         return False
 

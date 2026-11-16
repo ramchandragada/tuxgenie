@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.24.0
+
+API key paste and terminal copy/paste:
+
+- Pasting a Gemini (or other) API key shows stars as characters arrive, so clipboard paste is visibly working. Press Enter to save.
+- Bracketed-paste markers from VTE/gnome-terminal are stripped so keys are no longer rejected as “doesn’t look like a Gemini key”.
+- In `tuxgenie-app`, select text then Ctrl+C (or Ctrl+Shift+C) to copy; Ctrl+V / Ctrl+Shift+V or right-click to paste. The live-terminal header reminds you.
+
 ## 7.23.0
 
 Linux Mint, including Mint XFCE on small PCs (6 GB thin clients such as the HP t640):
