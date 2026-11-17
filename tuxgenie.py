@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.31.0"
+__version__ = "7.32.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -3165,6 +3165,36 @@ def host_ram_gib() -> float:
     except Exception:
         pass
     return 0.0
+
+
+def host_mem_available_gib() -> float:
+    """Kernel MemAvailable in GiB — free RAM apps can use right now."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024 ** 2)
+    except Exception:
+        pass
+    return 0.0
+
+
+def memory_pressure_level() -> str:
+    """Recovery-friendly RAM pressure: 'critical' | 'tight' | 'ok'.
+
+    TuxGenie is often opened *because* the PC is already in trouble. Key off
+    MemAvailable (not only total RAM) so a stressed 16 GB box still goes light.
+    Override with TUXGENIE_LITE=1.
+    """
+    if os.environ.get("TUXGENIE_LITE", "").strip().lower() in ("1", "true", "yes"):
+        return "critical"
+    avail = host_mem_available_gib()
+    total = host_ram_gib()
+    if 0 < avail < 0.5:
+        return "critical"
+    if 0 < avail < 1.5 or (0 < total < 8.0):
+        return "tight"
+    return "ok"
 
 
 def gui_system_pulse() -> dict:
@@ -18277,6 +18307,11 @@ def main():
 
     _init_light_theme()
     banner()
+    _pressure = memory_pressure_level()
+    if _pressure != "ok":
+        _avail = host_mem_available_gib()
+        print(f"  {YELLOW}{BOLD}Lightweight mode{R}  {DIM}· ~{_avail:.1f} GB free — "
+              f"skipped heavy startup so TuxGenie can help while the PC is under load{R}")
     startup_update_check()
     backend = load_backend()
 
@@ -18285,10 +18320,13 @@ def main():
         # Refresh the deeper fingerprint (installed apps, GPU, etc.) in the
         # background — cached for 24h so most launches are no-ops. Failures
         # never block startup; the agentic engine just runs without it.
-        try:
-            threading.Thread(target=collect_fingerprint, daemon=True).start()
-        except Exception:
-            pass
+        # Skip under memory pressure: forking a probe storm on a struggling
+        # box is the opposite of "recovery tool".
+        if _pressure == "ok":
+            try:
+                threading.Thread(target=collect_fingerprint, daemon=True).start()
+            except Exception:
+                pass
     ok("System info collected")
     # Startup fully succeeded — clear the crash counter so only crashes that
     # happen *during* startup accumulate toward an automatic rollback.
@@ -18335,7 +18373,9 @@ def main():
     # ── Interactive mode ──────────────────────────────────────────────────────
     first_run_check()
     quick_health_check()
-    _weekly_digest()
+    # Weekly digest forks apt/df/systemctl — skip when RAM is already tight.
+    if _pressure == "ok":
+        _weekly_digest()
     show_menu(compact=True)
     if backend._no_key:
         _line = f"  {DIM}{'─'*54}{R}"

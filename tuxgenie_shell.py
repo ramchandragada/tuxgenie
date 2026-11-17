@@ -20,13 +20,18 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.31.0"
+VERSION = "7.32.0"
 # WebKitGTK routinely eats multiple GB of RSS. On small PCs (Mint XFCE thin
 # clients, ≤8 GB laptops) prefer the GTK button deck unless the user forces
-# the modern panel with TUXGENIE_FORCE_WEBKIT=1.
+# the modern panel with TUXGENIE_FORCE_WEBKIT=1. Also skip WebKit when
+# MemAvailable is low — TuxGenie is often opened *during* a memory crisis.
 _WEBKIT_MIN_RAM_GIB = 8.0
+_WEBKIT_MIN_AVAIL_GIB = 2.0
 _VTE_SCROLLBACK_LINES = 5000
+_VTE_SCROLLBACK_TIGHT = 1500
+_VTE_SCROLLBACK_CRITICAL = 400
 _LIGHT_PULSE_MS = 8000
+_LIGHT_PULSE_TIGHT_MS = 20000
 
 # Icon candidates per tile — first name that exists in the theme wins.
 # Ordered for Mint XFCE / Mint-Y / Papirus (many "engineering" names are missing).
@@ -214,20 +219,22 @@ def _load_store_catalogs():
         return [], []
 
 
-def _load_gi():
+def _load_gi(want_webkit: bool = True):
+    """Load GTK/VTE. Skip WebKit2 entirely when want_webkit=False (saves RSS)."""
     import gi
     gi.require_version("Gtk", "3.0")
     gi.require_version("Vte", "2.91")
     from gi.repository import Gtk, Gdk, Vte, GLib, Gio  # noqa: F401
     webkit = None
-    for ver in ("4.1", "4.0"):
-        try:
-            gi.require_version("WebKit2", ver)
-            from gi.repository import WebKit2
-            webkit = WebKit2
-            break
-        except Exception:
-            continue
+    if want_webkit:
+        for ver in ("4.1", "4.0"):
+            try:
+                gi.require_version("WebKit2", ver)
+                from gi.repository import WebKit2
+                webkit = WebKit2
+                break
+            except Exception:
+                continue
     return Gtk, Gdk, Vte, GLib, Gio, webkit
 
 
@@ -249,14 +256,68 @@ def _host_ram_gib() -> float:
     return 0.0
 
 
+def _host_mem_available_gib() -> float:
+    """MemAvailable in GiB — prefer tuxgenie.host_mem_available_gib."""
+    tg = _import_tuxgenie()
+    if tg is not None and hasattr(tg, "host_mem_available_gib"):
+        try:
+            return float(tg.host_mem_available_gib() or 0.0)
+        except Exception:
+            pass
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024 ** 2)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _memory_pressure_level() -> str:
+    """'critical' | 'tight' | 'ok' — mirror tuxgenie.memory_pressure_level."""
+    tg = _import_tuxgenie()
+    if tg is not None and hasattr(tg, "memory_pressure_level"):
+        try:
+            return str(tg.memory_pressure_level() or "ok")
+        except Exception:
+            pass
+    if os.environ.get("TUXGENIE_LITE", "").strip().lower() in ("1", "true", "yes"):
+        return "critical"
+    avail = _host_mem_available_gib()
+    total = _host_ram_gib()
+    if 0 < avail < 0.5:
+        return "critical"
+    if 0 < avail < 1.5 or (0 < total < 8.0):
+        return "tight"
+    return "ok"
+
+
 def _prefer_light_deck() -> bool:
     """True when this PC should skip WebKit to save RAM."""
     if os.environ.get("TUXGENIE_FORCE_WEBKIT", "").strip() in ("1", "true", "yes"):
         return False
     if os.environ.get("TUXGENIE_LIGHT_DECK", "").strip() in ("1", "true", "yes"):
         return True
+    if os.environ.get("TUXGENIE_LITE", "").strip() in ("1", "true", "yes"):
+        return True
     ram = _host_ram_gib()
-    return 0 < ram < _WEBKIT_MIN_RAM_GIB
+    if 0 < ram < _WEBKIT_MIN_RAM_GIB:
+        return True
+    # Stressed machine (OOM risk) — even 16 GB boxes with <2 GB free skip WebKit.
+    avail = _host_mem_available_gib()
+    if 0 < avail < _WEBKIT_MIN_AVAIL_GIB:
+        return True
+    return False
+
+
+def _vte_scrollback_lines() -> int:
+    level = _memory_pressure_level()
+    if level == "critical":
+        return _VTE_SCROLLBACK_CRITICAL
+    if level == "tight":
+        return _VTE_SCROLLBACK_TIGHT
+    return _VTE_SCROLLBACK_LINES
 
 
 def _shell_html(version: str, store_apps: list, ai_apps: list, pulse_ms: int = 8000) -> str:
@@ -1641,8 +1702,12 @@ def _shell_html(version: str, store_apps: list, ai_apps: list, pulse_ms: int = 8
 
 class UnifiedShell:
     def __init__(self):
+        # Decide light deck *before* loading GI so we can skip WebKit2 import.
+        self._pressure = _memory_pressure_level()
+        self._light = _prefer_light_deck()
         try:
-            Gtk, Gdk, Vte, GLib, Gio, WebKit2 = _load_gi()
+            Gtk, Gdk, Vte, GLib, Gio, WebKit2 = _load_gi(
+                want_webkit=not self._light)
         except Exception as e:
             print("tuxgenie-app: GTK/VTE unavailable:", e, file=sys.stderr)
             sys.exit(3)
@@ -1677,8 +1742,10 @@ class UnifiedShell:
         self._store_mode = "browse"  # browse | installed (Apps tab)
         self._store_mode_btns = {}
         self._installed_rows = []
-        # Icon prefetch feeds App Store artwork (WebKit + light GTK store).
-        self._start_icon_prefetch()
+        # Icon prefetch downloads dozens of PNGs — skip when the PC is already
+        # low on RAM (Apps tab still works with theme / desktop icons).
+        if self._pressure == "ok":
+            self._start_icon_prefetch()
 
         self.app = Gtk.Application(
             application_id=APP_ID,
@@ -1694,7 +1761,11 @@ class UnifiedShell:
             self.win.present()
             return
         self.win = self.Gtk.ApplicationWindow(application=app, title="TuxGenie")
-        self.win.set_default_size(1280, 820)
+        # Smaller default window under pressure — less GPU/compositor RAM.
+        if self._pressure in ("tight", "critical"):
+            self.win.set_default_size(1024, 680)
+        else:
+            self.win.set_default_size(1280, 820)
         for nm in ("tuxgenie", "com.tuxgenie.TuxGenie"):
             try:
                 self.win.set_icon_name(nm)
@@ -1721,7 +1792,10 @@ class UnifiedShell:
         if self._pulse_widgets is not None:
             self._refresh_pulse_async()
             try:
-                self.GLib.timeout_add(_LIGHT_PULSE_MS, self._on_light_pulse_tick)
+                ms = (_LIGHT_PULSE_TIGHT_MS
+                      if self._pressure in ("tight", "critical")
+                      else _LIGHT_PULSE_MS)
+                self.GLib.timeout_add(ms, self._on_light_pulse_tick)
             except Exception:
                 pass
 
@@ -1848,19 +1922,23 @@ class UnifiedShell:
             pass
 
     def _build_left(self):
-        # ≤8 GB PCs: WebKitGTK has been measured at ~3.5 GB RSS alone — skip it.
-        if self.WebKit2 is not None and not _prefer_light_deck():
+        # ≤8 GB PCs / low MemAvailable: WebKitGTK ~3.5 GB RSS — skip it.
+        if self.WebKit2 is not None and not self._light:
             return self._build_webkit()
         note = None
-        if self.WebKit2 is not None and _prefer_light_deck():
+        if self._light:
             ram = _host_ram_gib()
+            avail = _host_mem_available_gib()
             # One quiet line — meters/icons are the panel, not the note.
-            note = "Light panel · %.0f GB RAM · use the Apps tab to install" % (
-                ram or _WEBKIT_MIN_RAM_GIB)
+            if avail and avail < _WEBKIT_MIN_AVAIL_GIB:
+                note = "Light panel · %.1f GB free · use the Apps tab to install" % avail
+            else:
+                note = "Light panel · %.0f GB RAM · use the Apps tab to install" % (
+                    ram or _WEBKIT_MIN_RAM_GIB)
             print(
-                "tuxgenie-app: light deck (%.1f GiB RAM). "
+                "tuxgenie-app: light deck (%.1f GiB RAM, %.1f GiB free). "
                 "Set TUXGENIE_FORCE_WEBKIT=1 for the WebKit panel."
-                % (ram or 0.0),
+                % (ram or 0.0, avail or 0.0),
                 file=sys.stderr,
             )
         return self._build_gtk_fallback(note)
@@ -2824,8 +2902,10 @@ class UnifiedShell:
             pass
         self._light_notebook = nb
         outer.pack_start(nb, True, True, 0)
-        # Warm the installed-apps cache so Installed is ready when opened.
-        self._refresh_installed_async()
+        # Warm installed-apps only when RAM is healthy — under pressure we
+        # scan lazily when the user opens the Apps tab (see switch-page).
+        if self._pressure == "ok":
+            self._refresh_installed_async()
         return outer
 
     def _on_ask(self, *_args):
@@ -2861,7 +2941,8 @@ class UnifiedShell:
         self.term = Vte.Terminal()
         try:
             # Cap scrollback — unlimited (-1) grows without bound on long sessions.
-            self.term.set_scrollback_lines(_VTE_SCROLLBACK_LINES)
+            # Under memory pressure keep an even smaller buffer (recovery use).
+            self.term.set_scrollback_lines(_vte_scrollback_lines())
             self.term.set_mouse_autohide(True)
             self.term.set_scroll_on_keystroke(True)
             self.term.set_scroll_on_output(False)

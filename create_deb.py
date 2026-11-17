@@ -393,6 +393,16 @@ case "$1" in
 # TuxGenie GUI launcher - opens tuxgenie as an app-like, single-instance window.
 # Avoid x-terminal-emulator (can resolve to Warp on 26.04+).
 
+# Critical free RAM (<512 MiB): skip GTK/WebKit/Tk -- plain terminal CLI only.
+# TuxGenie is often opened *because* the PC is already out of memory.
+AVAIL_KB=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo "")
+LITE=0
+if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 524288 ]; then
+    LITE=1
+fi
+case "${TUXGENIE_LITE:-}" in 1|true|yes|YES|True) LITE=1 ;; esac
+
+if [ "$LITE" != "1" ]; then
 # Unified Shell first (WebKit/GTK control deck + live VTE). Exit 3 = GTK/VTE
 # unavailable or spawn failed -> fall through.
 if command -v tuxgenie-app >/dev/null 2>&1; then
@@ -406,6 +416,7 @@ if command -v tuxgenie >/dev/null 2>&1; then
     tuxgenie --gui
     rc=$?
     [ "$rc" != "2" ] && exit "$rc"
+fi
 fi
 
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/tuxgenie-$(id -u).lock"
@@ -547,6 +558,16 @@ LAUNCHER_GUI = b"""\
 # Note: we intentionally avoid x-terminal-emulator because on Ubuntu 26.04+
 # it can resolve to Warp Terminal, which doesn't accept the standard -e flag.
 
+# Critical free RAM (<512 MiB): skip GTK/WebKit/Tk -- plain terminal CLI only.
+# TuxGenie is often opened *because* the PC is already out of memory.
+AVAIL_KB=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo 2>/dev/null || echo "")
+LITE=0
+if [ -n "$AVAIL_KB" ] && [ "$AVAIL_KB" -lt 524288 ]; then
+    LITE=1
+fi
+case "${TUXGENIE_LITE:-}" in 1|true|yes|YES|True) LITE=1 ;; esac
+
+if [ "$LITE" != "1" ]; then
 # Unified Shell first (WebKit/GTK + live VTE). Exit 3 = GTK/VTE unavailable
 # or spawn failed -> fall through to Tk / plain terminal.
 if command -v tuxgenie-app >/dev/null 2>&1; then
@@ -561,6 +582,7 @@ if command -v tuxgenie >/dev/null 2>&1; then
     tuxgenie --gui
     rc=$?
     [ "$rc" != "2" ] && exit "$rc"
+fi
 fi
 
 LOCK="${XDG_RUNTIME_DIR:-/tmp}/tuxgenie-$(id -u).lock"

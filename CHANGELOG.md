@@ -1,5 +1,14 @@
 # Changelog
 
+## 7.32.0
+
+Lightweight recovery mode (TuxGenie stays usable when the PC is already low on RAM):
+
+- Key off **MemAvailable**, not only total RAM — a stressed 16 GB box goes light too.
+- Skip WebKit import, icon prefetch, fingerprint probes, and weekly digest under pressure.
+- Smaller VTE scrollback + slower meters; critical free RAM (&lt;512 MB) opens plain terminal CLI (skips GTK/Tk).
+- Force anytime with `TUXGENIE_LITE=1`.
+
 ## 7.31.0
 
 Startup command prompt appears immediately:

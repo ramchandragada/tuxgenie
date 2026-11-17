@@ -1582,7 +1582,12 @@ class TestUnifiedShell:
         assert "ensure_catalog_icons" in src
         assert "_prefer_light_deck" in src
         assert "_WEBKIT_MIN_RAM_GIB" in src
+        assert "_WEBKIT_MIN_AVAIL_GIB" in src
         assert "_VTE_SCROLLBACK_LINES" in src
+        assert "_vte_scrollback_lines" in src
+        assert "want_webkit" in src
+        assert "MemAvailable" in open(os.path.join(ROOT, "create_deb.py")).read()
+        assert "memory_pressure_level" in open(os.path.join(ROOT, "tuxgenie.py")).read()
         assert "set_scrollback_lines(-1)" not in src
         assert "_build_pulse_strip" in src
         assert "_TILE_ICON_NAMES" in src
@@ -1752,13 +1757,41 @@ class TestCatalogOfficialIcons:
         import tuxgenie_shell as sh
         monkeypatch.delenv("TUXGENIE_FORCE_WEBKIT", raising=False)
         monkeypatch.delenv("TUXGENIE_LIGHT_DECK", raising=False)
+        monkeypatch.delenv("TUXGENIE_LITE", raising=False)
         monkeypatch.setattr(sh, "_host_ram_gib", lambda: 5.7)
+        monkeypatch.setattr(sh, "_host_mem_available_gib", lambda: 3.0)
         assert sh._prefer_light_deck() is True
         monkeypatch.setattr(sh, "_host_ram_gib", lambda: 16.0)
+        monkeypatch.setattr(sh, "_host_mem_available_gib", lambda: 8.0)
         assert sh._prefer_light_deck() is False
+        # Stressed big PC — low free RAM still skips WebKit.
+        monkeypatch.setattr(sh, "_host_mem_available_gib", lambda: 1.2)
+        assert sh._prefer_light_deck() is True
         monkeypatch.setenv("TUXGENIE_FORCE_WEBKIT", "1")
         monkeypatch.setattr(sh, "_host_ram_gib", lambda: 5.7)
         assert sh._prefer_light_deck() is False
+
+    def test_memory_pressure_and_scrollback(self, monkeypatch):
+        import tuxgenie_shell as sh
+        monkeypatch.delenv("TUXGENIE_LITE", raising=False)
+        assert tg.host_mem_available_gib() >= 0
+        monkeypatch.setattr(tg, "host_mem_available_gib", lambda: 0.3)
+        monkeypatch.setattr(tg, "host_ram_gib", lambda: 16.0)
+        assert tg.memory_pressure_level() == "critical"
+        monkeypatch.setattr(tg, "host_mem_available_gib", lambda: 1.0)
+        assert tg.memory_pressure_level() == "tight"
+        monkeypatch.setattr(tg, "host_mem_available_gib", lambda: 4.0)
+        monkeypatch.setattr(tg, "host_ram_gib", lambda: 16.0)
+        assert tg.memory_pressure_level() == "ok"
+        monkeypatch.setenv("TUXGENIE_LITE", "1")
+        assert tg.memory_pressure_level() == "critical"
+        monkeypatch.delenv("TUXGENIE_LITE", raising=False)
+        monkeypatch.setattr(sh, "_memory_pressure_level", lambda: "critical")
+        assert sh._vte_scrollback_lines() == sh._VTE_SCROLLBACK_CRITICAL
+        monkeypatch.setattr(sh, "_memory_pressure_level", lambda: "tight")
+        assert sh._vte_scrollback_lines() == sh._VTE_SCROLLBACK_TIGHT
+        monkeypatch.setattr(sh, "_memory_pressure_level", lambda: "ok")
+        assert sh._vte_scrollback_lines() == sh._VTE_SCROLLBACK_LINES
 
     def test_light_deck_has_pulse_and_tile_icons(self):
         import tuxgenie_shell as sh
