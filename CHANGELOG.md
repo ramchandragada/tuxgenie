@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.30.0
+
+Installed apps show real icons (same as Browse):
+
+- Match apt/snap/flatpak targets to the App Store icon cache when possible.
+- Fall back to GTK theme names and `.desktop` icons (Mint XFCE friendly).
+- Browse and Installed rows share the same icon loader.
+
 ## 7.29.0
 
 Light panel Apps tab — installed apps + uninstall:

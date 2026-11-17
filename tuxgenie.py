@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.29.0"
+__version__ = "7.30.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -14989,6 +14989,99 @@ def catalog_icon_ref(name):
     # Quote only the path segments; keep leading slash for absolute file URLs.
     from urllib.parse import quote
     return "file://" + quote(abs_path, safe="/")
+
+
+_CATALOG_INSTALL_INDEX = None  # lazy: target/pkg/flatpak/snap → catalog name
+
+
+def _catalog_install_index():
+    """Map install targets (apt pkg, flatpak id, snap name) → catalog display name."""
+    global _CATALOG_INSTALL_INDEX
+    if _CATALOG_INSTALL_INDEX is not None:
+        return _CATALOG_INSTALL_INDEX
+    idx = {}
+    for cname, spec in (_CATALOG_INSTALL or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        for key in ("flatpak", "snap"):
+            val = spec.get(key)
+            if isinstance(val, str) and val.strip():
+                idx[val.strip().lower()] = cname
+        pkg = spec.get("pkg")
+        if isinstance(pkg, str):
+            for p in pkg.split():
+                idx[p.strip().lower()] = cname
+        deb = spec.get("deb")
+        if isinstance(deb, dict):
+            for k in ("pkg", "name"):
+                val = deb.get(k)
+                if isinstance(val, str) and val.strip():
+                    idx[val.strip().lower()] = cname
+    # Also index by catalog entry name / slug for free-form matches.
+    for e in list(APP_CATALOG) + list(AI_CATALOG):
+        n = e.get("name") or ""
+        if n:
+            idx[n.lower()] = n
+            idx[catalog_icon_slug(n)] = n
+    _CATALOG_INSTALL_INDEX = idx
+    return idx
+
+
+def catalog_name_for_installed(name="", method="", target=""):
+    """Best catalog display name for an installed apt/snap/flatpak app, or ''."""
+    idx = _catalog_install_index()
+    for key in (target, name):
+        k = (key or "").strip().lower()
+        if k and k in idx:
+            return idx[k]
+    # Flatpak ids sometimes differ only by case; apt titles differ by spacing.
+    t = (target or "").strip().lower()
+    n = (name or "").strip().lower().replace(" ", "-")
+    if t in idx:
+        return idx[t]
+    if n in idx:
+        return idx[n]
+    return ""
+
+
+def installed_app_icon_ref(name="", method="", target=""):
+    """file:// icon for an installed app when it matches the App Store cache."""
+    cname = catalog_name_for_installed(name, method, target)
+    if not cname:
+        return ""
+    return catalog_icon_ref(cname)
+
+
+def installed_app_theme_icons(name="", method="", target=""):
+    """Candidate GTK/icon-theme names for an installed app (Mint XFCE friendly)."""
+    out = []
+    seen = set()
+
+    def _add(x):
+        x = (x or "").strip()
+        if not x or x in seen:
+            return
+        seen.add(x)
+        out.append(x)
+
+    t = (target or "").strip()
+    n = (name or "").strip()
+    if method == "flatpak" and t:
+        _add(t)
+        _add(t.split(".")[-1] if "." in t else t)
+        _add(t.replace(".", "-").lower())
+    if method in ("apt", "snap") and t:
+        _add(t)
+        _add(t.replace("-", ""))
+    if n:
+        _add(n.lower().replace(" ", "-"))
+        _add(n.lower().replace(" ", ""))
+        _add(n.lower())
+    cname = catalog_name_for_installed(name, method, target)
+    if cname:
+        _add(catalog_icon_slug(cname))
+        _add(cname.lower().replace(" ", "-"))
+    return out
 
 
 def _icon_http_get(url, timeout=18):

@@ -1597,6 +1597,9 @@ class TestUnifiedShell:
         assert "install-app" in src
         assert "remove-app" in src
         assert 'label="Installed"' in src or '"Installed"' in src
+        assert "installed_app_icon_ref" in src
+        assert "theme_icons" in src
+        assert "DesktopAppInfo" in src or "new_from_gicon" in src
         assert "tg-pulse" in src and "tg-tile" in src
         assert "Light panel ·" in src
         assert 'Gtk.Label(label="Apps")' in src or 'label="Apps"' in src
@@ -1681,6 +1684,22 @@ class TestCatalogOfficialIcons:
         assert tg.catalog_icon_slug("Brave Browser") == "brave-browser"
         assert tg.catalog_icon_app_id("Brave Browser") == "com.brave.Browser"
         assert tg.catalog_icon_app_id("Google Chrome") == "com.google.Chrome"
+
+    def test_installed_maps_to_catalog_icon(self):
+        # apt pkg / flatpak id → same catalog name Browse uses for artwork
+        assert tg.catalog_name_for_installed(
+            "Brave Browser", "apt", "brave-browser") == "Brave Browser"
+        assert tg.catalog_name_for_installed(
+            "Brave", "flatpak", "com.brave.Browser") == "Brave Browser"
+        themes = tg.installed_app_theme_icons(
+            "Baobab", "apt", "baobab")
+        assert "baobab" in themes
+        # Without a cached PNG, ref may be empty — but lookup must not crash.
+        ref = tg.installed_app_icon_ref(
+            "Brave Browser", "apt", "brave-browser")
+        assert isinstance(ref, str)
+        if ref:
+            assert ref.startswith("file://")
 
     def test_ensure_writes_official_png(self, tmp_path, monkeypatch):
         png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 48

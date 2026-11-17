@@ -20,7 +20,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.29.0"
+VERSION = "7.30.0"
 # WebKitGTK routinely eats multiple GB of RSS. On small PCs (Mint XFCE thin
 # clients, ≤8 GB laptops) prefer the GTK button deck unless the user forces
 # the modern panel with TUXGENIE_FORCE_WEBKIT=1.
@@ -2115,18 +2115,33 @@ class UnifiedShell:
                 tg = _import_tuxgenie()
                 if tg is not None:
                     apps = tg._installed_user_apps()
-                    rows = [
-                        {
+                    for a in apps:
+                        name = a.get("name") or ""
+                        method = a.get("method") or ""
+                        target = a.get("target") or ""
+                        icon = ""
+                        themes = []
+                        try:
+                            if hasattr(tg, "installed_app_icon_ref"):
+                                icon = tg.installed_app_icon_ref(
+                                    name, method, target) or ""
+                            if hasattr(tg, "installed_app_theme_icons"):
+                                themes = list(
+                                    tg.installed_app_theme_icons(
+                                        name, method, target) or [])
+                        except Exception:
+                            icon, themes = "", []
+                        rows.append({
                             "id": a.get("id"),
-                            "name": a.get("name"),
+                            "name": name,
                             "cat": a.get("cat"),
                             "desc": a.get("desc"),
-                            "method": a.get("method"),
-                            "target": a.get("target"),
+                            "method": method,
+                            "target": target,
                             "root": bool(a.get("root")),
-                        }
-                        for a in apps
-                    ]
+                            "icon": icon,
+                            "theme_icons": themes,
+                        })
             except Exception as e:
                 print("tuxgenie-app: installed scan failed:", e, file=sys.stderr)
             self.GLib.idle_add(self._push_installed, rows)
@@ -2408,9 +2423,10 @@ class UnifiedShell:
         return page
 
     def _catalog_icon_image(self, row: dict):
-        """Load a cached catalog icon for the light App Store list."""
+        """Load catalog / theme / desktop icon — same look for Browse and Installed."""
         Gtk = self.Gtk
-        ref = (row or {}).get("icon") or ""
+        row = row or {}
+        ref = row.get("icon") or ""
         path = ""
         if ref.startswith("file://"):
             from urllib.parse import unquote
@@ -2428,9 +2444,59 @@ class UnifiedShell:
                 return Gtk.Image.new_from_file(path)
             except Exception:
                 pass
+
+        # Theme / .desktop icons (Installed apps that are not in the catalog cache).
+        names = list(row.get("theme_icons") or [])
+        target = (row.get("target") or "").strip()
+        name = (row.get("name") or "").strip()
+        for extra in (target, name.lower().replace(" ", "-"), name.lower()):
+            if extra and extra not in names:
+                names.append(extra)
+        theme = None
         try:
-            return Gtk.Image.new_from_icon_name(
-                "package-x-generic", Gtk.IconSize.DND)
+            theme = Gtk.IconTheme.get_default()
+        except Exception:
+            theme = None
+        size = Gtk.IconSize.DND
+        for iname in names:
+            try:
+                if theme is not None and hasattr(theme, "has_icon"):
+                    if not theme.has_icon(iname):
+                        continue
+                return Gtk.Image.new_from_icon_name(iname, size)
+            except Exception:
+                continue
+
+        # DesktopAppInfo — O(1) lookup matching Mint menu icons for apt/flatpak.
+        try:
+            Gio = self.Gio
+            if Gio is not None:
+                desk_ids = []
+                if target:
+                    desk_ids.append(target + ".desktop")
+                    if "." in target:  # flatpak application id
+                        desk_ids.append(target.split(".")[-1] + ".desktop")
+                if name:
+                    desk_ids.append(name.lower().replace(" ", "-") + ".desktop")
+                for did in desk_ids:
+                    try:
+                        info = Gio.DesktopAppInfo.new(did)
+                    except Exception:
+                        info = None
+                    if info is None:
+                        continue
+                    try:
+                        gicon = info.get_icon()
+                        if gicon is None:
+                            continue
+                        return Gtk.Image.new_from_gicon(gicon, size)
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+
+        try:
+            return Gtk.Image.new_from_icon_name("package-x-generic", size)
         except Exception:
             return Gtk.Label(label="•")
 
