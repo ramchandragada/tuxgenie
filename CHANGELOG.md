@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.29.0
+
+Light panel Apps tab — installed apps + uninstall:
+
+- **Browse / Installed** toggle on the Apps tab.
+- Installed list scans apt/snap/flatpak user apps; **Remove** feeds `remove-app` (yes/no in the live terminal).
+- Refresh button re-scans; opening the Apps tab updates the list.
+
 ## 7.28.0
 
 Light panel App Store restored (≤8 GB PCs):

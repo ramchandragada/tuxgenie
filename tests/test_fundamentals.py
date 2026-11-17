@@ -1592,7 +1592,11 @@ class TestUnifiedShell:
         assert "_build_store_page" in src
         assert "_fill_store_list" in src
         assert "_on_store_install" in src
+        assert "_on_store_remove" in src
+        assert "_set_store_mode" in src
         assert "install-app" in src
+        assert "remove-app" in src
+        assert 'label="Installed"' in src or '"Installed"' in src
         assert "tg-pulse" in src and "tg-tile" in src
         assert "Light panel ·" in src
         assert 'Gtk.Label(label="Apps")' in src or 'label="Apps"' in src
@@ -1758,6 +1762,8 @@ class TestCatalogOfficialIcons:
         assert "def _push_pulse_gtk" in src
         assert "def _build_store_page" in src
         assert "def _show_light_tab" in src
+        assert "def _on_store_remove" in src
+        assert "def _set_store_mode" in src
 
 
 class TestGuiAppStoreRouting:

@@ -20,7 +20,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.28.0"
+VERSION = "7.29.0"
 # WebKitGTK routinely eats multiple GB of RSS. On small PCs (Mint XFCE thin
 # clients, ≤8 GB laptops) prefer the GTK button deck unless the user forces
 # the modern panel with TUXGENIE_FORCE_WEBKIT=1.
@@ -1673,6 +1673,10 @@ class UnifiedShell:
         self._ai_list_box = None
         self._store_search = None
         self._ai_search = None
+        self._store_hint = None
+        self._store_mode = "browse"  # browse | installed (Apps tab)
+        self._store_mode_btns = {}
+        self._installed_rows = []
         # Icon prefetch feeds App Store artwork (WebKit + light GTK store).
         self._start_icon_prefetch()
 
@@ -1772,6 +1776,11 @@ class UnifiedShell:
                 button.tg-tile:hover {
                   background-color: #e8f6f7;
                   border-color: #0a8a96;
+                }
+                button.tg-mode-on {
+                  background-color: #d7eef0;
+                  border-color: #0a8a96;
+                  font-weight: bold;
                 }
                 """
             )
@@ -2120,15 +2129,21 @@ class UnifiedShell:
                     ]
             except Exception as e:
                 print("tuxgenie-app: installed scan failed:", e, file=sys.stderr)
-            self.GLib.idle_add(self._push_installed_js, rows)
+            self.GLib.idle_add(self._push_installed, rows)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _push_installed_js(self, rows):
+    def _push_installed(self, rows):
+        """Refresh WebKit My Apps and/or light-deck Installed list."""
+        self._installed_rows = list(rows or [])
+        if self._store_list_box is not None and self._store_mode == "installed":
+            try:
+                self._fill_store_list("app")
+            except Exception as e:
+                print("tuxgenie-app: GTK installed refresh failed:", e, file=sys.stderr)
         if self.webview is None:
             return False
         payload = json.dumps(rows, ensure_ascii=False)
-        # Escape for JS string in single-quoted call — use JSON.parse on quoted JSON
         js = "window.__setInstalled && window.__setInstalled(%s);" % payload
         try:
             self.webview.run_javascript(js, None, None, None)
@@ -2419,8 +2434,53 @@ class UnifiedShell:
         except Exception:
             return Gtk.Label(label="•")
 
+    def _set_store_mode(self, mode: str):
+        """Browse catalog or show installed apps (Apps tab only)."""
+        mode = "installed" if mode == "installed" else "browse"
+        self._store_mode = mode
+        for key, btn in (self._store_mode_btns or {}).items():
+            try:
+                ctx = btn.get_style_context()
+                if key == mode:
+                    ctx.add_class("tg-mode-on")
+                else:
+                    ctx.remove_class("tg-mode-on")
+            except Exception:
+                pass
+        if mode == "installed":
+            self._refresh_installed_async()
+        self._fill_store_list("app")
+
+    def _on_store_mode_btn(self, _btn, mode):
+        self._set_store_mode(mode)
+
+    def _update_store_hint(self, kind: str = "app"):
+        hint = self._store_hint if kind == "app" else None
+        if hint is None and kind != "app":
+            return
+        if kind == "ai":
+            return
+        if self._store_mode == "installed":
+            n = len(self._installed_rows or [])
+            text = (
+                "Installed · %d apps — Remove asks for yes/no in the live terminal."
+                % n
+            )
+        else:
+            n = len(self._store_apps or [])
+            text = (
+                "Browse %d items — Install asks for yes/no in the live terminal."
+                % n
+            )
+        try:
+            self._store_hint.set_markup(
+                "<span size='small' foreground='#5c7380'>%s</span>" % text
+            )
+        except Exception:
+            pass
+
     def _build_store_page(self, kind: str = "app"):
-        """Browsable install list — same catalog engine as the WebKit store."""
+        """Browsable install list — plus Installed/Remove on the Apps tab."""
         Gtk = self.Gtk
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         page.set_margin_top(8)
@@ -2431,13 +2491,48 @@ class UnifiedShell:
         hint = Gtk.Label()
         hint.set_xalign(0)
         hint.set_line_wrap(True)
-        n = len(self._store_apps if kind == "app" else self._ai_apps)
-        hint.set_markup(
-            "<span size='small' foreground='#5c7380'>"
-            "Browse %d items — Install asks for yes/no in the live terminal."
-            "</span>" % n
-        )
         page.pack_start(hint, False, False, 0)
+
+        if kind == "app":
+            self._store_hint = hint
+            mode_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+            self._store_mode_btns = {}
+            for mode, label in (("browse", "Browse"), ("installed", "Installed")):
+                b = Gtk.Button(label=label)
+                try:
+                    b.get_style_context().add_class("tg-tile")
+                except Exception:
+                    pass
+                b.connect("clicked", self._on_store_mode_btn, mode)
+                mode_row.pack_start(b, False, False, 0)
+                self._store_mode_btns[mode] = b
+            refresh = Gtk.Button(label="Refresh")
+            try:
+                refresh.get_style_context().add_class("tg-tile")
+            except Exception:
+                pass
+            refresh.set_tooltip_text("Rescan installed apps")
+            refresh.connect(
+                "clicked",
+                lambda *_: self._refresh_installed_async()
+                if self._store_mode == "installed"
+                else self._fill_store_list("app"),
+            )
+            mode_row.pack_end(refresh, False, False, 0)
+            page.pack_start(mode_row, False, False, 0)
+            self._update_store_hint("app")
+            # Highlight Browse by default
+            try:
+                self._store_mode_btns["browse"].get_style_context().add_class("tg-mode-on")
+            except Exception:
+                pass
+        else:
+            n = len(self._ai_apps or [])
+            hint.set_markup(
+                "<span size='small' foreground='#5c7380'>"
+                "Browse %d AI tools — Install asks for yes/no in the live terminal."
+                "</span>" % n
+            )
 
         search = Gtk.Entry()
         search.set_placeholder_text(
@@ -2477,9 +2572,15 @@ class UnifiedShell:
         Gtk = self.Gtk
         listbox = self._store_list_box if kind == "app" else self._ai_list_box
         search = self._store_search if kind == "app" else self._ai_search
-        rows = list(self._store_apps if kind == "app" else self._ai_apps)
+        installed_mode = kind == "app" and self._store_mode == "installed"
+        if installed_mode:
+            rows = list(self._installed_rows or [])
+        else:
+            rows = list(self._store_apps if kind == "app" else self._ai_apps)
         if listbox is None:
             return
+        if kind == "app":
+            self._update_store_hint("app")
         q = ""
         try:
             q = (search.get_text() if search is not None else "") or ""
@@ -2494,7 +2595,9 @@ class UnifiedShell:
             name = (row.get("name") or "")
             cat = (row.get("cat") or "")
             desc = (row.get("desc") or "")
-            blob = (" ".join([name, cat, desc])).lower()
+            method = (row.get("method") or "")
+            target = (row.get("target") or "")
+            blob = (" ".join([name, cat, desc, method, target])).lower()
             if q and q not in blob:
                 continue
             shown += 1
@@ -2514,7 +2617,10 @@ class UnifiedShell:
             sub = Gtk.Label()
             sub.set_xalign(0)
             sub.set_line_wrap(True)
-            tip = desc or cat
+            if installed_mode:
+                tip = "%s:%s" % (method, target) if method and target else (desc or cat)
+            else:
+                tip = desc or cat
             if tip:
                 sub.set_markup(
                     "<span size='small' foreground='#5c7380'>%s</span>"
@@ -2523,20 +2629,41 @@ class UnifiedShell:
             meta.pack_start(title, False, False, 0)
             meta.pack_start(sub, False, False, 0)
             box.pack_start(meta, True, True, 0)
-            install = Gtk.Button(label="Install")
-            try:
-                install.get_style_context().add_class("tg-tile")
-            except Exception:
-                pass
-            install.connect("clicked", self._on_store_install, kind, row.get("id"))
-            box.pack_end(install, False, False, 0)
+            if installed_mode:
+                action = Gtk.Button(label="Remove")
+                try:
+                    action.get_style_context().add_class("tg-tile")
+                except Exception:
+                    pass
+                ref = "%s:%s" % (method, target) if method and target else ""
+                action.set_sensitive(bool(ref))
+                action.connect("clicked", self._on_store_remove, ref)
+            else:
+                action = Gtk.Button(label="Install")
+                try:
+                    action.get_style_context().add_class("tg-tile")
+                except Exception:
+                    pass
+                action.connect(
+                    "clicked", self._on_store_install, kind, row.get("id"))
+            box.pack_end(action, False, False, 0)
             item.add(box)
             listbox.add(item)
         if shown == 0:
             empty = Gtk.ListBoxRow()
-            lab = Gtk.Label(label="No matches — try another search.")
+            if installed_mode:
+                msg = (
+                    "No installed apps found yet — click Refresh, "
+                    "or install something from Browse."
+                    if not q
+                    else "No installed matches — try another search."
+                )
+            else:
+                msg = "No matches — try another search."
+            lab = Gtk.Label(label=msg)
             lab.set_margin_top(12)
             lab.set_margin_bottom(12)
+            lab.set_line_wrap(True)
             empty.add(lab)
             listbox.add(empty)
         listbox.show_all()
@@ -2546,6 +2673,12 @@ class UnifiedShell:
             return
         cmd = "install-ai %s" % eid if kind == "ai" else "install-app %s" % eid
         self.feed_line(cmd)
+
+    def _on_store_remove(self, _btn, ref):
+        ref = (ref or "").strip()
+        if not ref:
+            return
+        self.feed_line("remove-app %s" % ref)
 
     def _show_light_tab(self, payload: str):
         """Switch light-deck notebook to Apps / AI / Home."""
@@ -2557,9 +2690,20 @@ class UnifiedShell:
             return False
         try:
             nb.set_current_page(page)
+            if payload == "myapps":
+                self._set_store_mode("installed")
+            elif payload == "store":
+                # Keep current mode, but refresh installed cache in background.
+                self._refresh_installed_async()
             return True
         except Exception:
             return False
+
+    def _on_light_notebook_switch(self, _nb, _page, page_num):
+        # Apps tab (1): rescan installed so Remove stays current.
+        if page_num == 1:
+            self._refresh_installed_async()
+        return False
 
     def _build_gtk_fallback(self, note=None):
         """Light control deck: pulse + Home/Apps/AI tabs (no WebKit)."""
@@ -2608,8 +2752,14 @@ class UnifiedShell:
         nb.append_page(self._build_home_page(), Gtk.Label(label="Home"))
         nb.append_page(self._build_store_page("app"), Gtk.Label(label="Apps"))
         nb.append_page(self._build_store_page("ai"), Gtk.Label(label="AI tools"))
+        try:
+            nb.connect("switch-page", self._on_light_notebook_switch)
+        except Exception:
+            pass
         self._light_notebook = nb
         outer.pack_start(nb, True, True, 0)
+        # Warm the installed-apps cache so Installed is ready when opened.
+        self._refresh_installed_async()
         return outer
 
     def _on_ask(self, *_args):
