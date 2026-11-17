@@ -20,7 +20,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.30.0"
+VERSION = "7.31.0"
 # WebKitGTK routinely eats multiple GB of RSS. On small PCs (Mint XFCE thin
 # clients, ≤8 GB laptops) prefer the GTK button deck unless the user forces
 # the modern panel with TUXGENIE_FORCE_WEBKIT=1.

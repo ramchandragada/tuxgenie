@@ -2230,8 +2230,12 @@ class TestUpdateCheckFundamentals:
         monkeypatch.setattr("builtins.input", lambda prompt="": seen.append(prompt) or "")
         monkeypatch.setattr(tg, "_cwd_label", lambda maxlen=34: "/tmp/tg")
         assert tg._read_user_line("\n  /tmp/tg ❯ ") == ""
-        assert seen == [""]
-        assert capsys.readouterr().out.count("❯") == 1
+        # Leading \\n is printed; readline owns the single-line prompt (not "").
+        assert seen == ["  /tmp/tg ❯ "]
+        out = capsys.readouterr().out
+        assert out.count("\n") >= 1
+        assert out.count("❯") == 0  # ❯ is in the input() prompt, not stdout
+        assert "❯" in seen[0]
 
     def test_compact_menu_does_not_split_items(self, monkeypatch, capsys):
         monkeypatch.setattr(

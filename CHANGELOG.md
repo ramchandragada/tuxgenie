@@ -1,5 +1,12 @@
 # Changelog
 
+## 7.31.0
+
+Startup command prompt appears immediately:
+
+- Fix the blank/`[]` wait that needed a wasted Enter before `~> ❯` showed.
+- Leading newlines print separately; readline owns the real prompt so XFCE/VTE keep it visible.
+
 ## 7.30.0
 
 Installed apps show real icons (same as Browse):

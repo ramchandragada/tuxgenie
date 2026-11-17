@@ -37,7 +37,7 @@ try:
 except ImportError:
     _HAS_TERMIOS = False
 
-__version__ = "7.30.0"
+__version__ = "7.31.0"
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── Anthropic SDK (auto-installed on first run if missing) ────
@@ -387,14 +387,18 @@ def trunc(text, max_lines):
 def _read_user_line(prompt: str) -> str:
     """Show `prompt` once, then read a line.
 
-    The main prompt starts with a newline and contains ❯. GNU readline
-    mis-counts that width and redraws the whole prompt, so pexpect (and a
-    wide terminal) shows it twice. Printing it ourselves and reading with
-    an empty readline prompt leaves a single copy.
+    Leading newlines are printed ourselves — GNU readline mis-counts a
+    multi-line prompt (❯ + ANSI) and redraws it twice. The rest of the
+    prompt is owned by readline (via input → _safe_input → _rl) so XFCE /
+    VTE keep `~> ❯` visible instead of clearing a stdout-written line and
+    leaving a blank wait that needs a wasted Enter.
     """
-    sys.stdout.write(prompt)
+    prompt = prompt or ""
+    while prompt.startswith("\n"):
+        sys.stdout.write("\n")
+        prompt = prompt[1:]
     sys.stdout.flush()
-    return input("")
+    return input(prompt)
 
 
 def _cwd_label(maxlen=34):
