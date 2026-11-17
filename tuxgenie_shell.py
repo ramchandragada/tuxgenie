@@ -20,7 +20,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.27.0"
+VERSION = "7.28.0"
 # WebKitGTK routinely eats multiple GB of RSS. On small PCs (Mint XFCE thin
 # clients, ≤8 GB laptops) prefer the GTK button deck unless the user forces
 # the modern panel with TUXGENIE_FORCE_WEBKIT=1.
@@ -75,6 +75,8 @@ ACTIONS = [
     {"kind": "sec", "label": "Start here"},
     {"id": "fix", "label": "Fix a problem", "tip": "Describe what's wrong in plain English",
      "kind": "kw", "payload": "fix", "accent": "#0d8a9a"},
+    {"id": "apps", "label": "App Store", "tip": "Browse & install apps (VLC, browsers, …)",
+     "kind": "tab", "payload": "store", "accent": "#d4620f"},
     {"id": "health", "label": "Health check", "tip": "CPU, RAM, disk, services",
      "kind": "kw", "payload": "health", "accent": "#148f6a"},
 
@@ -95,8 +97,6 @@ ACTIONS = [
      "kind": "kw", "payload": "drivers", "accent": "#0f6f8c"},
 
     {"kind": "sec", "label": "Install & update"},
-    {"id": "apps", "label": "App Store", "tip": "Browse & install apps from the catalog",
-     "kind": "tab", "payload": "store", "accent": "#d4620f"},
     {"id": "updates", "label": "System updates", "tip": "Check and install OS updates",
      "kind": "kw", "payload": "updates", "accent": "#0d6e8c"},
     {"id": "selfupd", "label": "Update TuxGenie", "tip": "Get the latest TuxGenie release",
@@ -1668,9 +1668,13 @@ class UnifiedShell:
         self._pulse_actions = {
             "cpu": "health", "mem": "health", "disk": "disk", "pc": "hardware",
         }
-        # Icon prefetch feeds the WebKit App Store; skip on the light deck.
-        if not _prefer_light_deck():
-            self._start_icon_prefetch()
+        self._light_notebook = None
+        self._store_list_box = None
+        self._ai_list_box = None
+        self._store_search = None
+        self._ai_search = None
+        # Icon prefetch feeds App Store artwork (WebKit + light GTK store).
+        self._start_icon_prefetch()
 
         self.app = Gtk.Application(
             application_id=APP_ID,
@@ -1793,11 +1797,23 @@ class UnifiedShell:
             self._store_apps, self._ai_apps = apps, ai
             if self.GLib is None:
                 return
-            self.GLib.idle_add(self._push_catalog_js, apps, ai)
+            self.GLib.idle_add(self._push_catalog, apps, ai)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _push_catalog_js(self, apps, ai):
+    def _push_catalog(self, apps, ai):
+        """Refresh WebKit and/or light-deck GTK App Store lists after icon fetch."""
+        self._store_apps, self._ai_apps = apps, ai
+        if self._store_list_box is not None:
+            try:
+                self._fill_store_list("app")
+            except Exception as e:
+                print("tuxgenie-app: GTK Apps refresh failed:", e, file=sys.stderr)
+        if self._ai_list_box is not None:
+            try:
+                self._fill_store_list("ai")
+            except Exception as e:
+                print("tuxgenie-app: GTK AI refresh failed:", e, file=sys.stderr)
         if self.webview is None:
             return False
         payload_store = json.dumps(apps, ensure_ascii=False)
@@ -1830,7 +1846,7 @@ class UnifiedShell:
         if self.WebKit2 is not None and _prefer_light_deck():
             ram = _host_ram_gib()
             # One quiet line — meters/icons are the panel, not the note.
-            note = "Light panel · %.0f GB RAM · type apps for App Store" % (
+            note = "Light panel · %.0f GB RAM · use the Apps tab to install" % (
                 ram or _WEBKIT_MIN_RAM_GIB)
             print(
                 "tuxgenie-app: light deck (%.1f GiB RAM). "
@@ -2303,51 +2319,16 @@ class UnifiedShell:
         if kw:
             self.feed_line(kw)
 
-    def _build_gtk_fallback(self, note=None):
-        """Light control deck: pulse + icon tiles (no WebKit)."""
+    def _build_home_page(self):
+        """Ask bar + quick-action tiles for the light Home tab."""
         Gtk = self.Gtk
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        hero.set_margin_top(14)
-        hero.set_margin_bottom(4)
-        hero.set_margin_start(16)
-        hero.set_margin_end(16)
-        title = Gtk.Label(label="TuxGenie")
-        title.set_xalign(0)
-        try:
-            title.set_markup(
-                '<span size="xx-large" weight="bold" foreground="#063642">TuxGenie</span>'
-            )
-        except Exception:
-            pass
-        hero.pack_start(title, False, False, 0)
-        # Quiet one-liner under the brand (not a wall of instructions).
-        if note:
-            sub = Gtk.Label(label=note)
-            sub.set_xalign(0)
-            try:
-                sub.set_markup(
-                    '<span size="small" foreground="#5c7380">%s</span>'
-                    % note.replace("&", "&amp;")
-                )
-            except Exception:
-                pass
-            hero.pack_start(sub, False, False, 0)
-        elif self.WebKit2 is None:
-            sub = Gtk.Label(
-                label="Install gir1.2-webkit2-4.1 for the full App Store panel"
-            )
-            sub.set_xalign(0)
-            hero.pack_start(sub, False, False, 0)
-        outer.pack_start(hero, False, False, 0)
-
-        # Usage meters sit under the brand — the main thing users look for.
-        outer.pack_start(self._build_pulse_strip(), False, False, 0)
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
         ask_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        ask_row.set_margin_start(16)
-        ask_row.set_margin_end(16)
-        ask_row.set_margin_bottom(10)
+        ask_row.set_margin_start(12)
+        ask_row.set_margin_end(12)
+        ask_row.set_margin_top(8)
+        ask_row.set_margin_bottom(8)
         self._entry = Gtk.Entry()
         self._entry.set_placeholder_text("my wifi is not working")
         self._entry.connect("activate", self._on_ask)
@@ -2355,7 +2336,7 @@ class UnifiedShell:
         btn.connect("clicked", self._on_ask)
         ask_row.pack_start(self._entry, True, True, 0)
         ask_row.pack_start(btn, False, False, 0)
-        outer.pack_start(ask_row, False, False, 0)
+        page.pack_start(ask_row, False, False, 0)
 
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -2366,8 +2347,8 @@ class UnifiedShell:
         grid.set_homogeneous(True)
         grid.set_column_spacing(8)
         grid.set_row_spacing(8)
-        grid.set_margin_start(12)
-        grid.set_margin_end(12)
+        grid.set_margin_start(10)
+        grid.set_margin_end(10)
         grid.set_margin_bottom(12)
         for a in compose_home_actions():
             if a.get("kind") == "sec":
@@ -2408,7 +2389,227 @@ class UnifiedShell:
             b.connect("clicked", self._on_action_btn, a)
             grid.add(b)
         scroll.add(grid)
-        outer.pack_start(scroll, True, True, 0)
+        page.pack_start(scroll, True, True, 0)
+        return page
+
+    def _catalog_icon_image(self, row: dict):
+        """Load a cached catalog icon for the light App Store list."""
+        Gtk = self.Gtk
+        ref = (row or {}).get("icon") or ""
+        path = ""
+        if ref.startswith("file://"):
+            from urllib.parse import unquote
+            path = unquote(ref[7:])
+        if path and os.path.isfile(path):
+            pixbuf = getattr(self, "GdkPixbuf", None)
+            if pixbuf is not None:
+                try:
+                    pix = pixbuf.Pixbuf.new_from_file_at_scale(
+                        path, 32, 32, True)
+                    return Gtk.Image.new_from_pixbuf(pix)
+                except Exception:
+                    pass
+            try:
+                return Gtk.Image.new_from_file(path)
+            except Exception:
+                pass
+        try:
+            return Gtk.Image.new_from_icon_name(
+                "package-x-generic", Gtk.IconSize.DND)
+        except Exception:
+            return Gtk.Label(label="•")
+
+    def _build_store_page(self, kind: str = "app"):
+        """Browsable install list — same catalog engine as the WebKit store."""
+        Gtk = self.Gtk
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        page.set_margin_top(8)
+        page.set_margin_start(10)
+        page.set_margin_end(10)
+        page.set_margin_bottom(8)
+
+        hint = Gtk.Label()
+        hint.set_xalign(0)
+        hint.set_line_wrap(True)
+        n = len(self._store_apps if kind == "app" else self._ai_apps)
+        hint.set_markup(
+            "<span size='small' foreground='#5c7380'>"
+            "Browse %d items — Install asks for yes/no in the live terminal."
+            "</span>" % n
+        )
+        page.pack_start(hint, False, False, 0)
+
+        search = Gtk.Entry()
+        search.set_placeholder_text(
+            "Search apps…" if kind == "app" else "Search AI tools…")
+        page.pack_start(search, False, False, 0)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        try:
+            scroll.set_min_content_height(220)
+        except Exception:
+            pass
+        listbox = Gtk.ListBox()
+        listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        try:
+            listbox.set_header_func(lambda *_a: None)
+        except Exception:
+            pass
+        scroll.add(listbox)
+        page.pack_start(scroll, True, True, 0)
+
+        if kind == "app":
+            self._store_list_box = listbox
+            self._store_search = search
+        else:
+            self._ai_list_box = listbox
+            self._ai_search = search
+
+        def _on_search(*_a):
+            self._fill_store_list(kind)
+
+        search.connect("changed", _on_search)
+        self._fill_store_list(kind)
+        return page
+
+    def _fill_store_list(self, kind: str = "app"):
+        Gtk = self.Gtk
+        listbox = self._store_list_box if kind == "app" else self._ai_list_box
+        search = self._store_search if kind == "app" else self._ai_search
+        rows = list(self._store_apps if kind == "app" else self._ai_apps)
+        if listbox is None:
+            return
+        q = ""
+        try:
+            q = (search.get_text() if search is not None else "") or ""
+        except Exception:
+            q = ""
+        q = q.strip().lower()
+        for child in list(listbox.get_children()):
+            listbox.remove(child)
+
+        shown = 0
+        for row in rows:
+            name = (row.get("name") or "")
+            cat = (row.get("cat") or "")
+            desc = (row.get("desc") or "")
+            blob = (" ".join([name, cat, desc])).lower()
+            if q and q not in blob:
+                continue
+            shown += 1
+            if shown > 400:
+                break
+            item = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            box.set_margin_top(6)
+            box.set_margin_bottom(6)
+            box.set_margin_start(6)
+            box.set_margin_end(6)
+            box.pack_start(self._catalog_icon_image(row), False, False, 0)
+            meta = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1)
+            title = Gtk.Label()
+            title.set_xalign(0)
+            title.set_markup("<b>%s</b>" % name.replace("&", "&amp;"))
+            sub = Gtk.Label()
+            sub.set_xalign(0)
+            sub.set_line_wrap(True)
+            tip = desc or cat
+            if tip:
+                sub.set_markup(
+                    "<span size='small' foreground='#5c7380'>%s</span>"
+                    % tip.replace("&", "&amp;")
+                )
+            meta.pack_start(title, False, False, 0)
+            meta.pack_start(sub, False, False, 0)
+            box.pack_start(meta, True, True, 0)
+            install = Gtk.Button(label="Install")
+            try:
+                install.get_style_context().add_class("tg-tile")
+            except Exception:
+                pass
+            install.connect("clicked", self._on_store_install, kind, row.get("id"))
+            box.pack_end(install, False, False, 0)
+            item.add(box)
+            listbox.add(item)
+        if shown == 0:
+            empty = Gtk.ListBoxRow()
+            lab = Gtk.Label(label="No matches — try another search.")
+            lab.set_margin_top(12)
+            lab.set_margin_bottom(12)
+            empty.add(lab)
+            listbox.add(empty)
+        listbox.show_all()
+
+    def _on_store_install(self, _btn, kind, eid):
+        if eid is None:
+            return
+        cmd = "install-ai %s" % eid if kind == "ai" else "install-app %s" % eid
+        self.feed_line(cmd)
+
+    def _show_light_tab(self, payload: str):
+        """Switch light-deck notebook to Apps / AI / Home."""
+        nb = self._light_notebook
+        if nb is None:
+            return False
+        page = {"store": 1, "store-ai": 2, "home": 0, "myapps": 1}.get(payload)
+        if page is None:
+            return False
+        try:
+            nb.set_current_page(page)
+            return True
+        except Exception:
+            return False
+
+    def _build_gtk_fallback(self, note=None):
+        """Light control deck: pulse + Home/Apps/AI tabs (no WebKit)."""
+        Gtk = self.Gtk
+        # GdkPixbuf for catalog icons in the Apps list
+        try:
+            from gi.repository import GdkPixbuf
+            self.GdkPixbuf = GdkPixbuf
+        except Exception:
+            self.GdkPixbuf = None
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        hero.set_margin_top(14)
+        hero.set_margin_bottom(4)
+        hero.set_margin_start(16)
+        hero.set_margin_end(16)
+        title = Gtk.Label(label="TuxGenie")
+        title.set_xalign(0)
+        try:
+            title.set_markup(
+                '<span size="xx-large" weight="bold" foreground="#063642">TuxGenie</span>'
+            )
+        except Exception:
+            pass
+        hero.pack_start(title, False, False, 0)
+        if note:
+            sub = Gtk.Label(label=note)
+            sub.set_xalign(0)
+            try:
+                sub.set_markup(
+                    '<span size="small" foreground="#5c7380">%s</span>'
+                    % note.replace("&", "&amp;")
+                )
+            except Exception:
+                pass
+            hero.pack_start(sub, False, False, 0)
+        outer.pack_start(hero, False, False, 0)
+        outer.pack_start(self._build_pulse_strip(), False, False, 0)
+
+        nb = Gtk.Notebook()
+        try:
+            nb.set_tab_pos(Gtk.PositionType.TOP)
+        except Exception:
+            pass
+        nb.append_page(self._build_home_page(), Gtk.Label(label="Home"))
+        nb.append_page(self._build_store_page("app"), Gtk.Label(label="Apps"))
+        nb.append_page(self._build_store_page("ai"), Gtk.Label(label="AI tools"))
+        self._light_notebook = nb
+        outer.pack_start(nb, True, True, 0)
         return outer
 
     def _on_ask(self, *_args):
@@ -2423,7 +2624,9 @@ class UnifiedShell:
             return
         payload = (action.get("payload") or "").strip()
         if kind == "tab":
-            # No WebKit store — fall back to terminal catalog keywords
+            # Prefer the in-panel Apps/AI tabs; fall back to terminal keywords.
+            if self._show_light_tab(payload):
+                return
             kw = _TAB_FALLBACK_KW.get(payload, "")
             if kw:
                 self.feed_line(kw)

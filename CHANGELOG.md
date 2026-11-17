@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.28.0
+
+Light panel App Store restored (≤8 GB PCs):
+
+- **Home / Apps / AI tools** tabs on the light GTK deck — browse and Install without WebKit.
+- App Store sits in Start here and opens the Apps tab (Install still confirms in the live terminal).
+- Banner now says to use the Apps tab instead of “type apps”.
+
 ## 7.27.0
 
 Light panel polish on ≤8 GB PCs (Mint XFCE):

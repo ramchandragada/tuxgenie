@@ -1589,8 +1589,13 @@ class TestUnifiedShell:
         assert "_TILE_ICON_GLYPH" in src
         assert "_tile_icon_widget" in src
         assert "_push_pulse_gtk" in src
+        assert "_build_store_page" in src
+        assert "_fill_store_list" in src
+        assert "_on_store_install" in src
+        assert "install-app" in src
         assert "tg-pulse" in src and "tg-tile" in src
         assert "Light panel ·" in src
+        assert 'Gtk.Label(label="Apps")' in src or 'label="Apps"' in src
         assert "window, frame, paned, box, headerbar" not in src
         assert "menuitem:hover" in src
 
@@ -1740,10 +1745,19 @@ class TestCatalogOfficialIcons:
         assert isinstance(sh._TILE_ICON_NAMES["network"], tuple)
         assert sh._TILE_ICON_GLYPH.get("network")
         assert sh._LIGHT_PULSE_MS >= 3000
+        # App Store is in Start here and opens the light Apps tab.
+        start = []
+        for a in sh.ACTIONS:
+            if a.get("kind") == "sec" and a.get("label") == "Fix something":
+                break
+            start.append(a)
+        assert any(a.get("id") == "apps" and a.get("kind") == "tab" for a in start)
         src = open(os.path.join(ROOT, "tuxgenie_shell.py")).read()
         assert "def _build_pulse_strip" in src
         assert "def _tile_icon_widget" in src
         assert "def _push_pulse_gtk" in src
+        assert "def _build_store_page" in src
+        assert "def _show_light_tab" in src
 
 
 class TestGuiAppStoreRouting:
