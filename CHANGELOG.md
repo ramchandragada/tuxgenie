@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.26.0
+
+Light control panel (≤8 GB RAM) restores what 7.25.0 dropped:
+
+- Live **This PC** strip — CPU, Memory, Disk, and PC cards that refresh and open health/disk/hardware.
+- Themed **icons** on every quick-action tile (Wi-Fi, Sound, Apps, …).
+- Shorter low-RAM note. App Store remains in the terminal (`apps`); set `TUXGENIE_FORCE_WEBKIT=1` for the full WebKit panel.
+
 ## 7.25.0
 
 tuxgenie-app memory on small PCs (≤8 GB RAM, e.g. Mint XFCE):

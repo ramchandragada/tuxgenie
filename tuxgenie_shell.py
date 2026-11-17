@@ -20,12 +20,43 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.25.0"
+VERSION = "7.26.0"
 # WebKitGTK routinely eats multiple GB of RSS. On small PCs (Mint XFCE thin
 # clients, ≤8 GB laptops) prefer the GTK button deck unless the user forces
 # the modern panel with TUXGENIE_FORCE_WEBKIT=1.
 _WEBKIT_MIN_RAM_GIB = 8.0
 _VTE_SCROLLBACK_LINES = 5000
+_LIGHT_PULSE_MS = 8000
+
+# Themed icons for the light GTK deck (same actions as the WebKit tiles).
+_TILE_ICON_NAMES = {
+    "fix": "applications-engineering",
+    "health": "utilities-system-monitor",
+    "network": "network-wireless",
+    "sound": "audio-volume-high",
+    "display": "video-display",
+    "bluetooth": "bluetooth",
+    "printer": "printer",
+    "webcam": "camera-web",
+    "drivers": "application-x-firmware",
+    "apps": "system-software-install",
+    "updates": "system-software-update",
+    "selfupd": "view-refresh",
+    "cloud": "folder-cloud",
+    "security": "security-high",
+    "backup": "drive-harddisk",
+    "perf": "preferences-system-performance",
+    "disk": "drive-harddisk",
+    "battery": "battery",
+    "gaming": "input-gaming",
+    "suggest": "help-about",
+    "settings": "preferences-system",
+    "menu": "view-list",
+    "complete": "emblem-ok",
+    "tweaks": "preferences-desktop",
+    "extensions": "application-x-addon",
+    "dsettings": "preferences-desktop",
+}
 
 # Home quick actions — curated Wave A (not the full terminal menu).
 # kind=sec = section header; tab = Store pane; kw = feed live CLI keyword.
@@ -1622,7 +1653,13 @@ class UnifiedShell:
         self._left = None
         self._wk_finished = False
         self._deck_fallback_done = False
-        self._start_icon_prefetch()
+        self._pulse_widgets = None  # GTK light-deck CPU/mem/disk/PC labels
+        self._pulse_actions = {
+            "cpu": "health", "mem": "health", "disk": "disk", "pc": "hardware",
+        }
+        # Icon prefetch feeds the WebKit App Store; skip on the light deck.
+        if not _prefer_light_deck():
+            self._start_icon_prefetch()
 
         self.app = Gtk.Application(
             application_id=APP_ID,
@@ -1662,6 +1699,18 @@ class UnifiedShell:
         self.win.show_all()
         self.win.present()
         self._spawn_tuxgenie()
+        if self._pulse_widgets is not None:
+            self._refresh_pulse_async()
+            try:
+                self.GLib.timeout_add(_LIGHT_PULSE_MS, self._on_light_pulse_tick)
+            except Exception:
+                pass
+
+    def _on_light_pulse_tick(self):
+        if self._pulse_widgets is None:
+            return False
+        self._refresh_pulse_async()
+        return True
 
     def _apply_light_chrome(self):
         """Keep GTK chrome light even when the desktop theme is dark."""
@@ -1683,6 +1732,31 @@ class UnifiedShell:
                 menuitem:hover, menuitem:prelight, menuitem:selected {
                   background-color: #d7eef0;
                   color: #102028;
+                }
+                button.tg-pulse {
+                  background-color: #ffffff;
+                  border: 1px solid #d5e3ea;
+                  border-radius: 12px;
+                  padding: 8px 6px;
+                  color: #102028;
+                }
+                button.tg-pulse:hover {
+                  background-color: #e8f6f7;
+                  border-color: #0a8a96;
+                }
+                button.tg-pulse.tg-warn {
+                  border-color: #c45c12;
+                }
+                button.tg-tile {
+                  background-color: #ffffff;
+                  border: 1px solid #d5e3ea;
+                  border-radius: 12px;
+                  padding: 6px 8px;
+                  color: #102028;
+                }
+                button.tg-tile:hover {
+                  background-color: #e8f6f7;
+                  border-color: #0a8a96;
                 }
                 """
             )
@@ -1745,10 +1819,9 @@ class UnifiedShell:
         if self.WebKit2 is not None and _prefer_light_deck():
             ram = _host_ram_gib()
             note = (
-                "Light control panel — this PC has %.0f GB RAM. "
-                "WebKit is skipped so TuxGenie stays under a few hundred MB. "
-                "Type apps in the terminal for the App Store, or set "
-                "TUXGENIE_FORCE_WEBKIT=1 to force the modern panel."
+                "Light panel (%.0f GB RAM) — usage meters and icons stay here; "
+                "App Store is in the terminal (type apps). "
+                "Set TUXGENIE_FORCE_WEBKIT=1 for the full modern panel."
             ) % (ram or _WEBKIT_MIN_RAM_GIB)
             print("tuxgenie-app: " + note, file=sys.stderr)
         return self._build_gtk_fallback(note)
@@ -2045,11 +2118,13 @@ class UnifiedShell:
                     data = tg.gui_system_pulse() or {}
             except Exception as e:
                 print("tuxgenie-app: system pulse failed:", e, file=sys.stderr)
-            self.GLib.idle_add(self._push_pulse_js, data)
+            self.GLib.idle_add(self._push_pulse, data)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _push_pulse_js(self, data):
+    def _push_pulse(self, data):
+        """Update WebKit and/or GTK light-deck pulse widgets."""
+        self._push_pulse_gtk(data)
         if self.webview is None:
             return False
         payload = json.dumps(data or {}, ensure_ascii=False)
@@ -2061,6 +2136,51 @@ class UnifiedShell:
                 self.webview.evaluate_javascript(js, -1, None, None, None, None, None)
             except Exception as e:
                 print("tuxgenie-app: pulse JS push failed:", e, file=sys.stderr)
+        return False
+
+    def _push_pulse_gtk(self, data):
+        w = self._pulse_widgets
+        if not w or not isinstance(data, dict):
+            return False
+        if data.get("actions"):
+            self._pulse_actions.update(data["actions"])
+
+        def _pct(key):
+            try:
+                return int(round(float(data.get(key) or 0)))
+            except Exception:
+                return 0
+
+        cpu_pct, mem_pct, disk_pct = _pct("cpu_pct"), _pct("mem_pct"), _pct("disk_pct")
+        try:
+            w["cpu_val"].set_markup(
+                '<span size="large" weight="bold">%d%%</span>' % cpu_pct)
+            w["mem_val"].set_markup(
+                '<span size="large" weight="bold">%d%%</span>' % mem_pct)
+            w["disk_val"].set_markup(
+                '<span size="large" weight="bold">%d%%</span>' % disk_pct)
+            w["cpu_sub"].set_text(data.get("cpu_label") or "")
+            w["mem_sub"].set_text(data.get("mem_label") or "used / total")
+            w["disk_sub"].set_text(data.get("disk_label") or "used / total")
+            w["pc_val"].set_markup(
+                '<span weight="bold">%s</span>'
+                % (data.get("pc_title") or "This PC").replace("&", "&amp;"))
+            w["pc_sub"].set_text(data.get("pc_label") or "")
+            for key, warn_key, btn_key in (
+                ("cpu", "cpu_warn", "cpu_btn"),
+                ("mem", "mem_warn", "mem_btn"),
+                ("disk", "disk_warn", "disk_btn"),
+            ):
+                btn = w.get(btn_key)
+                if btn is None:
+                    continue
+                ctx = btn.get_style_context()
+                if data.get(warn_key):
+                    ctx.add_class("tg-warn")
+                else:
+                    ctx.remove_class("tg-warn")
+        except Exception as e:
+            print("tuxgenie-app: pulse GTK update failed:", e, file=sys.stderr)
         return False
 
     def _open_url(self, url: str):
@@ -2077,13 +2197,90 @@ class UnifiedShell:
         except Exception as e:
             print("tuxgenie-app: open url failed:", e, file=sys.stderr)
 
+    def _tile_icon_image(self, action_id: str):
+        """Themed icon for a light-deck tile (never fails — returns None)."""
+        Gtk = self.Gtk
+        name = _TILE_ICON_NAMES.get(action_id) or "applications-system"
+        try:
+            img = Gtk.Image.new_from_icon_name(name, Gtk.IconSize.LARGE_TOOLBAR)
+            return img
+        except Exception:
+            try:
+                img = Gtk.Image.new_from_icon_name(
+                    "applications-system", Gtk.IconSize.LARGE_TOOLBAR)
+                return img
+            except Exception:
+                return None
+
+    def _build_pulse_strip(self):
+        """CPU / RAM / Disk / PC cards for the light GTK deck."""
+        Gtk = self.Gtk
+        wrap = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        wrap.set_margin_start(12)
+        wrap.set_margin_end(12)
+        wrap.set_margin_bottom(8)
+        sec = Gtk.Label()
+        sec.set_xalign(0)
+        sec.set_markup(
+            "<span size='small' foreground='#5c7380'><b>This PC</b></span>"
+        )
+        wrap.pack_start(sec, False, False, 0)
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        widgets = {}
+
+        def _card(key, title, tip):
+            btn = Gtk.Button()
+            try:
+                btn.get_style_context().add_class("tg-pulse")
+            except Exception:
+                pass
+            btn.set_tooltip_text(tip)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            k = Gtk.Label()
+            k.set_markup(
+                "<span size='small' foreground='#5c7380'>%s</span>" % title)
+            k.set_xalign(0)
+            val = Gtk.Label()
+            val.set_xalign(0)
+            val.set_markup('<span size="large" weight="bold">—</span>')
+            sub = Gtk.Label(label="")
+            sub.set_xalign(0)
+            sub.set_line_wrap(True)
+            try:
+                sub.set_max_width_chars(14)
+            except Exception:
+                pass
+            box.pack_start(k, False, False, 0)
+            box.pack_start(val, False, False, 0)
+            box.pack_start(sub, False, False, 0)
+            btn.add(box)
+            btn.connect("clicked", self._on_pulse_btn, key)
+            row.pack_start(btn, True, True, 0)
+            widgets["%s_btn" % key] = btn
+            widgets["%s_val" % key] = val
+            widgets["%s_sub" % key] = sub
+
+        _card("cpu", "CPU", "Open health check")
+        _card("mem", "Memory", "Open health check")
+        _card("disk", "Disk", "Open disk tools")
+        _card("pc", "PC", "PC configuration")
+        wrap.pack_start(row, False, False, 0)
+        self._pulse_widgets = widgets
+        return wrap
+
+    def _on_pulse_btn(self, _btn, key):
+        kw = (self._pulse_actions or {}).get(key) or key
+        if kw:
+            self.feed_line(kw)
+
     def _build_gtk_fallback(self, note=None):
-        """Button deck when WebKit is missing or rendered blank."""
+        """Light control deck: pulse + icon tiles (no WebKit)."""
         Gtk = self.Gtk
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         hero.set_margin_top(16)
-        hero.set_margin_bottom(12)
+        hero.set_margin_bottom(8)
         hero.set_margin_start(16)
         hero.set_margin_end(16)
         title = Gtk.Label(label="TuxGenie")
@@ -2105,6 +2302,8 @@ class UnifiedShell:
         hero.pack_start(title, False, False, 0)
         hero.pack_start(sub, False, False, 0)
         outer.pack_start(hero, False, False, 0)
+
+        outer.pack_start(self._build_pulse_strip(), False, False, 0)
 
         ask_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         ask_row.set_margin_start(16)
@@ -2144,11 +2343,19 @@ class UnifiedShell:
                 grid.add(lab)
                 continue
             b = Gtk.Button()
+            try:
+                b.get_style_context().add_class("tg-tile")
+            except Exception:
+                pass
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row.set_margin_top(6)
+            row.set_margin_bottom(6)
+            row.set_margin_start(6)
+            row.set_margin_end(6)
+            ico = self._tile_icon_image(a.get("id") or "")
+            if ico is not None:
+                row.pack_start(ico, False, False, 0)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            box.set_margin_top(8)
-            box.set_margin_bottom(8)
-            box.set_margin_start(8)
-            box.set_margin_end(8)
             l1 = Gtk.Label()
             l1.set_xalign(0)
             l1.set_markup("<b>%s</b>" % a["label"].replace("&", "&amp;"))
@@ -2157,7 +2364,8 @@ class UnifiedShell:
             l2.set_line_wrap(True)
             box.pack_start(l1, False, False, 0)
             box.pack_start(l2, False, False, 0)
-            b.add(box)
+            row.pack_start(box, True, True, 0)
+            b.add(row)
             b.connect("clicked", self._on_action_btn, a)
             grid.add(b)
         scroll.add(grid)
