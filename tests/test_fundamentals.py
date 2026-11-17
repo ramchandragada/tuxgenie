@@ -1586,8 +1586,11 @@ class TestUnifiedShell:
         assert "set_scrollback_lines(-1)" not in src
         assert "_build_pulse_strip" in src
         assert "_TILE_ICON_NAMES" in src
+        assert "_TILE_ICON_GLYPH" in src
+        assert "_tile_icon_widget" in src
         assert "_push_pulse_gtk" in src
         assert "tg-pulse" in src and "tg-tile" in src
+        assert "Light panel ·" in src
         assert "window, frame, paned, box, headerbar" not in src
         assert "menuitem:hover" in src
 
@@ -1731,13 +1734,15 @@ class TestCatalogOfficialIcons:
 
     def test_light_deck_has_pulse_and_tile_icons(self):
         import tuxgenie_shell as sh
-        assert "cpu" in sh._TILE_ICON_NAMES or "health" in sh._TILE_ICON_NAMES
+        assert "health" in sh._TILE_ICON_NAMES
         assert sh._TILE_ICON_NAMES.get("network")
         assert sh._TILE_ICON_NAMES.get("apps")
+        assert isinstance(sh._TILE_ICON_NAMES["network"], tuple)
+        assert sh._TILE_ICON_GLYPH.get("network")
         assert sh._LIGHT_PULSE_MS >= 3000
         src = open(os.path.join(ROOT, "tuxgenie_shell.py")).read()
         assert "def _build_pulse_strip" in src
-        assert "def _tile_icon_image" in src
+        assert "def _tile_icon_widget" in src
         assert "def _push_pulse_gtk" in src
 
 

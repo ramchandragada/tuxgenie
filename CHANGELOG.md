@@ -1,5 +1,13 @@
 # Changelog
 
+## 7.27.0
+
+Light panel polish on ≤8 GB PCs (Mint XFCE):
+
+- Short quiet banner under the brand (no wall of WebKit instructions).
+- Usage meters sit right under the title.
+- Tile icons try several Mint-friendly theme names, then a visible glyph fallback so icons do not vanish on XFCE.
+
 ## 7.26.0
 
 Light control panel (≤8 GB RAM) restores what 7.25.0 dropped:

@@ -20,7 +20,7 @@ import sys
 import threading
 
 APP_ID = "com.tuxgenie.TuxGenie"
-VERSION = "7.26.0"
+VERSION = "7.27.0"
 # WebKitGTK routinely eats multiple GB of RSS. On small PCs (Mint XFCE thin
 # clients, ≤8 GB laptops) prefer the GTK button deck unless the user forces
 # the modern panel with TUXGENIE_FORCE_WEBKIT=1.
@@ -28,34 +28,45 @@ _WEBKIT_MIN_RAM_GIB = 8.0
 _VTE_SCROLLBACK_LINES = 5000
 _LIGHT_PULSE_MS = 8000
 
-# Themed icons for the light GTK deck (same actions as the WebKit tiles).
+# Icon candidates per tile — first name that exists in the theme wins.
+# Ordered for Mint XFCE / Mint-Y / Papirus (many "engineering" names are missing).
 _TILE_ICON_NAMES = {
-    "fix": "applications-engineering",
-    "health": "utilities-system-monitor",
-    "network": "network-wireless",
-    "sound": "audio-volume-high",
-    "display": "video-display",
-    "bluetooth": "bluetooth",
-    "printer": "printer",
-    "webcam": "camera-web",
-    "drivers": "application-x-firmware",
-    "apps": "system-software-install",
-    "updates": "system-software-update",
-    "selfupd": "view-refresh",
-    "cloud": "folder-cloud",
-    "security": "security-high",
-    "backup": "drive-harddisk",
-    "perf": "preferences-system-performance",
-    "disk": "drive-harddisk",
-    "battery": "battery",
-    "gaming": "input-gaming",
-    "suggest": "help-about",
-    "settings": "preferences-system",
-    "menu": "view-list",
-    "complete": "emblem-ok",
-    "tweaks": "preferences-desktop",
-    "extensions": "application-x-addon",
-    "dsettings": "preferences-desktop",
+    "fix": ("system-run", "applications-system", "gtk-execute"),
+    "health": ("utilities-system-monitor", "computer", "applications-system"),
+    "network": ("network-wireless", "network-idle", "network-workgroup"),
+    "sound": ("audio-volume-high", "audio-card", "multimedia-volume-control"),
+    "display": ("video-display", "preferences-desktop-display", "computer"),
+    "bluetooth": ("bluetooth", "bluetooth-active", "preferences-system-bluetooth"),
+    "printer": ("printer", "printer-network", "devices"),
+    "webcam": ("camera-web", "camera-video", "camera-photo"),
+    "drivers": ("computer", "preferences-system", "applications-system"),
+    "apps": ("system-software-install", "applications-other", "package-x-generic"),
+    "updates": ("system-software-update", "view-refresh", "software-update-available"),
+    "selfupd": ("view-refresh", "system-reboot", "gtk-refresh"),
+    "cloud": ("folder-remote", "network-server", "folder"),
+    "security": ("security-high", "locked", "dialog-password"),
+    "backup": ("drive-harddisk", "drive-harddisk-usb", "media-removable"),
+    "perf": ("utilities-system-monitor", "preferences-system", "applications-system"),
+    "disk": ("drive-harddisk", "drive-harddisk-system", "folder"),
+    "battery": ("battery", "battery-good", "battery-full"),
+    "gaming": ("applications-games", "input-gaming", "applications-other"),
+    "suggest": ("help-about", "help-contents", "dialog-information"),
+    "settings": ("preferences-system", "gtk-preferences", "applications-system"),
+    "menu": ("view-list", "gtk-index", "application-menu"),
+    "complete": ("emblem-ok", "gtk-ok", "dialog-ok"),
+    "tweaks": ("preferences-desktop", "preferences-system", "applications-system"),
+    "extensions": ("preferences-desktop", "applications-other", "package-x-generic"),
+    "dsettings": ("preferences-desktop", "preferences-system", "gtk-preferences"),
+}
+# Always-visible glyph if the icon theme has nothing useful (Mint XFCE gaps).
+_TILE_ICON_GLYPH = {
+    "fix": "🔧", "health": "❤", "network": "📶", "sound": "🔊",
+    "display": "🖥", "bluetooth": "🔵", "printer": "🖨", "webcam": "📷",
+    "drivers": "⚙", "apps": "📦", "updates": "↻", "selfupd": "⬆",
+    "cloud": "☁", "security": "🛡", "backup": "💾", "perf": "⚡",
+    "disk": "💿", "battery": "🔋", "gaming": "🎮", "suggest": "💡",
+    "settings": "⚙", "menu": "☰", "complete": "✓", "tweaks": "🎛",
+    "extensions": "🧩", "dsettings": "⚙",
 }
 
 # Home quick actions — curated Wave A (not the full terminal menu).
@@ -1818,12 +1829,15 @@ class UnifiedShell:
         note = None
         if self.WebKit2 is not None and _prefer_light_deck():
             ram = _host_ram_gib()
-            note = (
-                "Light panel (%.0f GB RAM) — usage meters and icons stay here; "
-                "App Store is in the terminal (type apps). "
-                "Set TUXGENIE_FORCE_WEBKIT=1 for the full modern panel."
-            ) % (ram or _WEBKIT_MIN_RAM_GIB)
-            print("tuxgenie-app: " + note, file=sys.stderr)
+            # One quiet line — meters/icons are the panel, not the note.
+            note = "Light panel · %.0f GB RAM · type apps for App Store" % (
+                ram or _WEBKIT_MIN_RAM_GIB)
+            print(
+                "tuxgenie-app: light deck (%.1f GiB RAM). "
+                "Set TUXGENIE_FORCE_WEBKIT=1 for the WebKit panel."
+                % (ram or 0.0),
+                file=sys.stderr,
+            )
         return self._build_gtk_fallback(note)
 
     def _build_webkit(self):
@@ -2197,20 +2211,35 @@ class UnifiedShell:
         except Exception as e:
             print("tuxgenie-app: open url failed:", e, file=sys.stderr)
 
-    def _tile_icon_image(self, action_id: str):
-        """Themed icon for a light-deck tile (never fails — returns None)."""
+    def _tile_icon_widget(self, action_id: str):
+        """Icon (or glyph fallback) for a light-deck tile — always returns a widget."""
         Gtk = self.Gtk
-        name = _TILE_ICON_NAMES.get(action_id) or "applications-system"
+        names = _TILE_ICON_NAMES.get(action_id) or ("applications-system",)
+        if isinstance(names, str):
+            names = (names,)
+        theme = None
         try:
-            img = Gtk.Image.new_from_icon_name(name, Gtk.IconSize.LARGE_TOOLBAR)
-            return img
+            theme = Gtk.IconTheme.get_default()
         except Exception:
+            theme = None
+        size = Gtk.IconSize.LARGE_TOOLBAR
+        for name in list(names) + ["applications-system", "gtk-missing-image"]:
             try:
-                img = Gtk.Image.new_from_icon_name(
-                    "applications-system", Gtk.IconSize.LARGE_TOOLBAR)
+                if theme is not None and hasattr(theme, "has_icon"):
+                    if not theme.has_icon(name):
+                        continue
+                img = Gtk.Image.new_from_icon_name(name, size)
                 return img
             except Exception:
-                return None
+                continue
+        # Glyph fallback — visible even when the XFCE theme is sparse.
+        lab = Gtk.Label()
+        glyph = _TILE_ICON_GLYPH.get(action_id) or "•"
+        try:
+            lab.set_markup('<span size="x-large">%s</span>' % glyph)
+        except Exception:
+            lab.set_text(glyph)
+        return lab
 
     def _build_pulse_strip(self):
         """CPU / RAM / Disk / PC cards for the light GTK deck."""
@@ -2278,9 +2307,9 @@ class UnifiedShell:
         """Light control deck: pulse + icon tiles (no WebKit)."""
         Gtk = self.Gtk
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        hero.set_margin_top(16)
-        hero.set_margin_bottom(8)
+        hero = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        hero.set_margin_top(14)
+        hero.set_margin_bottom(4)
         hero.set_margin_start(16)
         hero.set_margin_end(16)
         title = Gtk.Label(label="TuxGenie")
@@ -2291,18 +2320,28 @@ class UnifiedShell:
             )
         except Exception:
             pass
-        sub = Gtk.Label(
-            label=note or (
-                "For the full modern App Store UI on a PC with 8 GB+ RAM: "
-                "sudo apt install gir1.2-webkit2-4.1"
-            )
-        )
-        sub.set_xalign(0)
-        sub.set_line_wrap(True)
         hero.pack_start(title, False, False, 0)
-        hero.pack_start(sub, False, False, 0)
+        # Quiet one-liner under the brand (not a wall of instructions).
+        if note:
+            sub = Gtk.Label(label=note)
+            sub.set_xalign(0)
+            try:
+                sub.set_markup(
+                    '<span size="small" foreground="#5c7380">%s</span>'
+                    % note.replace("&", "&amp;")
+                )
+            except Exception:
+                pass
+            hero.pack_start(sub, False, False, 0)
+        elif self.WebKit2 is None:
+            sub = Gtk.Label(
+                label="Install gir1.2-webkit2-4.1 for the full App Store panel"
+            )
+            sub.set_xalign(0)
+            hero.pack_start(sub, False, False, 0)
         outer.pack_start(hero, False, False, 0)
 
+        # Usage meters sit under the brand — the main thing users look for.
         outer.pack_start(self._build_pulse_strip(), False, False, 0)
 
         ask_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -2352,7 +2391,7 @@ class UnifiedShell:
             row.set_margin_bottom(6)
             row.set_margin_start(6)
             row.set_margin_end(6)
-            ico = self._tile_icon_image(a.get("id") or "")
+            ico = self._tile_icon_widget(a.get("id") or "")
             if ico is not None:
                 row.pack_start(ico, False, False, 0)
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
