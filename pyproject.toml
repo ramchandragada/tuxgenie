@@ -41,7 +41,7 @@ Source      = "https://github.com/ramchandragada/tuxgenie"
 Changelog   = "https://github.com/ramchandragada/tuxgenie/releases"
 
 [tool.setuptools]
-py-modules = ["tuxgenie", "tuxgenie_shell"]
+py-modules = ["tuxgenie", "tuxgenie_shell", "codex_backend", "codex_conversation_manager"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

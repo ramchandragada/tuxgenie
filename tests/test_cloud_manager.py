@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 _fake_anthropic = types.ModuleType("anthropic")
 sys.modules.setdefault("anthropic", _fake_anthropic)
 
-import tuxgenie as tg
+import tuxgenie as tg  # noqa: E402
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -384,7 +384,6 @@ class TestWatchDownloadsForDeb:
         sig = inspect.signature(tg._watch_downloads_for_deb)
         assert "extensions" in sig.parameters
         # And the default must include both .deb and .tar.gz
-        default = sig.parameters["extensions"].default
         # default is None — actual tuple is built inside; just confirm the
         # body covers tar.gz by reading its source
         src = inspect.getsource(tg._watch_downloads_for_deb)

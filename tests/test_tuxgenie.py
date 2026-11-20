@@ -20,7 +20,7 @@ sys.modules.setdefault("anthropic", _fake_anthropic)
 # (its __init__ builds a real client). Set on whichever stub module won.
 sys.modules["anthropic"].Anthropic = lambda *a, **k: None
 
-import tuxgenie as tg
+import tuxgenie as tg  # noqa: E402
 
 
 # ── is_dangerous ─────────────────────────────────────────────────────────────
@@ -684,6 +684,157 @@ class TestApprovalGate:
         assert tg._approval_gate("apt install cowsay", False, b, {"all": False}) is False
 
 
+class TestToolCallSudoOrdering:
+    """Sudo credentials must only be requested after command approval."""
+
+    def test_rejected_root_command_never_requests_password(self, monkeypatch):
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(tg, "_display_tool_call", lambda *a: None)
+        monkeypatch.setattr(tg, "is_dangerous", lambda cmd: False)
+        monkeypatch.setattr(tg, "_approval_gate", lambda *a: False)
+
+        calls = []
+
+        def password_provider():
+            calls.append("password")
+            return "fake-password"
+
+        block = SimpleNamespace(
+            name="run_command",
+            input={"command": "apt install cowsay", "requires_root": True},
+        )
+        result = tg._handle_tool_call(
+            block, None, [1], backend=object(), approve_state={},
+            sudo_password_provider=password_provider,
+        )
+
+        assert "SKIPPED" in result
+        assert calls == []
+
+    def test_approved_root_command_requests_password_before_execution(self, monkeypatch):
+        from types import SimpleNamespace
+
+        events = []
+        monkeypatch.setattr(tg, "_display_tool_call", lambda *a: None)
+        monkeypatch.setattr(tg, "is_dangerous", lambda cmd: False)
+        monkeypatch.setattr(
+            tg, "_approval_gate",
+            lambda *a: events.append("approval") or True,
+        )
+        monkeypatch.setattr(tg, "_is_heavy_pkg_cmd", lambda cmd: False)
+        monkeypatch.setattr(tg, "_action_log_append", lambda *a: None)
+
+        def password_provider():
+            events.append("password")
+            return "fake-password"
+
+        def fake_run_cmd(cmd, sudo_password=None, timeout=None):
+            events.append("execute")
+            assert cmd == "sudo apt install cowsay"
+            assert sudo_password == "fake-password"
+            return 0, "installed", ""
+
+        monkeypatch.setattr(tg, "run_cmd_live", fake_run_cmd)
+
+        block = SimpleNamespace(
+            name="run_command",
+            input={"command": "apt install cowsay", "requires_root": True},
+        )
+        result = tg._handle_tool_call(
+            block, None, [1], backend=object(), approve_state={},
+            sudo_password_provider=password_provider,
+        )
+
+        assert result == "installed"
+        assert events == ["approval", "password", "execute"]
+
+
+
+class TestSensitiveReadPath:
+    def test_blocks_private_application_directories(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("CODEX_HOME", raising=False)
+
+        config_dir = home / ".config" / "tuxgenie"
+        data_dir = home / ".local" / "share" / "tuxgenie"
+        monkeypatch.setattr(tg, "CFG_DIR", str(config_dir))
+        monkeypatch.setattr(tg, "DATA_DIR", str(data_dir))
+
+        protected = [
+            config_dir / "config.json",
+            data_dir / "sessions" / "session.jsonl",
+            home / ".codex" / "auth.json",
+            home / ".ssh" / "id_ed25519",
+            home / ".aws" / "credentials",
+        ]
+        for path in protected:
+            assert tg._is_sensitive_read_path(path), str(path)
+
+    def test_blocks_custom_codex_home(self, tmp_path, monkeypatch):
+        custom_home = tmp_path / "custom-codex"
+        monkeypatch.setenv("CODEX_HOME", str(custom_home))
+        assert tg._is_sensitive_read_path(custom_home / "auth.json")
+        assert tg._is_sensitive_read_path(custom_home / "sessions" / "history.jsonl")
+
+    def test_blocks_symlink_to_private_directory(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        codex_dir = home / ".codex"
+        codex_dir.mkdir(parents=True)
+        alias = tmp_path / "project" / "linked-data"
+        alias.parent.mkdir()
+        alias.symlink_to(codex_dir, target_is_directory=True)
+
+        monkeypatch.setenv("HOME", str(home))
+        assert tg._is_sensitive_read_path(alias / "auth.json")
+
+    def test_allows_project_files_and_sibling_directories(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        project = tmp_path / "project"
+        home.mkdir()
+        project.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("CODEX_HOME", raising=False)
+        monkeypatch.setattr(tg, "CFG_DIR", str(home / ".config" / "tuxgenie"))
+        monkeypatch.setattr(tg, "DATA_DIR", str(home / ".local" / "share" / "tuxgenie"))
+
+        assert not tg._is_sensitive_read_path(project / "main.py")
+        assert not tg._is_sensitive_read_path(home / ".codex-backup" / "notes.json")
+
+    def test_blocks_private_key_extensions(self, tmp_path):
+        for suffix in (".pem", ".key", ".p12", ".pfx"):
+            assert tg._is_sensitive_read_path(tmp_path / f"secret{suffix}")
+
+    def test_read_file_tool_blocks_private_data_before_open(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+
+        home = tmp_path / "home"
+        config_dir = home / ".config" / "tuxgenie"
+        config_dir.mkdir(parents=True)
+        private_file = config_dir / "config.json"
+        private_file.write_text('{"private": "test-only"}', encoding="utf-8")
+
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("CODEX_HOME", raising=False)
+        monkeypatch.setattr(tg, "CFG_DIR", str(config_dir))
+        monkeypatch.setattr(tg, "DATA_DIR", str(home / ".local" / "share" / "tuxgenie"))
+
+        def forbidden_open(*args, **kwargs):
+            raise AssertionError("read_file intentó abrir un archivo protegido")
+
+        monkeypatch.setattr("builtins.open", forbidden_open)
+
+        block = SimpleNamespace(
+            name="read_file",
+            input={"path": str(private_file)},
+        )
+        result = tg._handle_tool_call(block, None, [1])
+
+        assert result.startswith("BLOCKED:")
+
+
 # ── clean_json ────────────────────────────────────────────────────────────────
 
 class TestCleanJson:
@@ -1341,6 +1492,11 @@ class TestProgressCollapse:
 
 class TestProviderFailover:
     """Auto-switch on limits/outages: free → free only, never Claude, toggleable."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_host_ollama(self, monkeypatch):
+        # Cloud-provider failover tests must not depend on a local Ollama daemon.
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda timeout=1.5: False)
 
     def setup_method(self):
         self._orig = tg.CFG_FILE
@@ -2097,3 +2253,199 @@ class TestDeterministicRemoveAndCancel:
         # AI fallback can take over.
         monkeypatch.setattr(tg, "run_cmd_live", lambda *a, **k: (100, "", "E: broken"))
         assert tg._install_catalog_entry({"name": "VLC Media Player"}, {"pkg_mgr": "apt"}, {"pw": None}) is False
+
+
+class TestToolCallResultState:
+
+    def setup_command(self, monkeypatch, approved=True):
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(tg, "_display_tool_call", lambda *a: None)
+        monkeypatch.setattr(tg, "is_dangerous", lambda cmd: False)
+        monkeypatch.setattr(tg, "_approval_gate", lambda *a: approved)
+        monkeypatch.setattr(tg, "_is_heavy_pkg_cmd", lambda cmd: False)
+        monkeypatch.setattr(tg, "_action_log_append", lambda *a: None)
+
+        return SimpleNamespace(
+            name="run_command",
+            input={"command": "apt install cowsay"},
+        )
+
+    def test_approved_command_records_success(self, monkeypatch):
+        monkeypatch.setattr(
+            tg, "run_cmd_live",
+            lambda *a, **k: (0, "installed", ""),
+        )
+        state = {}
+        block = self.setup_command(monkeypatch)
+
+        tg._handle_tool_call(block, None, [1], result_state=state)
+
+        assert state == {
+            "status": "success",
+            "executed": True,
+            "returncode": 0,
+        }
+
+    def test_rejected_command_records_skipped(self, monkeypatch):
+        state = {}
+        block = self.setup_command(monkeypatch, approved=False)
+
+        tg._handle_tool_call(block, None, [1], result_state=state)
+
+        assert state == {
+            "status": "skipped",
+            "executed": False,
+            "returncode": None,
+        }
+
+    def test_dangerous_command_records_blocked(self, monkeypatch):
+        monkeypatch.setattr(tg, "_display_tool_call", lambda *a: None)
+        monkeypatch.setattr(tg, "is_dangerous", lambda cmd: True)
+        state = {}
+
+        block = type("Block", (), {
+            "name": "run_command",
+            "input": {"command": "dangerous command"},
+        })()
+
+        tg._handle_tool_call(block, None, [1], result_state=state)
+
+        assert state == {
+            "status": "blocked",
+            "executed": False,
+            "returncode": None,
+        }
+
+    def test_failed_command_preserves_exit_code(self, monkeypatch):
+        monkeypatch.setattr(
+            tg, "run_cmd_live",
+            lambda *a, **k: (2, "", "installation failed"),
+        )
+        state = {}
+        block = self.setup_command(monkeypatch)
+
+        tg._handle_tool_call(block, None, [1], result_state=state)
+
+        assert state == {
+            "status": "error",
+            "executed": True,
+            "returncode": 2,
+        }
+
+
+class TestCodexProviderIntegration:
+
+    def test_provider_identity_and_label(self):
+        backend = tg.CodexBackend()
+        assert tg._provider_name(backend) == "codex"
+        assert tg._provider_label("codex") == "OpenAI Codex · App Server"
+        backend.close()
+
+    def test_factory_respects_disabled_history(self):
+        backend = tg._make_backend({"disable_history": True}, "codex", None)
+        try:
+            assert backend.memory_enabled is False
+            assert backend.session_save_enabled is False
+        finally:
+            backend.close()
+
+    def test_factory_enables_history_when_configured(self):
+        backend = tg._make_backend({"disable_history": False}, "codex", None)
+        try:
+            assert backend.memory_enabled is True
+            assert backend.session_save_enabled is True
+        finally:
+            backend.close()
+
+    def test_codex_provider_is_sticky(self, monkeypatch):
+        monkeypatch.setattr(
+            tg, "load_cfg",
+            lambda: {"provider": "codex", "disable_history": True},
+        )
+        monkeypatch.setattr(tg, "_provider_key", lambda *a: "")
+        monkeypatch.setattr(tg, "_load_api_key", lambda cfg: "")
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/codex")
+
+        backend = tg.load_backend()
+        try:
+            assert isinstance(backend, tg.CodexBackend)
+            assert backend.memory_enabled is False
+        finally:
+            backend.close()
+
+    def test_setup_wizard_selects_codex(self, monkeypatch):
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda: False)
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/codex")
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "6")
+
+        assert tg._setup_wizard({}) == ("codex", None)
+
+    def test_setup_wizard_rejects_missing_codex(self, monkeypatch):
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda: False)
+        monkeypatch.setattr(tg.shutil, "which", lambda name: None)
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "6")
+
+        assert tg._setup_wizard({}) == ("skip", None)
+
+    def test_settings_can_switch_to_codex(self, monkeypatch):
+        saved = []
+        answers = iter(["8", "8"])
+
+        monkeypatch.setattr(tg, "load_cfg", lambda: {})
+        monkeypatch.setattr(tg, "save_cfg", lambda value: saved.append(value))
+        monkeypatch.setattr(tg, "_free_provider_labels_with_keys", lambda *a, **k: [])
+        monkeypatch.setattr(tg, "_ollama_reachable", lambda: False)
+        monkeypatch.setattr(tg.shutil, "which", lambda name: "/usr/bin/codex")
+        monkeypatch.setattr("builtins.input", lambda *a, **k: next(answers))
+
+        backend = tg.CodexBackend()
+        try:
+            tg.feat_settings(backend, {}, [])
+        finally:
+            backend.close()
+
+        assert {"provider": "codex", "backend": "codex"} in saved
+
+    def test_agentic_adapter_records_real_command_result(self, monkeypatch):
+        backend = tg.CodexBackend()
+        session_log = []
+        captured = {}
+
+        monkeypatch.setattr(tg, "load_cfg", lambda: {"disable_history": True})
+        monkeypatch.setattr(tg, "_sys_ctx_block", lambda ctx: "")
+        monkeypatch.setattr(tg, "_ask_rating", lambda: None)
+        monkeypatch.setattr(tg, "_restore_terminal", lambda: None)
+
+        def fake_tool(block, *args, **kwargs):
+            captured["name"] = block.name
+            captured["input"] = block.input
+            kwargs["result_state"].update({
+                "status": "success",
+                "executed": True,
+                "returncode": 0,
+            })
+            return "ok"
+
+        def fake_run(system, task, tools, handler):
+            result, success = handler({
+                "tool": "run_command",
+                "arguments": {"command": "echo hello"},
+            })
+            assert result == "ok" and success is True
+            return "finished"
+
+        monkeypatch.setattr(tg, "_handle_tool_call", fake_tool)
+        monkeypatch.setattr(backend, "run_agentic", fake_run)
+
+        try:
+            tg._codex_agentic_engine(backend, "test task", {}, session_log)
+        finally:
+            backend.close()
+
+        assert captured["name"] == "run_command"
+        assert session_log == [{
+            "command": "echo hello",
+            "source": "codex",
+            "returncode": 0,
+        }]
